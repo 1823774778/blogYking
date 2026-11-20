@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
-import { setAuth, toast } from '../state'
+import { setAuth, state, toast } from '../state'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +16,17 @@ const registerLink = computed(() => {
   const redirect = route.query.redirect
   return redirect ? `/register?redirect=${encodeURIComponent(String(redirect))}` : '/register'
 })
+
+const emailFlowEnabled = computed(() =>
+  String(state.site.registrationVerifyEmail ?? 'true').toLowerCase() === 'true'
+)
+
+function openForgot(event) {
+  if (emailFlowEnabled.value) return
+  event.preventDefault()
+  toast('本站未开启邮箱验证，请携带账号凭证联系管理员更新或找回密码', 'error')
+  router.push('/forgot-password')
+}
 
 async function submit() {
   error.value = ''
@@ -51,14 +62,14 @@ async function submit() {
 
     <div class="auth-card">
       <h2>登录</h2>
-      <p class="sub">用户名或邮箱都可以</p>
+      <p class="sub">邮箱就是你的账号；老账号也可以继续用用户名登录</p>
 
       <div v-if="error" class="form-error">{{ error }}</div>
 
       <form @submit.prevent="submit">
         <div class="field">
           <label for="account">账号</label>
-          <input id="account" v-model="account" type="text" autocomplete="username" placeholder="用户名 / 邮箱" />
+          <input id="account" v-model="account" type="text" autocomplete="username" placeholder="邮箱 / 旧用户名" />
         </div>
         <div class="field">
           <label for="password">密码</label>
@@ -70,8 +81,8 @@ async function submit() {
       </form>
 
       <div class="form-tip">
-        <router-link to="/forgot-password">忘记密码？</router-link>
-        <span>通过邮箱重置</span>
+        <router-link to="/forgot-password" @click="openForgot">忘记密码？</router-link>
+        <span>{{ emailFlowEnabled ? '通过邮箱重置' : '邮箱验证未开启' }}</span>
       </div>
 
       <div class="auth-foot">

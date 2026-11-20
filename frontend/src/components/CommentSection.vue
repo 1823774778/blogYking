@@ -44,7 +44,7 @@ async function submitNew() {
     const res = await http.post(`/posts/${props.postId}/comments`, { content: text })
     comments.value.push(res.data)
     content.value = ''
-    toast('评论已发布')
+    toast(res.data.status === 'PENDING' ? '评论已提交，等待审核' : '评论已发布，已通知作者')
   } catch (e) {
     toast(e.message, 'error')
   } finally {
@@ -64,7 +64,7 @@ async function submitReply() {
     comments.value.push(res.data)
     replyContent.value = ''
     replyTarget.value = null
-    toast('回复已发布')
+    toast(res.data.status === 'PENDING' ? '回复已提交，等待审核' : '回复已发布，已通知作者')
   } catch (e) {
     toast(e.message, 'error')
   } finally {

@@ -25,6 +25,9 @@ public class SiteConfigService {
             "registrationEnabled", "registrationVerifyEmail",
             "smtpEnabled", "smtpHost", "smtpPort", "smtpUsername", "smtpPassword",
             "smtpFrom", "smtpSsl", "smtpStarttls",
+            "mailTemplateRegistrationSubject", "mailTemplateRegistrationHtml",
+            "mailTemplateResetSubject", "mailTemplateResetHtml",
+            "mailTemplateTestSubject", "mailTemplateTestHtml",
             "aiEnabled", "aiProvider", "aiBaseUrl", "aiModel", "aiApiKey",
             "aiArticleEnabled", "aiCommentEnabled", "aiSummaryEnabled",
             "aiArticleGeneratePrompt", "aiArticleReviewPrompt",
@@ -67,6 +70,12 @@ public class SiteConfigService {
         map.put("smtpFrom", "");
         map.put("smtpSsl", "true");
         map.put("smtpStarttls", "false");
+        map.put("mailTemplateRegistrationSubject", "「{{siteName}}」注册验证码：{{code}}");
+        map.put("mailTemplateRegistrationHtml", "");
+        map.put("mailTemplateResetSubject", "重置你的「{{siteName}}」密码");
+        map.put("mailTemplateResetHtml", "");
+        map.put("mailTemplateTestSubject", "「{{siteName}}」邮件配置测试");
+        map.put("mailTemplateTestHtml", "");
         map.put("aiEnabled", "false");
         map.put("aiProvider", "OpenAI 兼容");
         map.put("aiBaseUrl", "https://api.openai.com/v1");
@@ -120,6 +129,29 @@ public class SiteConfigService {
             visible.put(key, all.getOrDefault(key, ""));
         }
         return visible;
+    }
+
+    /** 仅供后端内部状态使用，不进入后台配置与公开接口。 */
+    public String internalValue(String key, String fallback) {
+        if (key == null || key.isBlank()) {
+            return fallback;
+        }
+        return repository.findById(key)
+                .map(SiteConfig::getCfgValue)
+                .filter(v -> v != null && !v.isBlank())
+                .orElse(fallback);
+    }
+
+    @Transactional
+    public void setInternalValue(String key, String value) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String v = value == null ? "" : value;
+        if (v.length() > 4000) {
+            v = v.substring(0, 4000);
+        }
+        repository.save(new SiteConfig(key, v));
     }
 
     @Transactional

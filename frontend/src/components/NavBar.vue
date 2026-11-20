@@ -40,7 +40,12 @@ function toggleTheme() {
   applyTheme(state.theme === 'dark' ? 'light' : 'dark')
 }
 
-function logout() {
+async function logout() {
+  try {
+    await http.post('/auth/logout')
+  } catch (e) {
+    /* 本地退出仍然生效 */
+  }
   clearAuth()
   menuOpen.value = false
   toast('已退出登录')

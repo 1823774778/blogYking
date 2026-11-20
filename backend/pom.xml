@@ -7,13 +7,13 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.5</version>
+        <version>4.2.0</version>
         <relativePath/>
     </parent>
 
     <groupId>com.deek</groupId>
     <artifactId>blog</artifactId>
-    <version>1.7.0</version>
+    <version>1.8.0</version>
     <name>deek-blog</name>
     <description>前后端分离的个人博客，前端打包进 jar 一体化部署</description>
 
@@ -29,7 +29,22 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mybatis.spring.boot</groupId>
+            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <version>4.1.0</version>
+        </dependency>
+        <!-- MyBatis / JJWT 使用 Jackson 2；Spring MVC 本身使用 Boot 4 的 Jackson 3。 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.18.2</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -27,7 +27,6 @@ import java.util.regex.Pattern;
 @Service
 public class AuthService {
 
-    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,20}$");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[\\w.+-]+@[\\w-]+(\\.[\\w-]+)+$");
     private static final int RESET_EXPIRE_MINUTES = 30;
 
@@ -37,12 +36,13 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final MailService mailService;
     private final RegistrationCodeService registrationCodeService;
+    private final CaptchaService captchaService;
     private final String siteUrl;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UserRepository userRepository, ResetTokenRepository resetTokenRepository,
                        PasswordEncoder passwordEncoder, JwtUtil jwtUtil, MailService mailService,
-                       RegistrationCodeService registrationCodeService,
+                       RegistrationCodeService registrationCodeService, CaptchaService captchaService,
                        @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
         this.userRepository = userRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -50,6 +50,7 @@ public class AuthService {
         this.jwtUtil = jwtUtil;
         this.mailService = mailService;
         this.registrationCodeService = registrationCodeService;
+        this.captchaService = captchaService;
         this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
     }
 
@@ -61,30 +62,27 @@ public class AuthService {
         if (!registrationCodeService.registrationOpen()) {
             throw new BizException(HttpStatus.FORBIDDEN, "站点暂未开放注册");
         }
-        String username = trim(req.username());
         String email = trim(req.email()).toLowerCase();
-        if (!USERNAME_PATTERN.matcher(username).matches()) {
-            throw new BizException("用户名需为 3-20 位字母、数字或下划线");
-        }
         if (!EMAIL_PATTERN.matcher(email).matches()) {
             throw new BizException("邮箱格式不正确");
         }
         checkPassword(req.password());
-        if (userRepository.existsByUsername(username)) {
-            throw new BizException("用户名已被占用");
+        captchaService.verify(req.captchaId(), req.captchaAnswer());
+        if (userRepository.existsByUsername(email)) {
+            throw new BizException("该邮箱已注册，可直接登录");
         }
         if (userRepository.existsByEmail(email)) {
-            throw new BizException("邮箱已被注册");
+            throw new BizException("该邮箱已注册，可直接登录");
         }
         if (registrationCodeService.verifyRequired()) {
             registrationCodeService.verify(email, req.emailCode());
         }
         User user = new User();
-        user.setUsername(username);
+        // 新账号不再单独设置用户名：邮箱就是用户名，也是登录凭证。
+        user.setUsername(email);
         user.setEmail(email);
         user.setPassword(passwordEncoder.encode(req.password()));
-        String nickname = trim(req.nickname());
-        user.setNickname(nickname.isEmpty() ? username : nickname);
+        user.setNickname(defaultNickname(email));
         user.setRole("USER");
         user.setEnabled(true);
         userRepository.save(user);
@@ -119,6 +117,7 @@ public class AuthService {
         if (!EMAIL_PATTERN.matcher(normalized).matches()) {
             throw new BizException("邮箱格式不正确");
         }
+        requireEmailFlow();
         User user = userRepository.findByEmail(normalized).orElse(null);
         if (user == null) {
             // 不暴露邮箱是否注册
@@ -143,6 +142,7 @@ public class AuthService {
 
     @Transactional
     public MsgResp resetPassword(ResetReq req) {
+        requireEmailFlow();
         checkPassword(req.password());
         ResetToken rt = resetTokenRepository.findByToken(trim(req.token()))
                 .orElseThrow(() -> new BizException("重置链接无效，请重新申请"));
@@ -202,6 +202,18 @@ public class AuthService {
         return new UserView(user.getId(), user.getUsername(), user.getEmail(), user.getNickname(),
                 user.getAvatar(), user.getBio(), user.getRole(), user.isEnabled(), user.getMutedUntil(),
                 user.getMuteReason(), user.isMuted(), user.getCreatedAt());
+    }
+
+    private void requireEmailFlow() {
+        if (!registrationCodeService.emailVerificationEnabled()) {
+            throw new BizException("本站未开启邮箱验证，找回密码功能不可用。请携带账号凭证联系管理员更新或找回密码");
+        }
+    }
+
+    private String defaultNickname(String email) {
+        int at = email.indexOf('@');
+        String name = at > 0 ? email.substring(0, at) : email;
+        return name.length() > 32 ? name.substring(0, 32) : name;
     }
 
     private void checkPassword(String password) {

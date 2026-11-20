@@ -28,12 +28,14 @@ public class CommentService {
     private final CommentRepository commentRepository;
     private final PostRepository postRepository;
     private final SiteConfigService siteConfigService;
+    private final ActivityNoticeService activityNoticeService;
 
     public CommentService(CommentRepository commentRepository, PostRepository postRepository,
-                          SiteConfigService siteConfigService) {
+                          SiteConfigService siteConfigService, ActivityNoticeService activityNoticeService) {
         this.commentRepository = commentRepository;
         this.postRepository = postRepository;
         this.siteConfigService = siteConfigService;
+        this.activityNoticeService = activityNoticeService;
     }
 
     public List<CommentView> list(Long postId, Long currentUserId) {
@@ -84,6 +86,14 @@ public class CommentService {
             post.setCommentCount(post.getCommentCount() + 1);
             postRepository.save(post);
         }
+        String nickname = PostService.displayName(user);
+        String excerpt = content.length() > 80 ? content.substring(0, 80) + "…" : content;
+        activityNoticeService.record("COMMENT",
+                parentId == null ? "收到新评论" : "收到新回复",
+                "「" + nickname + "」" + (parentId == null ? "评论了《" : "回复了《")
+                        + post.getTitle() + "》：" + excerpt
+                        + (reviewRequired ? "（待审核）" : ""),
+                "/posts/" + postId + "#comment-" + comment.getId(), nickname, postId);
         return toView(comment, user.getId(), post.getTitle());
     }
 

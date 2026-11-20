@@ -53,6 +53,7 @@ public class PostService {
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
     private final TagService tagService;
+    private final ActivityNoticeService activityNoticeService;
     private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
 
     @Value("${app.redis.enabled:false}")
@@ -64,6 +65,7 @@ public class PostService {
     public PostService(PostRepository postRepository, PostLikeRepository likeRepository,
                        PostFavoriteRepository favoriteRepository, CommentRepository commentRepository,
                        UserRepository userRepository, TagService tagService,
+                       ActivityNoticeService activityNoticeService,
                        ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
         this.postRepository = postRepository;
         this.likeRepository = likeRepository;
@@ -71,6 +73,7 @@ public class PostService {
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
         this.tagService = tagService;
+        this.activityNoticeService = activityNoticeService;
         this.redisTemplateProvider = redisTemplateProvider;
     }
 
@@ -214,6 +217,10 @@ public class PostService {
         likeRepository.save(like);
         post.setLikeCount(post.getLikeCount() + 1);
         postRepository.save(post);
+        String actor = actorName(userId);
+        activityNoticeService.record("LIKE", "收到新的喜欢",
+                "「" + actor + "」喜欢了《" + post.getTitle() + "》",
+                "/posts/" + postId, actor, postId);
         return new ToggleResp(true, post.getLikeCount());
     }
 
@@ -234,6 +241,10 @@ public class PostService {
         favoriteRepository.save(favorite);
         post.setFavoriteCount(post.getFavoriteCount() + 1);
         postRepository.save(post);
+        String actor = actorName(userId);
+        activityNoticeService.record("FAVORITE", "收到新的收藏",
+                "「" + actor + "」收藏了《" + post.getTitle() + "》",
+                "/posts/" + postId, actor, postId);
         return new ToggleResp(true, post.getFavoriteCount());
     }
 
@@ -382,6 +393,12 @@ public class PostService {
                 .replaceAll("\\s+", " ")
                 .trim();
         return plain.length() > 100 ? plain.substring(0, 100) + "…" : plain;
+    }
+
+    private String actorName(Long userId) {
+        return userRepository.findById(userId)
+                .map(PostService::displayName)
+                .orElse("某位读者");
     }
 
     public static String displayName(User user) {

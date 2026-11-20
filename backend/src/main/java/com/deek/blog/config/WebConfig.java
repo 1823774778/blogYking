@@ -1,6 +1,7 @@
 package com.deek.blog.config;
 
 import com.deek.blog.service.storage.StoragePathResolver;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
@@ -16,17 +17,23 @@ import java.nio.file.Path;
 public class WebConfig implements WebMvcConfigurer {
 
     private final StoragePathResolver storagePaths;
+    private final String siteUrl;
 
-    public WebConfig(StoragePathResolver storagePaths) {
+    public WebConfig(StoragePathResolver storagePaths,
+                     @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
         this.storagePaths = storagePaths;
+        this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
     }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        // Cookie 登录态只允许生产站点域名与本机开发端口，避免任意站点携带凭证读取接口。
         registry.addMapping("/api/**")
-                .allowedOriginPatterns("*")
+                .allowedOrigins(siteUrl, "http://localhost:5173", "http://127.0.0.1:5173",
+                        "http://localhost:8080", "http://127.0.0.1:8080")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
                 .allowedHeaders("*")
+                .allowCredentials(true)
                 .maxAge(3600);
     }
 

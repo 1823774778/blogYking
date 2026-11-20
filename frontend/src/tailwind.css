@@ -1,0 +1,2 @@
+/* Tailwind 只提供工具类，关闭 preflight，保留项目已有视觉基线。 */
+@tailwind utilities;

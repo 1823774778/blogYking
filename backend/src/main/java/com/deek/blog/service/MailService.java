@@ -1,12 +1,17 @@
 package com.deek.blog.service;
 
+import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.Year;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 
@@ -14,8 +19,10 @@ import java.util.Properties;
 public class MailService {
 
     private static final Logger log = LoggerFactory.getLogger(MailService.class);
+    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final SiteConfigService siteConfigService;
+    private final MailTemplateService templateService;
     private final boolean envEnabled;
     private final String envHost;
     private final int envPort;
@@ -24,16 +31,19 @@ public class MailService {
     private final String envFrom;
     private final boolean envSsl;
     private final boolean envStarttls;
+    private final String siteUrl;
 
-    public MailService(SiteConfigService siteConfigService,
+    public MailService(SiteConfigService siteConfigService, MailTemplateService templateService,
                        @Value("${app.mail.enabled:false}") boolean envEnabled,
                        @Value("${spring.mail.host:}") String envHost,
                        @Value("${spring.mail.port:465}") int envPort,
                        @Value("${spring.mail.username:}") String envUsername,
                        @Value("${spring.mail.password:}") String envPassword,
                        @Value("${spring.mail.properties.mail.smtp.ssl.enable:true}") boolean envSsl,
-                       @Value("${spring.mail.properties.mail.smtp.starttls.enable:false}") boolean envStarttls) {
+                       @Value("${spring.mail.properties.mail.smtp.starttls.enable:false}") boolean envStarttls,
+                       @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
         this.siteConfigService = siteConfigService;
+        this.templateService = templateService;
         this.envEnabled = envEnabled;
         this.envHost = envHost == null ? "" : envHost.trim();
         this.envPort = envPort;
@@ -42,86 +52,87 @@ public class MailService {
         this.envFrom = envUsername == null ? "" : envUsername.trim();
         this.envSsl = envSsl;
         this.envStarttls = envStarttls;
+        this.siteUrl = siteUrl == null ? "" : siteUrl.trim();
     }
 
     public boolean isEnabled() {
         return settings().enabled();
     }
 
-    /**
-     * 发送找回密码邮件。SMTP 未启用或发送失败时只记录日志，不阻塞主流程。
-     */
     public void sendResetPassword(String to, String link, int expireMinutes) {
         MailSettings settings = settings();
         if (!settings.enabled()) {
             log.info("[DEV] SMTP 未启用，重置密码链接（{} 分钟内有效）：{}", expireMinutes, link);
             return;
         }
+        Map<String, String> vars = commonVars(MailTemplateService.RESET);
+        vars.put("link", link == null ? "" : link);
+        vars.put("expireMinutes", String.valueOf(expireMinutes));
+        String subject = templateService.subject(MailTemplateService.RESET, vars);
+        String html = templateService.html(MailTemplateService.RESET, vars);
         try {
-            JavaMailSenderImpl sender = sender(settings);
-            SimpleMailMessage message = new SimpleMailMessage();
-            if (!settings.from().isBlank()) {
-                message.setFrom(settings.from());
-            }
-            message.setTo(to);
-            message.setSubject("重置你的博客密码");
-            message.setText("""
-                    你好，
-
-                    我们收到了重置密码的请求。请在 %d 分钟内点击下面的链接设置新密码：
-
-                    %s
-
-                    如果这不是你本人的操作，请忽略本邮件，你的密码不会被修改。
-                    """.formatted(expireMinutes, link));
-            sender.send(message);
+            sendHtml(settings, to, subject, html);
             log.info("重置密码邮件已发送至 {}", to);
         } catch (Exception e) {
             log.error("重置密码邮件发送失败：{}", e.getMessage());
         }
     }
 
-    /** 发送注册邮箱验证码；失败时抛出异常，由注册入口返回明确提示。 */
     public void sendRegistrationCode(String to, String code, int expireMinutes) {
         MailSettings settings = settings();
         if (!settings.enabled()) {
             throw new IllegalStateException("SMTP 未启用：请先在站点设置里配置 SMTP");
         }
-        JavaMailSenderImpl sender = sender(settings);
-        SimpleMailMessage message = new SimpleMailMessage();
-        if (!settings.from().isBlank()) {
-            message.setFrom(settings.from());
+        Map<String, String> vars = commonVars(MailTemplateService.REGISTRATION);
+        vars.put("code", code == null ? "" : code);
+        vars.put("expireMinutes", String.valueOf(expireMinutes));
+        vars.put("email", to == null ? "" : to);
+        String subject = templateService.subject(MailTemplateService.REGISTRATION, vars);
+        String html = templateService.html(MailTemplateService.REGISTRATION, vars);
+        try {
+            sendHtml(settings, to, subject, html);
+            log.info("注册验证码邮件已发送至 {}", to);
+        } catch (Exception e) {
+            throw new IllegalStateException("发送失败：" + e.getMessage(), e);
         }
-        message.setTo(to);
-        message.setSubject("注册验证码");
-        message.setText("""
-                你好，
-
-                你的博客注册验证码是：%s
-
-                验证码 %d 分钟内有效。如果不是你本人操作，请忽略本邮件。
-                """.formatted(code, expireMinutes));
-        sender.send(message);
-        log.info("注册验证码邮件已发送至 {}", to);
     }
 
-    /**
-     * 后台「测试 SMTP」按钮使用，异常直接抛出由上层返回提示。
-     */
     public void sendTest(String to) {
         MailSettings settings = settings();
         if (!settings.enabled()) {
             throw new IllegalStateException("SMTP 未启用：请先在站点设置里启用并填写 SMTP 参数");
         }
-        JavaMailSenderImpl sender = sender(settings);
-        SimpleMailMessage message = new SimpleMailMessage();
-        if (!settings.from().isBlank()) {
-            message.setFrom(settings.from());
+        Map<String, String> vars = commonVars(MailTemplateService.TEST);
+        vars.put("sentAt", LocalDateTime.now().format(DATE_TIME));
+        String subject = templateService.subject(MailTemplateService.TEST, vars);
+        String html = templateService.html(MailTemplateService.TEST, vars);
+        try {
+            sendHtml(settings, to, subject, html);
+        } catch (Exception e) {
+            throw new IllegalStateException("发送失败：" + e.getMessage(), e);
         }
-        message.setTo(to);
-        message.setSubject("SMTP 配置测试");
-        message.setText("这是一封来自个人博客的测试邮件，收到说明 SMTP 配置正常。");
+    }
+
+    private void sendHtml(MailSettings settings, String to, String subject, String html) throws Exception {
+        JavaMailSenderImpl sender = sender(settings);
+        MimeMessage message = sender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+        if (!settings.from().isBlank()) {
+            helper.setFrom(settings.from());
+        }
+        helper.setTo(to);
+        helper.setSubject(subject);
+        helper.setText(html, true);
         sender.send(message);
+    }
+
+    private Map<String, String> commonVars(String kind) {
+        Map<String, String> vars = new LinkedHashMap<>(templateService.placeholders(kind));
+        Map<String, String> config = siteConfigService.get();
+        vars.put("siteName", config.getOrDefault("siteName", "墨记"));
+        vars.put("siteUrl", siteUrl);
+        vars.put("year", String.valueOf(Year.now().getValue()));
+        return vars;
     }
 
     private MailSettings settings() {

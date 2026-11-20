@@ -16,6 +16,10 @@ const savingRegistration = ref(false)
 const testingMail = ref(false)
 const testingAi = ref(false)
 const mailTo = ref('')
+const smtpDraft = ref({})
+const mailTemplateDefaults = ref({})
+const templateKind = ref('registration')
+const htmlEditor = ref(null)
 const aiStatus = ref(null)
 const aiTestResult = ref('')
 const smtpOpen = ref(false)
@@ -39,6 +43,65 @@ const promptDraft = reactive({
   aiCommentReviewPrompt: '',
   aiCommentSummaryPrompt: '',
   aiSummaryPrompt: ''
+})
+
+const mailTemplateKinds = [
+  {
+    key: 'registration',
+    label: '注册验证码',
+    subjectKey: 'mailTemplateRegistrationSubject',
+    htmlKey: 'mailTemplateRegistrationHtml'
+  },
+  {
+    key: 'reset',
+    label: '找回密码',
+    subjectKey: 'mailTemplateResetSubject',
+    htmlKey: 'mailTemplateResetHtml'
+  },
+  {
+    key: 'test',
+    label: '测试邮件',
+    subjectKey: 'mailTemplateTestSubject',
+    htmlKey: 'mailTemplateTestHtml'
+  }
+]
+
+const smtpKeys = [
+  'smtpEnabled', 'smtpHost', 'smtpPort', 'smtpUsername', 'smtpPassword',
+  'smtpFrom', 'smtpSsl', 'smtpStarttls',
+  'mailTemplateRegistrationSubject', 'mailTemplateRegistrationHtml',
+  'mailTemplateResetSubject', 'mailTemplateResetHtml',
+  'mailTemplateTestSubject', 'mailTemplateTestHtml'
+]
+
+const currentTemplate = computed(() =>
+  mailTemplateKinds.find((item) => item.key === templateKind.value) || mailTemplateKinds[0]
+)
+
+const previewVars = computed(() => ({
+  siteName: config.value.siteName || '墨记',
+  siteUrl: 'https://your-blog.example.com',
+  year: String(new Date().getFullYear()),
+  code: '836214',
+  expireMinutes: '10',
+  link: 'https://your-blog.example.com/reset-password?token=demo-token',
+  sentAt: '2026-11-20 18:30',
+  email: 'reader@example.com'
+}))
+
+const previewSubject = computed(() =>
+  replaceTokens(smtpDraft.value[currentTemplate.value.subjectKey] || '', previewVars.value)
+)
+
+const previewHtml = computed(() =>
+  replaceTokens(smtpDraft.value[currentTemplate.value.htmlKey] || '', previewVars.value)
+)
+
+const templatePlaceholders = computed(() => {
+  const common = ['siteName', 'siteUrl', 'year']
+  if (templateKind.value === 'registration') return [...common, 'code', 'expireMinutes', 'email']
+  if (templateKind.value === 'reset') return [...common, 'link', 'expireMinutes']
+  return [...common, 'sentAt']
 })
 
 const aiFeatures = [
@@ -107,12 +170,84 @@ async function persistConfig() {
   return res.data
 }
 
+async function loadMailTemplateDefaults() {
+  if (Object.keys(mailTemplateDefaults.value).length) return
+  try {
+    const res = await http.get('/admin/mail/templates')
+    mailTemplateDefaults.value = res.data?.defaults || {}
+  } catch (e) {
+    toast(e.message, 'error')
+  }
+}
+
+async function openSmtp() {
+  await loadMailTemplateDefaults()
+  const draft = {}
+  for (const key of smtpKeys) {
+    draft[key] = config.value[key] || ''
+  }
+  for (const item of mailTemplateKinds) {
+    if (!draft[item.subjectKey]) draft[item.subjectKey] = mailTemplateDefaults.value[item.subjectKey] || ''
+    if (!draft[item.htmlKey]) draft[item.htmlKey] = mailTemplateDefaults.value[item.htmlKey] || ''
+  }
+  smtpDraft.value = draft
+  templateKind.value = 'registration'
+  mailTo.value = ''
+  smtpOpen.value = true
+}
+
+function setDraftBool(key, event) {
+  smtpDraft.value[key] = event.target.checked ? 'true' : 'false'
+}
+
+function replaceTokens(raw, vars) {
+  return String(raw || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => vars[key] ?? '')
+}
+
+function insertPlaceholder(name) {
+  const token = `{{${name}}}`
+  const editor = htmlEditor.value
+  if (!editor) {
+    smtpDraft.value[currentTemplate.value.htmlKey] = (smtpDraft.value[currentTemplate.value.htmlKey] || '') + token
+    return
+  }
+  const start = editor.selectionStart ?? editor.value.length
+  const end = editor.selectionEnd ?? start
+  const current = editor.value || ''
+  smtpDraft.value[currentTemplate.value.htmlKey] = current.slice(0, start) + token + current.slice(end)
+  requestAnimationFrame(() => {
+    editor.focus()
+    editor.selectionStart = editor.selectionEnd = start + token.length
+  })
+}
+
+function resetCurrentTemplate() {
+  const item = currentTemplate.value
+  smtpDraft.value[item.subjectKey] = mailTemplateDefaults.value[item.subjectKey] || ''
+  smtpDraft.value[item.htmlKey] = mailTemplateDefaults.value[item.htmlKey] || ''
+  toast('已恢复默认模板，保存后生效')
+}
+
+function smtpPayload() {
+  const payload = {}
+  for (const key of smtpKeys) {
+    payload[key] = smtpDraft.value[key] || ''
+  }
+  return payload
+}
+
+async function persistSmtpDraft() {
+  const res = await http.put('/admin/config', smtpPayload())
+  config.value = { ...config.value, ...res.data }
+  return res.data
+}
+
 async function saveSmtp() {
   savingSmtp.value = true
   try {
-    await persistConfig()
+    await persistSmtpDraft()
     smtpOpen.value = false
-    toast('SMTP 设置已保存，立即生效')
+    toast('邮件设置已保存并生效')
   } catch (e) {
     toast(e.message, 'error')
   } finally {
@@ -127,8 +262,9 @@ async function testMail() {
   }
   testingMail.value = true
   try {
+    await persistSmtpDraft()
     await http.post('/admin/mail/test', { to: mailTo.value.trim() })
-    toast('测试邮件已发送，请检查收件箱')
+    toast('设置已保存，测试邮件已发送')
   } catch (e) {
     toast(e.message, 'error')
   } finally {
@@ -361,7 +497,7 @@ function formatBytes(bytes) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadAiStatus(), loadRuntime()])
+  await Promise.all([loadConfig(), loadAiStatus(), loadRuntime(), loadMailTemplateDefaults()])
 })
 </script>
 
@@ -370,39 +506,41 @@ onMounted(async () => {
     <div v-if="loading" class="adm-loading">正在读取设置…</div>
 
     <template v-else>
-      <div v-if="activeTab === 'smtp'" class="adm-settings-grid">
-        <section class="adm-card">
-          <div class="adm-card-head">
-            <div><span class="adm-card-kicker">SMTP</span><h2>邮件发送</h2></div>
-            <span class="adm-status" :class="boolValue(config.smtpEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.smtpEnabled) ? '已启用' : '未启用' }}</span>
+      <div v-if="activeTab === 'smtp'" class="smtp-stage">
+        <section class="adm-card smtp-hero-card">
+          <div class="smtp-hero-art" aria-hidden="true">
+            <div class="smtp-orbit orbit-one"></div>
+            <div class="smtp-orbit orbit-two"></div>
+            <div class="smtp-envelope">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="5" width="18" height="14" rx="2.5" />
+                <path d="m4 7 8 6 8-6" />
+              </svg>
+            </div>
+            <span class="smtp-signal">SMTP</span>
           </div>
-          <dl class="adm-facts">
-            <div><dt>SMTP 主机</dt><dd>{{ config.smtpHost || '—' }}</dd></div>
-            <div><dt>端口 / 加密</dt><dd>{{ config.smtpPort || '—' }} · {{ boolValue(config.smtpSsl) ? 'SSL' : boolValue(config.smtpStarttls) ? 'STARTTLS' : '无' }}</dd></div>
-            <div><dt>登录账号</dt><dd>{{ config.smtpUsername || '—' }}</dd></div>
-            <div><dt>发件人</dt><dd>{{ config.smtpFrom || config.smtpUsername || '—' }}</dd></div>
-            <div><dt>授权码</dt><dd>{{ config.smtpPasswordSet === 'true' ? '已设置' : '未设置' }}</dd></div>
-          </dl>
-          <div class="adm-form-actions">
-            <button class="btn" type="button" @click="smtpOpen = true">配置 SMTP</button>
-            <span class="adm-note">敏感密钥不会回显，弹窗中留空表示沿用旧值。</span>
+          <div class="smtp-hero-copy">
+            <span class="adm-card-kicker">MAIL DELIVERY</span>
+            <h2>邮件发送</h2>
+            <p>连接配置、HTML 邮件模板与测试邮件，都收进一个配置入口。页面不再展示主机、账号等敏感细节。</p>
+            <div class="smtp-hero-tags flex flex-wrap gap-2">
+              <span>可视化编辑</span>
+              <span>实时预览</span>
+              <span>保存后生效</span>
+            </div>
+          </div>
+          <div class="smtp-hero-action">
+            <span class="adm-status" :class="boolValue(config.smtpEnabled) ? 'is-published' : 'is-draft'">
+              {{ boolValue(config.smtpEnabled) ? '邮件服务已启用' : '邮件服务未启用' }}
+            </span>
+            <button class="btn" type="button" @click="openSmtp">配置邮箱</button>
           </div>
         </section>
-        <aside class="adm-side-stack">
-          <section class="adm-card">
-            <div class="adm-card-head"><div><span class="adm-card-kicker">TEST</span><h2>发送测试邮件</h2></div></div>
-            <div class="field">
-              <label for="mailTo">收件邮箱</label>
-              <input id="mailTo" v-model="mailTo" type="email" placeholder="you@example.com" />
-            </div>
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="testingMail" @click="testMail">{{ testingMail ? '发送中…' : '发送测试邮件' }}</button>
-            <p class="adm-note">测试使用已保存的设置；如果刚修改参数，请先在弹窗里保存。</p>
-          </section>
-          <section class="adm-card">
-            <div class="adm-card-head"><div><span class="adm-card-kicker">NOTE</span><h2>用途</h2></div></div>
-            <p class="adm-note">SMTP 用于找回密码、注册验证码和后台测试邮件。开启注册邮箱验证前，必须保证这里已正确配置。</p>
-          </section>
-        </aside>
+        <div class="smtp-caption">
+          <span>邮件用于注册验证与密码找回</span>
+          <span class="smtp-caption-line"></span>
+          <span>所有修改只有点击“保存设置”后才会生效</span>
+        </div>
       </div>
 
       <div v-else-if="activeTab === 'update'" class="adm-update-wrap">
@@ -485,11 +623,11 @@ onMounted(async () => {
             </div>
             <div class="field span-2">
               <label class="adm-switch-label">
-                <span>注册必须验证邮箱</span>
+                <span>开启邮箱验证（注册验证码 / 找回密码）</span>
                 <input type="checkbox" :checked="boolValue(config.registrationVerifyEmail)" @change="setBool('registrationVerifyEmail', $event)" />
                 <i class="adm-switch" aria-hidden="true"></i>
               </label>
-              <p class="adm-note">开启后，注册前必须获取并填写邮箱验证码；需要可用的 SMTP 服务。该开关独立保存，关闭后注册仅需用户名、邮箱和密码。</p>
+              <p class="adm-note">开启后，注册必须获取并填写邮箱验证码，同时开放邮箱找回密码；需要可用的 SMTP 服务。关闭后注册只需邮箱、密码与本地图形验证码，找回密码入口会同步停用。</p>
             </div>
           </div>
           <div class="adm-form-actions">
@@ -500,10 +638,10 @@ onMounted(async () => {
           <section class="adm-card">
             <div class="adm-card-head"><div><span class="adm-card-kicker">FLOW</span><h2>注册流程</h2></div></div>
             <ol class="adm-flow-list">
-              <li>填写邮箱并点击“获取验证码”</li>
-              <li>验证码 10 分钟内有效，同一邮箱 60 秒内不可重复发送</li>
-              <li>填写验证码、用户名与密码完成注册</li>
-              <li>注册成功后自动登录</li>
+              <li>填写邮箱；邮箱即用户名</li>
+              <li>完成本地图形验证码</li>
+              <li>按开关决定是否填写邮箱验证码</li>
+              <li>填写密码，注册成功后自动登录</li>
             </ol>
           </section>
           <section class="adm-card">
@@ -511,8 +649,10 @@ onMounted(async () => {
             <dl class="adm-facts">
               <div><dt>SMTP</dt><dd>{{ boolValue(config.smtpEnabled) ? '已启用' : '未启用' }}</dd></div>
               <div><dt>注册</dt><dd>{{ boolValue(config.registrationEnabled) ? '开放' : '关闭' }}</dd></div>
+              <div><dt>邮箱验证</dt><dd>{{ boolValue(config.registrationVerifyEmail) ? '开启' : '关闭' }}</dd></div>
+              <div><dt>找回密码</dt><dd>{{ boolValue(config.registrationVerifyEmail) ? '可用' : '停用' }}</dd></div>
             </dl>
-            <p v-if="boolValue(config.registrationEnabled) && !boolValue(config.smtpEnabled)" class="adm-note danger-text">注册已开放但 SMTP 未启用，验证码将无法发送。请先配置 SMTP 或关闭注册。</p>
+            <p v-if="boolValue(config.registrationEnabled) && boolValue(config.registrationVerifyEmail) && !boolValue(config.smtpEnabled)" class="adm-note danger-text">注册已开放且要求邮箱验证，但 SMTP 未启用，验证码将无法发送。请先配置 SMTP 或关闭邮箱验证。</p>
           </section>
         </aside>
       </div>
@@ -568,51 +708,122 @@ onMounted(async () => {
       </div>
     </template>
 
-    <div v-if="smtpOpen" class="adm-modal-wrap" @click.self="smtpOpen = false">
-      <div class="adm-modal is-wide">
+    <div v-if="smtpOpen" class="adm-modal-wrap mail-modal-wrap" @click.self="smtpOpen = false">
+      <div class="adm-modal mail-modal">
         <div class="adm-modal-head">
-          <div><span class="adm-card-kicker">SMTP</span><h2>配置 SMTP</h2><p class="meta">敏感密钥保存后不会回显，留空代表沿用旧值。</p></div>
+          <div>
+            <span class="adm-card-kicker">MAIL STUDIO</span>
+            <h2>配置邮箱发送</h2>
+            <p class="meta">左侧编辑发信参数与 HTML 模板，右侧实时预览。敏感密钥不会回显，留空表示沿用旧值。</p>
+          </div>
           <button class="adm-drawer-close" type="button" aria-label="关闭" @click="smtpOpen = false">×</button>
         </div>
-        <div class="form-grid">
-          <div class="field span-2">
-            <label class="adm-switch-label">
-              <span>启用 SMTP 邮件</span>
-              <input type="checkbox" :checked="boolValue(config.smtpEnabled)" @change="setBool('smtpEnabled', $event)" />
-              <i class="adm-switch" aria-hidden="true"></i>
-            </label>
-          </div>
+
+        <div class="mail-config-grid">
+          <label class="mail-check mail-check-lead">
+            <input type="checkbox" :checked="boolValue(smtpDraft.smtpEnabled)" @change="setDraftBool('smtpEnabled', $event)" />
+            <span>启用 SMTP 邮件</span>
+          </label>
           <div class="field">
             <label for="smtpHost">SMTP 主机</label>
-            <input id="smtpHost" v-model="config.smtpHost" type="text" placeholder="smtp.example.com" />
+            <input id="smtpHost" v-model="smtpDraft.smtpHost" type="text" placeholder="smtp.example.com" />
           </div>
           <div class="field">
             <label for="smtpPort">端口</label>
-            <input id="smtpPort" v-model="config.smtpPort" type="number" placeholder="465" />
+            <input id="smtpPort" v-model="smtpDraft.smtpPort" type="number" placeholder="465" />
           </div>
           <div class="field">
             <label for="smtpUsername">登录账号</label>
-            <input id="smtpUsername" v-model="config.smtpUsername" type="text" placeholder="you@example.com" />
+            <input id="smtpUsername" v-model="smtpDraft.smtpUsername" type="text" placeholder="you@example.com" />
           </div>
           <div class="field">
             <label for="smtpPassword">授权码 / 密码</label>
-            <input id="smtpPassword" v-model="config.smtpPassword" type="password" :placeholder="config.smtpPasswordSet === 'true' ? '已设置，留空保持不变' : '请输入 SMTP 密码或授权码'" autocomplete="new-password" />
+            <input id="smtpPassword" v-model="smtpDraft.smtpPassword" type="password" :placeholder="config.smtpPasswordSet === 'true' ? '已设置，留空保持不变' : '请输入 SMTP 密码或授权码'" autocomplete="new-password" />
           </div>
           <div class="field">
             <label for="smtpFrom">发件人地址</label>
-            <input id="smtpFrom" v-model="config.smtpFrom" type="email" placeholder="留空则使用登录账号" />
+            <input id="smtpFrom" v-model="smtpDraft.smtpFrom" type="email" placeholder="留空则使用登录账号" />
           </div>
           <div class="field">
             <label>加密方式</label>
-            <div class="adm-check-row">
-              <label><input type="checkbox" :checked="boolValue(config.smtpSsl)" @change="setBool('smtpSsl', $event)" /> SSL</label>
-              <label><input type="checkbox" :checked="boolValue(config.smtpStarttls)" @change="setBool('smtpStarttls', $event)" /> STARTTLS</label>
+            <div class="mail-check-row">
+              <label class="mail-check"><input type="checkbox" :checked="boolValue(smtpDraft.smtpSsl)" @change="setDraftBool('smtpSsl', $event)" /><span>SSL</span></label>
+              <label class="mail-check"><input type="checkbox" :checked="boolValue(smtpDraft.smtpStarttls)" @change="setDraftBool('smtpStarttls', $event)" /><span>STARTTLS</span></label>
             </div>
           </div>
         </div>
-        <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" @click="smtpOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="savingSmtp" @click="saveSmtp">{{ savingSmtp ? '保存中…' : '保存 SMTP 设置' }}</button>
+
+        <div class="mail-studio">
+          <section class="mail-edit-pane">
+            <div class="mail-pane-head">
+              <div>
+                <span class="adm-card-kicker">EDITOR</span>
+                <h3>邮件模板</h3>
+              </div>
+              <button class="btn-text" type="button" @click="resetCurrentTemplate">恢复默认</button>
+            </div>
+            <div class="mail-template-tabs" role="tablist" aria-label="邮件模板类型">
+              <button
+                v-for="item in mailTemplateKinds"
+                :key="item.key"
+                type="button"
+                :class="{ on: templateKind === item.key }"
+                @click="templateKind = item.key"
+              >{{ item.label }}</button>
+            </div>
+            <div class="field">
+              <label :for="`subject-${templateKind}`">邮件主题</label>
+              <input :id="`subject-${templateKind}`" v-model="smtpDraft[currentTemplate.subjectKey]" type="text" placeholder="邮件主题" />
+            </div>
+            <div class="mail-editor-toolbar">
+              <span>插入变量</span>
+              <button v-for="name in templatePlaceholders" :key="name" type="button" @click="insertPlaceholder(name)">{{ name }}</button>
+            </div>
+            <div class="field mail-html-field">
+              <label :for="`html-${templateKind}`">HTML 源码</label>
+              <textarea
+                :id="`html-${templateKind}`"
+                ref="htmlEditor"
+                v-model="smtpDraft[currentTemplate.htmlKey]"
+                spellcheck="false"
+                placeholder="在这里编辑 HTML 邮件模板"
+              ></textarea>
+            </div>
+          </section>
+
+          <section class="mail-preview-pane">
+            <div class="mail-pane-head">
+              <div>
+                <span class="adm-card-kicker">LIVE PREVIEW</span>
+                <h3>实时预览</h3>
+              </div>
+              <span class="mail-preview-badge">示例数据</span>
+            </div>
+            <div class="mail-preview-subject">
+              <span>主题</span>
+              <strong>{{ previewSubject || '未填写主题' }}</strong>
+            </div>
+            <div class="mail-preview-frame">
+              <iframe :srcdoc="previewHtml" title="邮件模板预览" sandbox=""></iframe>
+            </div>
+            <p class="mail-preview-note">预览使用示例变量；实际发送时会替换为站点名、验证码或重置链接。</p>
+          </section>
+        </div>
+
+        <div class="mail-modal-foot">
+          <div class="mail-test-box">
+            <div class="field">
+              <label for="modalMailTo">测试收件邮箱</label>
+              <input id="modalMailTo" v-model="mailTo" type="email" placeholder="you@example.com" />
+            </div>
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="testingMail" @click="testMail">
+              {{ testingMail ? '发送中…' : '保存并发送测试' }}
+            </button>
+          </div>
+          <div class="adm-modal-actions">
+            <button class="btn btn-ghost" type="button" @click="smtpOpen = false">取消</button>
+            <button class="btn" type="button" :disabled="savingSmtp" @click="saveSmtp">{{ savingSmtp ? '保存中…' : '保存设置' }}</button>
+          </div>
         </div>
       </div>
     </div>

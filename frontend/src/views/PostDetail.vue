@@ -58,9 +58,11 @@ async function toggle(kind) {
     if (kind === 'like') {
       detail.value.liked = res.data.active
       detail.value.post.likes = res.data.count
+      toast(res.data.active ? '已喜欢，作者会收到通知' : '已取消喜欢')
     } else {
       detail.value.favorited = res.data.active
       detail.value.post.favorites = res.data.count
+      toast(res.data.active ? '已收藏，作者会收到通知' : '已取消收藏')
     }
   } catch (e) {
     toast(e.message, 'error')

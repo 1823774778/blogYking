@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import http from '../api'
 import { applyTheme, clearAuth, state, toast } from '../state'
 import { initialOf } from '../utils'
 
@@ -136,7 +137,12 @@ function goTab(tab) {
   router.replace({ path: route.path, query: { ...route.query, tab: tab.key } })
 }
 
-function logout() {
+async function logout() {
+  try {
+    await http.post('/auth/logout')
+  } catch (e) {
+    /* 本地退出仍然生效 */
+  }
   clearAuth()
   toast('已退出登录')
   router.push('/')

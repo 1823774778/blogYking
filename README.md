@@ -1,6 +1,6 @@
 # 墨记 · 前后端分离个人博客
 
-一个可以直接 `java -jar` 跑起来的个人博客：Spring Boot 3 + Vue 3，前端构建产物打进后端 jar，单文件部署。视觉采用 [Firefly](https://github.com/CuteLeaf/Firefly) 风格的薄荷绿主题：悬浮圆角导航、横幅壁纸、三栏首页、圆角半透明卡片。
+一个可以直接 `java -jar` 跑起来的个人博客：Java 17+ / Spring Boot 4 + Vue 3，前端构建产物打进后端 jar，单文件部署。视觉采用 [Firefly](https://github.com/CuteLeaf/Firefly) 风格的薄荷绿主题：悬浮圆角导航、横幅壁纸、三栏首页、圆角半透明卡片。
 
 首次启动不再内置默认账号：打开站点会进入**初始化向导**，由你自己设置管理员账号，并按需填写 MySQL、Redis 连接信息。
 
@@ -16,9 +16,10 @@
 - 管理员当场创建并自动登录；H2 + 不用 Redis 时无需重启
 
 **账号体系**
-- 注册 / 登录（用户名或邮箱均可）/ JWT 无状态鉴权
-- 注册开关：后台可关闭注册；开放注册时可强制邮箱验证码（6 位、10 分钟有效、60 秒冷却）
-- 邮箱找回密码（SMTP 发信，30 分钟一次性令牌）
+- 注册 / 登录：邮箱就是账号，老账号仍可用用户名登录；JWT 同时写入 HttpOnly Cookie，刷新页面不掉登录态
+- 注册始终需要本地图形验证码；站点开启邮箱验证时追加 6 位邮箱验证码（10 分钟有效、60 秒冷却）
+- 邮箱验证关闭时可直接注册（无需邮箱验证码），同时停用找回密码，提示携带账号凭证联系管理员
+- 邮箱找回密码（开启邮箱验证且配置 SMTP 时发信，30 分钟一次性令牌）
 - 个人资料、头像上传、修改密码
 - 账号禁用、角色（读者 / 管理员）
 
@@ -44,7 +45,8 @@
 - 在线更新：从 GitHub Release 下载 `blog.jar`，校验启动类、配置与 SHA-256 后写入待更新区
 - 本地上传保留为弹窗，可与在线更新并行使用
 - 运行状态：`/api/system/health`（数据库产品名、Redis 状态）
-- SMTP 测试按钮，SMTP / AI 配置均以弹窗维护
+- SMTP 页只保留配置入口；弹窗内左侧编辑三套 HTML 邮件模板、右侧实时预览，测试邮件也在弹窗内发送
+- 仪表盘互动通知：点赞、收藏、评论、版本更新自动汇总，支持未读计数与全部已读
 - 存储管理：本地文件按类型分类保存，列表显示上传人 / 文件类型并支持搜索；线上支持 S3 兼容、WebDAV 与 OpenList，切换线上后不显示本地文件
 
 **主题**
@@ -71,11 +73,11 @@
 
 | 层 | 选型 |
 | --- | --- |
-| 后端 | Java 17、Spring Boot 3.2、Spring Security、Spring Data JPA、JJWT、JavaMail |
+| 后端 | Java 17+、Spring Boot 4.2、Spring Security、Spring Data JPA + MyBatis、JJWT、JavaMail、Cookie 会话 |
 | 数据库 | 默认 H2 文件库（零配置）；可在向导里切换 MySQL |
-| 缓存 | Redis 可选（仅用于浏览量去重，未启用时走进程内 Map） |
-| 前端 | Vue 3、Vue Router、Axios、marked + DOMPurify、Vite |
-| 打包 | 前端 `vite build` 输出到 `backend/src/main/resources/static`，Maven 打成可执行 jar（约 74MB） |
+| 缓存 | Redis 可选（浏览量去重；未启用时走进程内 Map） |
+| 前端 | Vue 3、JavaScript、Vite、Axios、Tailwind CSS、marked + DOMPurify |
+| 构建 | 后端 Maven；前端 npm / pnpm；`vite build` 输出到 `backend/src/main/resources/static`，Maven 打成可执行 jar |
 
 ## 目录结构
 
@@ -305,7 +307,9 @@ java -jar blog.jar
 
 - QQ 邮箱 / 163：密码填**授权码**，不是登录密码；端口 465 开 SSL。
 - Gmail：`MAIL_PORT=587`、`MAIL_SSL=false`、`MAIL_STARTTLS=true`。
-- 未开启 SMTP 时，`/api/auth/forgot-password` 会直接把重置链接写在响应里（`devLink`），前端会显示出来，方便本地调试；同时服务端日志也会打印。
+- 后台「站点设置 → SMTP」只显示一个配置入口，点开后可维护主机、账号、模板并发送测试邮件；所有修改需点「保存设置」才生效。
+- 找回密码要求「注册设置」开启邮箱验证。关闭邮箱验证后接口直接返回 400，提示“请携带账号凭证联系管理员更新或找回密码”。
+- 开启邮箱验证但未配置 SMTP 时，`/api/auth/forgot-password` 会返回 `devLink` 方便本地调试，同时服务端日志也会打印。
 
 ### 手动切换 MySQL（不用向导）
 
@@ -326,7 +330,7 @@ java -jar blog.jar --spring.profiles.active=mysql \
 bash scripts/build.sh
 
 # 方式二：手动
-cd frontend && npm install && npm run build      # 产物写入 backend/src/main/resources/static
+cd frontend && npm install && npm run build      # 也可使用 pnpm；产物写入 backend/src/main/resources/static
 cd ../backend && mvn clean package -DskipTests    # 生成 target/blog.jar
 ```
 
@@ -479,11 +483,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.7.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.8.0.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.7.0 blog.jar release-notes/1.7.0.md
+  bash scripts/release-github.sh v1.8.0 blog.jar release-notes/1.8.0.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。
@@ -527,11 +531,13 @@ GH_REPO=1823774778/blogYking \
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/auth/register` | 注册（站点无管理员时拒绝） |
-| POST | `/api/auth/login` | 登录（用户名或邮箱） |
-| GET | `/api/auth/me` | 当前用户（需登录） |
+| GET | `/api/auth/captcha` | 生成一次性本地图形验证码（SVG，5 分钟有效） |
+| POST | `/api/auth/register` | 邮箱注册；参数 `email/password/emailCode/captchaId/captchaAnswer` |
+| POST | `/api/auth/login` | 登录（邮箱或旧用户名），成功后下发 HttpOnly Cookie |
+| POST | `/api/auth/logout` | 清除登录 Cookie |
+| GET | `/api/auth/me` | 当前用户（需登录，支持 Cookie 或 Bearer） |
 | PUT | `/api/auth/profile` | 修改资料 / 密码 |
-| POST | `/api/auth/forgot-password` | 发送重置邮件 |
+| POST | `/api/auth/forgot-password` | 发送重置邮件（要求已开启邮箱验证） |
 | POST | `/api/auth/reset-password` | 用 token 重置密码 |
 | GET | `/api/posts` | 列表，参数 `keyword/tag/sort/page/size` |
 | GET | `/api/posts/{id}` | 详情（含浏览量、是否已赞/已藏） |
@@ -549,6 +555,9 @@ GH_REPO=1823774778/blogYking \
 | GET | `/api/admin/comments` | 评论管理 |
 | GET/PUT | `/api/admin/users` `/api/admin/users/{id}/status` `/api/admin/users/{id}/role` | 用户管理 |
 | GET/PUT | `/api/admin/config` | 站点配置（热更新） |
+| GET | `/api/admin/mail/templates` | 三套默认可恢复的 HTML 邮件模板 |
+| GET | `/api/admin/activity-notices` | 仪表盘互动通知，参数 `limit`，返回列表与未读数 |
+| POST | `/api/admin/activity-notices/read` | 互动通知全部已读 |
 | GET | `/api/admin/storage` | 当前存储方式、连接状态；本地模式附目录统计与分类 |
 | GET | `/api/admin/storage/files` | 本地文件列表，参数 `page/size/keyword/category/uploader`；线上模式拒绝 |
 | DELETE | `/api/admin/storage/files` | 删除本地文件，参数 `path`（兼容旧 `name`） |

@@ -70,13 +70,13 @@ onMounted(async () => {
   } catch (e) {
     /* 站点信息加载失败不阻塞页面 */
   }
-  if (state.token) {
+  if (state.token || !state.user) {
     try {
       const res = await http.get('/auth/me')
       state.user = res.data
       localStorage.setItem('blog_user', JSON.stringify(res.data))
     } catch (e) {
-      /* token 失效由拦截器处理 */
+      /* token / Cookie 失效由拦截器处理 */
     }
   }
 })

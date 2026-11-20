@@ -3,13 +3,17 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import http from '../api'
 import { state, toast } from '../state'
-import { formatDate } from '../utils'
+import { formatDate, formatDateTime } from '../utils'
 
 const route = useRoute()
 const stats = ref(null)
 const recentPosts = ref([])
 const attentionPosts = ref([])
 const attentionComments = ref([])
+const activityItems = ref([])
+const activityUnread = ref(0)
+const activityLoading = ref(false)
+const markingRead = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
 
@@ -64,9 +68,41 @@ async function loadAttention() {
   }
 }
 
+async function loadActivity() {
+  activityLoading.value = true
+  try {
+    const res = await http.get('/admin/activity-notices', { params: { limit: 7 } })
+    activityItems.value = res.data.items || []
+    activityUnread.value = Number(res.data.unread || 0)
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    activityLoading.value = false
+  }
+}
+
+async function markActivityRead() {
+  if (!activityUnread.value) return
+  markingRead.value = true
+  try {
+    await http.post('/admin/activity-notices/read')
+    activityUnread.value = 0
+    activityItems.value = activityItems.value.map((item) => ({ ...item, read: true }))
+    toast('通知已标记为已读')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    markingRead.value = false
+  }
+}
+
+function activityTypeLabel(type) {
+  return ({ LIKE: '喜欢', FAVORITE: '收藏', COMMENT: '评论', UPDATE: '更新' })[type] || '通知'
+}
+
 async function refresh() {
   refreshing.value = true
-  await Promise.all([loadStats(true), loadRecent(), loadAttention()])
+  await Promise.all([loadStats(true), loadRecent(), loadAttention(), loadActivity()])
   refreshing.value = false
 }
 
@@ -75,7 +111,7 @@ watch(activeTab, (tab) => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadStats(), loadRecent(), loadAttention()])
+  await Promise.all([loadStats(), loadRecent(), loadAttention(), loadActivity()])
 })
 </script>
 
@@ -262,19 +298,62 @@ onMounted(async () => {
             </div>
           </section>
 
-          <section class="adm-card adm-quick-card">
+          <section class="adm-card adm-notice-card">
             <div class="adm-card-head">
               <div>
-                <span class="adm-card-kicker">QUICK</span>
-                <h2>快捷入口</h2>
+                <span class="adm-card-kicker">NOTIFICATIONS</span>
+                <h2>互动通知</h2>
+              </div>
+              <button v-if="activityUnread" class="btn-text" type="button" :disabled="markingRead" @click="markActivityRead">
+                {{ markingRead ? '处理中…' : '全部已读' }}
+              </button>
+              <span v-else class="adm-notice-quiet">已读完</span>
+            </div>
+
+            <div class="adm-notice-summary">
+              <span class="adm-notice-count">{{ activityUnread }}</span>
+              <div>
+                <strong>{{ activityUnread ? '条新互动等你查看' : '没有未读通知' }}</strong>
+                <p>{{ activityUnread ? '点赞、收藏、评论和版本更新都会出现在这里。' : '新的互动会实时记录，不必反复刷新。' }}</p>
               </div>
             </div>
-            <div class="adm-quick-grid">
-              <router-link to="/admin/posts/new"><span>写文章</span><b>→</b></router-link>
-              <router-link to="/admin/comments?tab=pending"><span>审评论</span><b>→</b></router-link>
-              <router-link to="/admin/site-info"><span>站点信息</span><b>→</b></router-link>
-              <router-link to="/admin/settings"><span>站点设置</span><b>→</b></router-link>
+
+            <div v-if="activityLoading" class="adm-empty">正在读取通知…</div>
+            <div v-else-if="activityItems.length" class="adm-notice-list">
+              <a
+                v-for="item in activityItems"
+                :key="item.id"
+                class="adm-notice-row"
+                :class="{ unread: !item.read }"
+                :href="item.link || '/admin'"
+              >
+                <span class="adm-notice-icon" :class="`is-${String(item.type).toLowerCase()}`" aria-hidden="true">
+                  <svg v-if="item.type === 'LIKE'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M12 20.5s-8-4.9-8-10.2A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 3.3c0 5.3-8 10.2-8 10.2Z" />
+                  </svg>
+                  <svg v-else-if="item.type === 'FAVORITE'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M6 3h12v18l-6-4.2L6 21V3Z" />
+                  </svg>
+                  <svg v-else-if="item.type === 'COMMENT'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M4 5h16v11H9l-5 4V5Z" />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M12 3v18M3 12h18" />
+                    <circle cx="12" cy="12" r="9" />
+                  </svg>
+                </span>
+                <span class="adm-notice-copy">
+                  <span class="adm-notice-meta">
+                    <b>{{ item.title }}</b>
+                    <i>{{ activityTypeLabel(item.type) }}</i>
+                    <time>{{ formatDateTime(item.createdAt) }}</time>
+                  </span>
+                  <span class="adm-notice-text">{{ item.content }}</span>
+                </span>
+                <span v-if="!item.read" class="adm-notice-dot" aria-label="未读"></span>
+              </a>
             </div>
+            <div v-else class="adm-empty">还没有互动通知。文章收到点赞、收藏或评论后，这里会亮起来。</div>
           </section>
         </aside>
       </div>

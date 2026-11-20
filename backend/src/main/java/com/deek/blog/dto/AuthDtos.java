@@ -4,7 +4,8 @@ import java.time.LocalDateTime;
 
 public class AuthDtos {
 
-    public record RegisterReq(String username, String email, String password, String nickname, String emailCode) {
+    public record RegisterReq(String email, String password, String emailCode,
+                              String captchaId, String captchaAnswer) {
     }
 
     public record EmailCodeReq(String email) {
@@ -31,6 +32,9 @@ public class AuthDtos {
     }
 
     public record MsgResp(String message, String devLink) {
+    }
+
+    public record CaptchaResp(String id, String image, int expiresIn) {
     }
 
     public record ToggleResp(boolean active, long count) {

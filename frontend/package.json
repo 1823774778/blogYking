@@ -1,6 +1,6 @@
 {
   "name": "deek-blog-web",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,6 +17,9 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.17",
     "vite": "^5.4.8"
   }
 }

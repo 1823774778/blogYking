@@ -20,6 +20,7 @@ import com.deek.blog.service.AiService;
 import com.deek.blog.service.AuthService;
 import com.deek.blog.service.CommentService;
 import com.deek.blog.service.MailService;
+import com.deek.blog.service.MailTemplateService;
 import com.deek.blog.service.PostService;
 import com.deek.blog.service.SiteConfigService;
 import com.deek.blog.service.StorageService;
@@ -72,6 +73,7 @@ public class AdminController {
     private final AuthService authService;
     private final SiteConfigService siteConfigService;
     private final MailService mailService;
+    private final MailTemplateService mailTemplateService;
     private final AiService aiService;
     private final StorageService storageService;
     private final PostRepository postRepository;
@@ -81,7 +83,8 @@ public class AdminController {
     private final PostFavoriteRepository favoriteRepository;
 
     public AdminController(PostService postService, CommentService commentService, AuthService authService,
-                           SiteConfigService siteConfigService, MailService mailService, AiService aiService,
+                           SiteConfigService siteConfigService, MailService mailService,
+                           MailTemplateService mailTemplateService, AiService aiService,
                            StorageService storageService, PostRepository postRepository, CommentRepository commentRepository,
                            UserRepository userRepository, PostLikeRepository likeRepository,
                            PostFavoriteRepository favoriteRepository) {
@@ -90,6 +93,7 @@ public class AdminController {
         this.authService = authService;
         this.siteConfigService = siteConfigService;
         this.mailService = mailService;
+        this.mailTemplateService = mailTemplateService;
         this.aiService = aiService;
         this.storageService = storageService;
         this.postRepository = postRepository;
@@ -314,6 +318,11 @@ public class AdminController {
     @PostMapping("/storage/test")
     public ApiResponse<Map<String, Object>> testStorage() {
         return ApiResponse.ok(storageService.testOnline());
+    }
+
+    @GetMapping("/mail/templates")
+    public ApiResponse<Map<String, Object>> mailTemplates() {
+        return ApiResponse.ok(Map.of("defaults", mailTemplateService.defaults()));
     }
 
     @PostMapping("/mail/test")

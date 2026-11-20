@@ -87,10 +87,12 @@ public class RegistrationCodeService {
         return Boolean.parseBoolean(siteConfigService.get().getOrDefault("registrationEnabled", "true"));
     }
 
+    public boolean emailVerificationEnabled() {
+        return Boolean.parseBoolean(siteConfigService.get().getOrDefault("registrationVerifyEmail", "true"));
+    }
+
     public boolean verifyRequired() {
-        Map<String, String> config = siteConfigService.get();
-        return Boolean.parseBoolean(config.getOrDefault("registrationEnabled", "true"))
-                && Boolean.parseBoolean(config.getOrDefault("registrationVerifyEmail", "false"));
+        return registrationOpen() && emailVerificationEnabled();
     }
 
     private String normalize(String email) {

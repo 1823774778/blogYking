@@ -49,6 +49,16 @@ public class MysqlSchemaMigration implements ApplicationRunner {
             }
         }
 
+        // 1.8.0 起邮箱即用户名，旧库 username 只有 VARCHAR(32)，放不下长邮箱。
+        List<Long> usernameLengths = jdbcTemplate.queryForList(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                        + "WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'username'",
+                Long.class);
+        if (!usernameLengths.isEmpty() && usernameLengths.get(0) != null && usernameLengths.get(0) < 128) {
+            jdbcTemplate.execute("ALTER TABLE users MODIFY COLUMN username VARCHAR(128) NOT NULL");
+            log.info("MySQL 旧库兼容：users.username 已从 VARCHAR({}) 升级为 VARCHAR(128)", usernameLengths.get(0));
+        }
+
         // 旧评论表新增 status 字段后，历史行可能是空字符串；这些评论应当继续显示。
         List<String> commentStatusColumns = jdbcTemplate.queryForList(
                 "SELECT data_type FROM information_schema.columns "

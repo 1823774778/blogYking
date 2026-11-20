@@ -7,11 +7,13 @@ import { setAuth, state, toast } from '../state'
 const route = useRoute()
 const router = useRouter()
 
-const form = ref({ username: '', email: '', nickname: '', password: '', confirm: '', emailCode: '' })
+const form = ref({ email: '', password: '', confirm: '', emailCode: '', captchaAnswer: '' })
 const loading = ref(false)
 const error = ref('')
 const codeLoading = ref(false)
 const countdown = ref(0)
+const captcha = ref({ id: '', image: '' })
+const captchaLoading = ref(false)
 let timer = null
 
 const registrationOpen = computed(() => String(state.site.registrationEnabled ?? 'true').toLowerCase() !== 'false')
@@ -27,6 +29,20 @@ async function loadMeta() {
     state.site = { ...state.site, ...res.data }
   } catch (e) {
     /* 公开配置读取失败时按默认开放处理 */
+  }
+}
+
+async function loadCaptcha() {
+  captchaLoading.value = true
+  form.value.captchaAnswer = ''
+  try {
+    const res = await http.get('/auth/captcha')
+    captcha.value = { id: res.data.id, image: res.data.image }
+  } catch (e) {
+    error.value = e.message
+    captcha.value = { id: '', image: '' }
+  } finally {
+    captchaLoading.value = false
   }
 }
 
@@ -67,16 +83,20 @@ async function submit() {
     error.value = '注册暂未开放'
     return
   }
-  if (!/^[A-Za-z0-9_]{3,20}$/.test(f.username.trim())) {
-    error.value = '用户名需为 3-20 位字母、数字或下划线'
-    return
-  }
   if (!validEmail(f.email)) {
     error.value = '邮箱格式不正确'
     return
   }
   if (needEmailCode.value && !/^\d{6}$/.test(f.emailCode.trim())) {
     error.value = '请输入 6 位邮箱验证码'
+    return
+  }
+  if (!f.captchaAnswer.trim()) {
+    error.value = '请填写图片验证码的计算结果'
+    return
+  }
+  if (!captcha.value.id) {
+    error.value = '验证码已失效，请点击图片刷新'
     return
   }
   if (f.password.length < 6) {
@@ -90,11 +110,11 @@ async function submit() {
   loading.value = true
   try {
     const res = await http.post('/auth/register', {
-      username: f.username.trim(),
       email: f.email.trim(),
-      nickname: f.nickname.trim(),
       password: f.password,
-      emailCode: needEmailCode.value ? f.emailCode.trim() : ''
+      emailCode: needEmailCode.value ? f.emailCode.trim() : '',
+      captchaId: captcha.value.id,
+      captchaAnswer: f.captchaAnswer.trim()
     })
     setAuth(res.data.token, res.data.user)
     toast('注册成功，欢迎')
@@ -102,26 +122,34 @@ async function submit() {
     router.push(redirect)
   } catch (e) {
     error.value = e.message
+    await loadCaptcha()
   } finally {
     loading.value = false
   }
 }
 
-onMounted(loadMeta)
+onMounted(async () => {
+  await Promise.all([loadMeta(), loadCaptcha()])
+})
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
 })
 </script>
 
 <template>
-  <div class="auth-page">
+  <div class="auth-page auth-page-register">
     <div class="auth-intro">
-      <span class="hero-eyebrow">Join us</span>
-      <h2>注册一个账号，<br />在这块地上留下脚印。</h2>
-      <p>注册后可以评论、收藏喜欢的文章。邮箱会用于找回密码与注册验证，不会公开展示。</p>
+      <span class="hero-eyebrow">Create your space</span>
+      <h2>用邮箱开一扇门，<br />把想法留在这里。</h2>
+      <p>账号就是你的邮箱，不用再记第二个名字。注册后可以评论、收藏文章，也能在个人中心维护自己的资料。</p>
+      <ul class="auth-points">
+        <li><b>01</b><span>邮箱即用户名，登录更直接</span></li>
+        <li><b>02</b><span>本地图形验证码，不依赖第三方</span></li>
+        <li><b>03</b><span>邮箱验证开关由站长统一控制</span></li>
+      </ul>
     </div>
 
-    <div class="auth-card">
+    <div class="auth-card auth-card-register">
       <div v-if="!registrationOpen" class="auth-closed">
         <span class="hero-eyebrow">Registration closed</span>
         <h2>注册暂未开放</h2>
@@ -130,15 +158,21 @@ onBeforeUnmount(() => {
       </div>
 
       <template v-else>
-        <h2>注册</h2>
-        <p class="sub">{{ needEmailCode ? '填写邮箱验证码，一分钟完成注册' : '一分钟，就够了' }}</p>
+        <div class="auth-card-head flex items-start justify-between gap-4">
+          <div>
+            <span class="hero-eyebrow">Join the journal</span>
+            <h2>创建账号</h2>
+            <p class="sub">{{ needEmailCode ? '邮箱验证 + 本地验证码，一分钟完成' : '邮箱即账号，填写密码即可注册' }}</p>
+          </div>
+          <span class="auth-step-pill">01 / 01</span>
+        </div>
 
         <div v-if="error" class="form-error">{{ error }}</div>
 
         <form @submit.prevent="submit">
           <div class="field">
-            <label for="email">邮箱</label>
-            <input id="email" v-model="form.email" type="email" autocomplete="email" placeholder="用于找回密码与注册验证" />
+            <label for="email">邮箱 · 同时也是用户名</label>
+            <input id="email" v-model="form.email" type="email" autocomplete="email" placeholder="you@example.com" />
           </div>
           <div v-if="needEmailCode" class="field">
             <label for="emailCode">邮箱验证码</label>
@@ -149,14 +183,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
-          <div class="field">
-            <label for="username">用户名</label>
-            <input id="username" v-model="form.username" type="text" autocomplete="username" placeholder="3-20 位字母、数字或下划线" />
-          </div>
-          <div class="field">
-            <label for="nickname">昵称（可选）</label>
-            <input id="nickname" v-model="form.nickname" type="text" placeholder="显示在评论里的名字" />
-          </div>
+          <p v-else class="auth-inline-note">本站未开启邮箱验证，本次注册不需要邮箱验证码。</p>
           <div class="field">
             <label for="password">密码</label>
             <input id="password" v-model="form.password" type="password" autocomplete="new-password" placeholder="至少 6 位" />
@@ -165,8 +192,19 @@ onBeforeUnmount(() => {
             <label for="confirm">确认密码</label>
             <input id="confirm" v-model="form.confirm" type="password" autocomplete="new-password" placeholder="再输一次" />
           </div>
-          <button class="btn" type="submit" style="width: 100%" :disabled="loading">
-            {{ loading ? '注册中…' : '注册' }}
+          <div class="field">
+            <label for="captchaAnswer">安全验证 · 请计算图片中的结果</label>
+            <div class="auth-captcha-row">
+              <input id="captchaAnswer" v-model="form.captchaAnswer" type="text" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="填写计算结果" />
+              <button class="auth-captcha-image" type="button" :disabled="captchaLoading" title="点击刷新验证码" @click="loadCaptcha">
+                <img v-if="captcha.image" :src="captcha.image" alt="图形验证码" />
+                <span v-else>{{ captchaLoading ? '刷新中…' : '点击加载' }}</span>
+              </button>
+            </div>
+            <p class="auth-field-hint">看不清？点击右侧图片换一道题。</p>
+          </div>
+          <button class="btn auth-submit" type="submit" :disabled="loading">
+            {{ loading ? '注册中…' : '创建账号' }}
           </button>
         </form>
 
