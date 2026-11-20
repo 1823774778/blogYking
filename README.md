@@ -403,34 +403,25 @@ server {
 
 后台修改文章、评论、站点配置，写入数据库后立即对所有请求生效，没有本地缓存，也不需要重新打包。
 
-**2. 版本级更新（上传 jar + 备份 + 替换 + 重启）**
+**2. 版本级更新（GitHub Release 下载 + 备份 + 替换 + 重启）**
 
-后台顶部「更新」页支持直接选择本机的新 `blog.jar`：
+后台「站点更新」不再提供本地上传入口，只从 GitHub Release 读取版本并下载资产：
 
-1. 选择 jar → **上传并校验**：只写入 `updates/staging`，校验 Spring Boot 启动类、应用配置、文件完整性、SHA-256 与磁盘空间，不会立刻重启。
-2. 校验通过后点 **立即更新并重启**：写入 `updates/ota-state.properties`，启动独立的 `updater.jar` 进程。
-3. updater 备份当前 jar 到 `updates/backups/`，替换 `blog.jar`，启动新进程，轮询 `/api/system/version` 的 `instanceId` 做健康检查。
-4. 新版本 45 秒内未通过健康检查时，自动结束新进程、恢复备份、重新启动旧版本，并把状态写成 `ROLLED_BACK`。
-5. 页面会自动重连并对比目标 SHA-256，成功显示「更新成功」，回滚显示失败原因。
+1. 页面读取最新与历史 Release；右上角显示「暂无更新」或「下载安装」。
+2. 点「下载安装」后，后端创建持久化下载任务，记录版本、总大小、已下载字节、状态与错误信息；页面按钮变为带进度的「下载 xx%」。
+3. 下载任务写入 `ota_download_tasks` 表，切换路由或刷新页面会按任务 ID 重新接上进度；服务重启会把未完成任务标记为失败，避免留下假进度。
+4. 下载完成后复用上传校验逻辑：检查 Spring Boot 启动类、应用配置、文件完整性、SHA-256 与磁盘空间，通过后进入待安装区。
+5. 点右上角「安装 vX」后备份当前 jar 到 `updates/backups/`，由独立 `updater.jar` 替换并重启；独立运行模式健康检查失败会自动回滚。
+6. 历史版本展开后可「回档到此版本」，先下载旧包，再显示回档风险确认；安装仍需管理员再次确认。
+
+代理与缓存：
+
+- 右上角「代理前缀」可配置 Release 资产下载代理，保存到数据库。留空为直连；只填域名会自动补 `https://` 和末尾 `/`；默认推荐 `https://ghfast.top/`。
+- 「清理缓存」会清空 GitHub Releases 列表缓存，下一次读取重新请求 GitHub API。
+- GitHub 未认证 API 每小时只有 60 次，建议启动环境配置 `GITHUB_TOKEN`（只需公开仓库读取权限），token 不会返回前端。
 
 版本探针：`GET /api/system/version` → `{ version, buildTime, instanceId, pid, uptimeSeconds, ... }`。
 `instanceId` 每次 JVM 启动都会变化，用于区分「同一个版本被重新拉起」和「没有重启」。
-
-**GitHub Releases 更新内容**
-
-后台「更新」页还会读取 <https://github.com/1823774778/blogYking/releases>：
-
-- 最新稳定版本、发布时间、完整更新说明；
-- 更早的历史版本列表，可逐个展开查看更新内容；
-- 每个版本提供 GitHub Release 与 `blog.jar` 资产入口；
-- 根据当前运行版本计算「当前已是最新 / 可更新到 vX.Y.Z」。
-
-实现只读取 GitHub API，不自动下载或执行 Release 资产；下载 jar 后仍需在下方走「上传并校验 → 立即更新」流程。
-
-- 默认缓存 10 分钟，避免频繁请求 GitHub；点「刷新发布信息」可强制重新读取。
-- GitHub 未认证 API 每小时只有 60 次。服务器共享出口 IP 时可能触发限流；建议在启动环境配置 `GITHUB_TOKEN`（只需公开仓库读取权限），token 不会返回前端。
-- 读取失败时会回退到上一次成功缓存，并在页面显示错误原因与缓存时间。
-- 仓库为公开仓库；如果改为私有仓库，必须配置 `GITHUB_TOKEN`，否则 API 会返回 404。
 
 **运行模式**
 
@@ -467,11 +458,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.4.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.6.0.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.4.0 blog.jar release-notes/1.4.0.md
+  bash scripts/release-github.sh v1.6.0 blog.jar release-notes/1.6.0.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。
@@ -504,7 +495,9 @@ GH_REPO=1823774778/blogYking \
 | --- | --- | --- |
 | GET | `/api/admin/ota/status` | 当前版本/SHA、运行模式、待更新包、上次更新结果 |
 | GET | `/api/admin/ota/releases` | GitHub 最新/历史 Release、更新内容、jar 资产信息；`refresh=1` 强制刷新 |
-| POST | `/api/admin/ota/upload` | `multipart/form-data` 字段 `file`，上传并校验 jar |
+| POST | `/api/admin/ota/download` | 创建 Release 下载任务，body `{tag, mode}`；`mode=ROLLBACK` 表示回档 |
+| GET | `/api/admin/ota/download/status` | 下载任务进度与终态，参数 `jobId` |
+| POST | `/api/admin/ota/cache/clear` | 清理 GitHub Releases 列表缓存 |
 | POST | `/api/admin/ota/apply` | 应用待更新包，备份、替换并重启 |
 | DELETE | `/api/admin/ota/pending` | 丢弃已上传但未应用的包 |
 

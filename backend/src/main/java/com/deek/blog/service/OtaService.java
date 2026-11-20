@@ -200,15 +200,11 @@ public class OtaService {
         }
         URI uri;
         try {
-            uri = URI.create(rawUrl == null ? "" : rawUrl.trim());
+            uri = checkedGithubAssetUri(rawUrl);
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
             throw new BizException("下载地址不合法");
-        }
-        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
-        if (!"https".equalsIgnoreCase(uri.getScheme())
-                || !(host.equals("github.com")
-                || host.endsWith(".githubusercontent.com"))) {
-            throw new BizException("只允许从 GitHub Release 下载更新包");
         }
         String fileName = safeFileName(rawFileName);
         if (!fileName.toLowerCase().endsWith(".jar")) {
@@ -263,8 +259,34 @@ public class OtaService {
         }
     }
 
-    private PendingInfo stageJar(Path temp, String originalName, long size, String source) throws IOException {
-        JarMeta meta = inspectJar(temp);
+    /** 下载任务使用的临时文件，统一落在 staging 目录。 */
+    public Path createDownloadPart(String prefix) throws IOException {
+        return Files.createTempFile(stagingDir, prefix, ".part");
+    }
+
+    /** 下载完成后复用上传/在线下载相同的 jar 校验与待更新落盘逻辑。 */
+    public synchronized PendingInfo stageDownloadedJar(Path temp, String fileName, long size, String source)
+            throws IOException {
+        return stageJar(temp, fileName, size, source);
+    }
+
+    /** 只允许 GitHub Release 资产地址；代理只改变实际请求地址，不改目标来源。 */
+    public static URI checkedGithubAssetUri(String rawUrl) {
+        URI uri;
+        try {
+            uri = URI.create(rawUrl == null ? "" : rawUrl.trim());
+        } catch (Exception e) {
+            throw new BizException("下载地址不合法");
+        }
+        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || !(host.equals("github.com") || host.endsWith(".githubusercontent.com"))) {
+            throw new BizException("只允许从 GitHub Release 下载更新包");
+        }
+        return uri;
+    }
+
+    private PendingInfo stageJar(Path temp, String originalName, long size, String source) throws IOException {        JarMeta meta = inspectJar(temp);
         if (meta.sha256().equalsIgnoreCase(currentSha)) {
             throw new BizException("这个 jar 与当前运行的版本完全相同，无需更新");
         }

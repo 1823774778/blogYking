@@ -67,8 +67,7 @@ public class GithubReleaseService {
     /**
      * 读取发布列表。{@code refresh=true} 时跳过硬缓存，但仍会在失败时回退到已有缓存。
      */
-    public synchronized ReleasesView releases(String currentVersion, boolean refresh) {
-        Cache cached = cache;
+    public synchronized ReleasesView releases(String currentVersion, boolean refresh) {        Cache cached = cache;
         Instant now = Instant.now();
         if (!refresh && cached != null && cacheSeconds > 0
                 && cached.fetchedAt().plusSeconds(cacheSeconds).isAfter(now)) {
@@ -88,6 +87,11 @@ public class GithubReleaseService {
             }
             return view(List.of(), currentVersion, now, false, true, message);
         }
+    }
+
+    /** 清除 Release 列表缓存，下一次读取会重新请求 GitHub API。 */
+    public synchronized void clearCache() {
+        cache = null;
     }
 
     private List<ReleaseInfo> fetch() throws IOException, InterruptedException {

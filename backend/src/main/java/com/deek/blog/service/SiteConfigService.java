@@ -31,7 +31,8 @@ public class SiteConfigService {
             "aiCommentReviewPrompt", "aiCommentSummaryPrompt", "aiSummaryPrompt",
             "storageProvider", "storageEndpoint", "storageBucket", "storageRegion",
             "storageAccessKey", "storageSecretKey", "storagePublicBaseUrl",
-            "storagePathPrefix", "storagePathStyle");
+            "storagePathPrefix", "storagePathStyle",
+            "otaDownloadProxyPrefix");
 
     private final SiteConfigRepository repository;
 
@@ -95,6 +96,7 @@ public class SiteConfigService {
         map.put("storagePublicBaseUrl", "");
         map.put("storagePathPrefix", "blog");
         map.put("storagePathStyle", "true");
+        map.put("otaDownloadProxyPrefix", "");
         return map;
     }
 

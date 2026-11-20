@@ -1,20 +1,55 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import http from '../../api'
 import { toast } from '../../state'
 import { formatDateTime } from '../../utils'
 import MarkdownBody from '../MarkdownBody.vue'
 
+const JOB_KEY = 'blog_ota_download_job'
+
 const ota = ref(null)
 const otaApplying = ref(false)
-const downloading = ref(false)
-const downloadTarget = ref('')
-const latestExpanded = ref(false)
 const releases = ref(null)
 const releasesLoading = ref(false)
+const cacheClearing = ref(false)
+const latestExpanded = ref(false)
 const expandedRelease = ref('')
+const downloadJob = ref(null)
+const downloadStarting = ref(false)
+const config = ref({})
+const proxyOpen = ref(false)
+const proxyInput = ref('')
+const proxySaving = ref(false)
+const rollbackTarget = ref(null)
+
 let otaTimer = null
+let downloadTimer = null
 let releasesRequest = 0
+
+const jobRunning = computed(() => downloadJob.value?.status === 'RUNNING')
+const downloadPercent = computed(() => {
+  if (!jobRunning.value) return 0
+  return Math.max(0, Math.min(100, Number(downloadJob.value?.percent) || 0))
+})
+const pendingIsRollback = computed(() => {
+  if (!ota.value?.pending) return false
+  if (downloadJob.value?.mode === 'ROLLBACK') return true
+  return compareVersions(ota.value.pending.version, ota.value.version) < 0
+})
+const primaryLabel = computed(() => {
+  if (otaApplying.value) return '正在安装…'
+  if (downloadStarting.value) return '开始下载…'
+  if (jobRunning.value) return `下载 ${downloadPercent.value}%`
+  if (ota.value?.pending) return `安装 v${ota.value.pending.version}`
+  if (releasesLoading.value && !releases.value) return '检查中…'
+  if (releases.value?.updateAvailable) return '下载安装'
+  if (!releasesLoading.value && !releases.value?.latest) return '读取失败'
+  return '暂无更新'
+})
+const primaryDisabled = computed(() =>
+  otaApplying.value || jobRunning.value || downloadStarting.value || (releasesLoading.value && !releases.value)
+)
+const proxyConfigured = computed(() => Boolean(String(config.value.otaDownloadProxyPrefix || '').trim()))
 
 async function loadOta() {
   try {
@@ -42,65 +77,170 @@ async function loadReleases(refresh = false) {
   }
 }
 
+async function loadConfig() {
+  try {
+    config.value = (await http.get('/admin/config')).data || {}
+  } catch (e) {
+    // 代理设置读不到时仍允许查看更新，不阻断页面
+  }
+}
+
 function refreshAll() {
   loadOta()
   loadReleases(true)
-}
-
-function safeReleaseLink(url) {
-  return typeof url === 'string' && /^https:\/\/github\.com\//.test(url) ? url : ''
-}
-
-function toggleRelease(tag) {
-  expandedRelease.value = expandedRelease.value === tag ? '' : tag
 }
 
 function toggleLatestContent() {
   latestExpanded.value = !latestExpanded.value
 }
 
-async function onlineUpdate() {
-  if (downloading.value || otaApplying.value) return
-  const latest = releases.value?.latest
-  if (!latest) {
-    toast('还没有读取到可用的 Release', 'error')
+function toggleRelease(tag) {
+  expandedRelease.value = expandedRelease.value === tag ? '' : tag
+}
+
+async function primaryAction() {
+  if (primaryDisabled.value) return
+  if (ota.value?.pending) {
+    await applyOta()
     return
   }
-  if (!releases.value?.updateAvailable) {
-    toast('当前已是最新版本，无需在线更新', 'error')
+  if (releases.value?.updateAvailable) {
+    if (!releases.value.latest) {
+      toast('还没有读取到可用的 Release', 'error')
+      return
+    }
+    await startDownload(releases.value.latest, 'UPDATE')
     return
   }
-  if (!latest.jarAsset) {
+  refreshAll()
+}
+
+function rememberJob(job) {
+  downloadJob.value = job
+  if (job?.id) {
+    localStorage.setItem(JOB_KEY, job.id)
+  }
+}
+
+function forgetJob() {
+  downloadJob.value = null
+  localStorage.removeItem(JOB_KEY)
+  stopDownloadPoll()
+}
+
+async function startDownload(release, mode = 'UPDATE') {
+  if (downloadStarting.value || jobRunning.value || otaApplying.value) return
+  if (!release?.jarAsset) {
     toast('这个 Release 没有提供 jar 资产', 'error')
     return
   }
-  downloading.value = true
-  downloadTarget.value = latest.version
+  downloadStarting.value = true
   try {
-    const res = await http.post('/admin/ota/download', { tag: latest.tag }, { timeout: 180000 })
-    toast(`已从 GitHub 下载并校验通过：${res.data.version}，确认后可立即更新`)
-    await loadOta()
-    await loadReleases()
+    const res = await http.post('/admin/ota/download', {
+      tag: release.tag,
+      mode
+    }, { timeout: 30000 })
+    rememberJob(res.data)
+    toast(mode === 'ROLLBACK'
+      ? `开始下载 v${release.version}，完成后可回档安装`
+      : `开始下载 v${release.version}`)
+    pollDownload(res.data.id)
   } catch (e) {
     toast(e.message, 'error')
   } finally {
-    downloading.value = false
-    downloadTarget.value = ''
+    downloadStarting.value = false
+  }
+}
+
+async function pollDownload(jobId) {
+  stopDownloadPoll()
+  const tick = async () => {
+    if (!downloadJob.value || downloadJob.value.id !== jobId) return
+    const previousStatus = downloadJob.value?.status
+    try {
+      const res = await http.get('/admin/ota/download/status', {
+        params: { jobId },
+        timeout: 8000
+      })
+      if (!res.data) {
+        forgetJob()
+        return
+      }
+      downloadJob.value = res.data
+      if (res.data.status === 'SUCCESS') {
+        stopDownloadPoll()
+        await Promise.all([loadOta(), loadReleases(false)])
+        if (previousStatus === 'RUNNING') {
+          toast(`v${res.data.version} 下载并校验通过，可安装`)
+        }
+        return
+      }
+      if (res.data.status === 'FAILED') {
+        stopDownloadPoll()
+        localStorage.removeItem(JOB_KEY)
+        toast(res.data.message || '下载失败', 'error')
+        return
+      }
+      downloadTimer = setTimeout(tick, 700)
+    } catch (e) {
+      if (e.status === 401) {
+        stopDownloadPoll()
+        return
+      }
+      downloadTimer = setTimeout(tick, 1500)
+    }
+  }
+  downloadTimer = setTimeout(tick, 250)
+}
+
+async function resumeDownload() {
+  const jobId = localStorage.getItem(JOB_KEY)
+  try {
+    const res = await http.get('/admin/ota/download/status', {
+      params: jobId ? { jobId } : undefined,
+      timeout: 8000
+    })
+    if (!res.data) {
+      if (jobId) forgetJob()
+      return
+    }
+    if (!jobId && res.data.status !== 'RUNNING') return
+    if (!jobId) {
+      rememberJob(res.data)
+    } else {
+      downloadJob.value = res.data
+    }
+    if (res.data.status === 'RUNNING') {
+      pollDownload(res.data.id)
+      return
+    }
+    if (res.data.status === 'FAILED') {
+      localStorage.removeItem(JOB_KEY)
+      downloadJob.value = null
+      toast(res.data.message || '下载失败', 'error')
+      return
+    }
+    if (res.data.status === 'SUCCESS' && !ota.value?.pending) {
+      forgetJob()
+    }
+  } catch (e) {
+    // 页面刚恢复时接口可能尚未就绪，保留任务记录，下次进入再恢复
   }
 }
 
 async function applyOta() {
   if (!ota.value?.pending || otaApplying.value) return
   const target = ota.value.pending
-  const ok = window.confirm(
-    `将备份当前 jar，替换为「${target.fileName}」（版本 ${target.version}），然后重启服务。\n\n更新期间站点会短暂不可用；独立运行时若新版本未通过健康检查，会自动回滚。确定继续？`
-  )
-  if (!ok) return
+  const rollback = pendingIsRollback.value
+  const message = rollback
+    ? `即将回档到 v${target.version}，服务会用旧版本替换当前程序并重启。\n\n风险提示：旧版本可能不兼容新版本产生或修改的数据，回档后新版本功能不可用；请先备份 data、config 与 uploads。\n\n确定回档？`
+    : `将备份当前 jar，替换为「${target.fileName}」（版本 ${target.version}），然后重启服务。\n\n更新期间站点会短暂不可用；独立运行时若新版本未通过健康检查，会自动回滚。确定继续？`
+  if (!window.confirm(message)) return
   otaApplying.value = true
   const baselineSha = ota.value.sha256
   try {
     await http.post('/admin/ota/apply', null, { timeout: 15000 })
-    toast('更新已提交，等待服务重启…')
+    toast(rollback ? '回档已提交，等待服务重启…' : '更新已提交，等待服务重启…')
   } catch (e) {
     if (e.status) {
       otaApplying.value = false
@@ -109,10 +249,10 @@ async function applyOta() {
     }
     toast('服务正在重启，等待新版本上线…')
   }
-  pollOta(target, baselineSha)
+  pollOta(target, baselineSha, rollback)
 }
 
-function pollOta(target, baselineSha) {
+function pollOta(target, baselineSha, rollback) {
   stopOtaPoll()
   const startedAt = Date.now()
   const tick = async () => {
@@ -123,9 +263,10 @@ function pollOta(target, baselineSha) {
       if (res.data.sha256 === target.sha256
           || (last.status === 'SUCCESS' && last.targetSha === target.sha256)) {
         otaApplying.value = false
-        toast(`更新成功，当前版本 ${res.data.version}`)
+        forgetJob()
+        toast(rollback ? `已回档到 ${res.data.version}` : `更新成功，当前版本 ${res.data.version}`)
         loadOta()
-        loadReleases()
+        loadReleases(false)
         return
       }
       if (last.status === 'ROLLED_BACK' || last.status === 'FAILED') {
@@ -154,16 +295,98 @@ function stopOtaPoll() {
   }
 }
 
+function stopDownloadPoll() {
+  if (downloadTimer) {
+    clearTimeout(downloadTimer)
+    downloadTimer = null
+  }
+}
+
 async function cancelPending() {
   if (!ota.value?.pending || otaApplying.value) return
-  if (!window.confirm('确定丢弃已下载、尚未应用的 jar 吗？')) return
+  if (!window.confirm('确定丢弃已下载、尚未安装的 jar 吗？')) return
   try {
     await http.delete('/admin/ota/pending')
-    toast('已取消待更新 jar')
+    forgetJob()
+    toast('已取消待安装 jar')
     loadOta()
   } catch (e) {
     toast(e.message, 'error')
   }
+}
+
+async function clearCache() {
+  if (cacheClearing.value) return
+  cacheClearing.value = true
+  try {
+    await http.post('/admin/ota/cache/clear')
+    toast('已清理 Release 缓存')
+    await loadReleases(true)
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    cacheClearing.value = false
+  }
+}
+
+function openProxy() {
+  proxyInput.value = String(config.value.otaDownloadProxyPrefix || '')
+  proxyOpen.value = true
+}
+
+function useDefaultProxy() {
+  proxyInput.value = 'https://ghfast.top/'
+}
+
+function normalizeProxyInput(raw) {
+  const trimmed = String(raw || '').trim()
+  if (!trimmed) return ''
+  let value = trimmed
+  if (!/^http(s)?:\/\//i.test(value)) value = `https://${value}`
+  if (!value.endsWith('/')) value += '/'
+  const url = new URL(value)
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('只支持 http 或 https')
+  if (!url.hostname) throw new Error('请输入有效域名')
+  if (url.username || url.password) throw new Error('代理前缀不能包含账号密码')
+  return url.toString()
+}
+
+async function saveProxy() {
+  if (proxySaving.value) return
+  let normalized
+  try {
+    normalized = normalizeProxyInput(proxyInput.value)
+  } catch (e) {
+    toast(e.message || '代理前缀无效', 'error')
+    return
+  }
+  proxySaving.value = true
+  try {
+    config.value = (await http.put('/admin/config', {
+      otaDownloadProxyPrefix: normalized
+    })).data || config.value
+    proxyOpen.value = false
+    toast(normalized ? `代理前缀已保存：${normalized}` : '已切换为直连下载')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    proxySaving.value = false
+  }
+}
+
+function openRollback(release) {
+  if (jobRunning.value || otaApplying.value || downloadStarting.value) return
+  if (!release?.jarAsset) {
+    toast('这个 Release 没有提供 jar 资产', 'error')
+    return
+  }
+  rollbackTarget.value = release
+}
+
+function confirmRollback() {
+  const release = rollbackTarget.value
+  rollbackTarget.value = null
+  if (release) startDownload(release, 'ROLLBACK')
 }
 
 function otaModeLabel(mode) {
@@ -181,11 +404,28 @@ function formatBytes(bytes) {
   return `${bytes} B`
 }
 
-onMounted(() => {
-  loadOta()
-  loadReleases()
+function compareVersions(left, right) {
+  const a = String(left || '').split(/[^0-9]+/)
+  const b = String(right || '').split(/[^0-9]+/)
+  const max = Math.max(a.length, b.length)
+  for (let i = 0; i < max; i += 1) {
+    const av = Number(a[i] || 0)
+    const bv = Number(b[i] || 0)
+    if (av !== bv) return av - bv
+  }
+  return 0
+}
+
+onMounted(async () => {
+  await loadOta()
+  loadConfig()
+  await resumeDownload()
+  loadReleases(true)
 })
-onBeforeUnmount(stopOtaPoll)
+onBeforeUnmount(() => {
+  stopOtaPoll()
+  stopDownloadPoll()
+})
 </script>
 
 <template>
@@ -196,7 +436,23 @@ onBeforeUnmount(stopOtaPoll)
         <span class="meta">当前版本 <code>{{ ota?.version || '—' }}</code></span>
       </div>
       <div class="ota-toolbar-actions">
-        <button class="btn btn-ghost btn-sm" type="button" :disabled="releasesLoading" @click="refreshAll">{{ releasesLoading ? '检查中…' : '检查更新' }}</button>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="cacheClearing" @click="clearCache">
+          {{ cacheClearing ? '清理中…' : '清理缓存' }}
+        </button>
+        <button class="btn btn-ghost btn-sm ota-proxy-btn" type="button" @click="openProxy">
+          代理前缀
+          <i v-if="proxyConfigured" class="ota-proxy-dot" aria-hidden="true"></i>
+        </button>
+        <button
+          class="btn ota-primary-action"
+          :class="{ 'is-downloading': jobRunning, 'is-idle': !releases?.updateAvailable && !ota?.pending }"
+          type="button"
+          :disabled="primaryDisabled"
+          @click="primaryAction"
+        >
+          <span v-if="jobRunning" class="ota-btn-progress" :style="{ width: `${downloadPercent}%` }" aria-hidden="true"></span>
+          <span class="ota-btn-label">{{ primaryLabel }}</span>
+        </button>
       </div>
     </div>
 
@@ -205,11 +461,11 @@ onBeforeUnmount(stopOtaPoll)
     <section class="panel ota-online-card">
       <div class="ota-online-head">
         <div>
-          <div class="section-title">在线更新</div>
-          <p class="meta">直接从 GitHub Release 下载 jar，服务端校验启动类、配置和 SHA-256，通过后提示确认更新。</p>
+          <div class="section-title">最新版本</div>
+          <p class="meta">读取 GitHub Release 的版本与更新内容，下载和安装由右上角操作按钮统一发起。</p>
         </div>
         <span v-if="releases?.latest" class="badge" :class="releases.updateAvailable ? 'warn' : 'on'">
-          {{ releases.updateAvailable ? `可更新到 v${releases.latest.version}` : '当前已是最新' }}
+          {{ releases.updateAvailable ? `有更新 v${releases.latest.version}` : '暂无更新' }}
         </span>
       </div>
 
@@ -230,31 +486,27 @@ onBeforeUnmount(stopOtaPoll)
           <div v-if="latestExpanded" class="ota-release-body"><MarkdownBody :content="releases.latest.body" /></div>
         </div>
         <p v-else class="meta ota-release-empty-body">这个版本没有填写更新内容。</p>
-        <div class="ota-action-row">
-          <button class="btn" type="button" :disabled="downloading || otaApplying || !releases.updateAvailable" @click="onlineUpdate">
-            {{ downloading ? `正在下载 v${downloadTarget}…` : releases.updateAvailable ? `在线更新到 v${releases.latest.version}` : '已是最新版本' }}
-          </button>
-          <a v-if="safeReleaseLink(releases.latest.htmlUrl)" class="btn btn-ghost" :href="safeReleaseLink(releases.latest.htmlUrl)" target="_blank" rel="noopener noreferrer">查看 Release</a>
-        </div>
-        <p class="meta ota-action-note">在线更新不会接受任意 URL，只使用该 Release 提供的 jar 资产；下载校验通过后才会出现“立即更新并重启”。</p>
       </div>
       <div v-else-if="!releasesLoading" class="ota-release-empty">
         <p>{{ releases?.error || '还没有读取到发布版本。' }}</p>
-        <button class="btn btn-ghost btn-sm" type="button" @click="loadReleases(true)">重新读取</button>
+        <p class="meta">可点击右上角“清理缓存”后重新读取。</p>
       </div>
     </section>
 
     <section v-if="ota?.pending" class="panel ota-pending">
       <div class="ota-pending-head"><div><span class="badge on">已校验</span><strong>{{ ota.pending.fileName }}</strong></div><span class="meta">{{ formatBytes(ota.pending.size) }}</span></div>
       <div class="ota-pending-meta"><span>目标版本 <b>{{ ota.pending.version }}</b></span><span>SHA-256 <code>{{ shortSha(ota.pending.sha256) }}</code></span></div>
-      <div class="ota-pending-actions">
-        <button class="btn" type="button" :disabled="otaApplying" @click="applyOta">{{ otaApplying ? '正在重启…' : '立即更新并重启' }}</button>
-        <button class="btn btn-ghost" type="button" :disabled="otaApplying" @click="cancelPending">取消待更新</button>
+      <div v-if="pendingIsRollback" class="ota-rollback-warning">
+        <strong>回档风险</strong>
+        <span>即将安装的是旧版本，可能不兼容现有数据；回档后新版本功能将不可用，请先备份数据库、配置与上传文件。</span>
       </div>
-      <p class="ota-warn-text">应用后会短暂断站。独立运行模式会自动等待新版本健康检查，失败则回滚；更新完成后本页会自动恢复。</p>
+      <div class="ota-pending-actions">
+        <button class="btn-text danger-text" type="button" :disabled="otaApplying" @click="cancelPending">取消待安装</button>
+      </div>
+      <p class="ota-warn-text">安装后会短暂断站。独立运行模式会自动等待新版本健康检查，失败则回滚；更新完成后本页会自动恢复。</p>
     </section>
 
-    <div v-if="otaApplying" class="ota-restarting"><span class="ota-spinner"></span><div><strong>正在更新并重启服务</strong><span>页面会自动重连并核对新版本，通常需要 10–40 秒。</span></div></div>
+    <div v-if="otaApplying" class="ota-restarting"><span class="ota-spinner"></span><div><strong>正在安装并重启服务</strong><span>页面会自动重连并核对新版本，通常需要 10–40 秒。</span></div></div>
 
     <section v-if="ota?.lastUpdate?.status" class="panel ota-last-panel">
       <div class="section-title">上次更新</div>
@@ -281,11 +533,63 @@ onBeforeUnmount(stopOtaPoll)
           <div v-if="release.body" class="ota-release-body"><MarkdownBody :content="release.body" /></div>
           <p v-else class="meta">这个版本没有填写更新内容。</p>
           <div class="ota-release-row-actions">
-            <a v-if="safeReleaseLink(release.htmlUrl)" class="btn-text" :href="safeReleaseLink(release.htmlUrl)" target="_blank" rel="noopener noreferrer">在 GitHub 查看</a>
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="jobRunning || otaApplying || !release.jarAsset" @click="openRollback(release)">回档到此版本</button>
           </div>
         </div>
       </div>
       <p v-if="!releases?.history?.length" class="meta ota-release-history-empty">暂无更早的历史发布。</p>
     </section>
+
+    <div v-if="proxyOpen" class="adm-modal-wrap" @click.self="proxyOpen = false">
+      <div class="adm-modal ota-proxy-modal">
+        <div class="adm-modal-head">
+          <div>
+            <span class="adm-card-kicker">DOWNLOAD PROXY</span>
+            <h2>代理前缀</h2>
+            <p class="meta">用于加速从 GitHub 下载 Release 资产。配置保存到数据库，只影响后台下载。</p>
+          </div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="proxyOpen = false">×</button>
+        </div>
+        <div class="field">
+          <label for="otaProxyPrefix">代理域名或前缀</label>
+          <input id="otaProxyPrefix" v-model="proxyInput" type="text" maxlength="500" placeholder="https://ghfast.top/" autocomplete="off" />
+          <p class="meta">留空为直连；输入域名会自动补全为 https://，并补齐末尾斜杠。默认代理前缀：<code>https://ghfast.top/</code></p>
+        </div>
+        <div class="ota-proxy-presets">
+          <button class="btn-text" type="button" @click="useDefaultProxy">填入默认 ghfast</button>
+          <button class="btn-text" type="button" @click="proxyInput = ''">切换为直连</button>
+        </div>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" @click="proxyOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="proxySaving" @click="saveProxy">{{ proxySaving ? '保存中…' : '保存代理设置' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="rollbackTarget" class="adm-modal-wrap" @click.self="rollbackTarget = null">
+      <div class="adm-modal ota-rollback-modal">
+        <div class="adm-modal-head">
+          <div>
+            <span class="adm-card-kicker">ROLLBACK</span>
+            <h2>回档到 v{{ rollbackTarget.version }}</h2>
+            <p class="meta">将下载这个历史版本的 jar，并覆盖当前运行的 v{{ ota?.version || '—' }}。</p>
+          </div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="rollbackTarget = null">×</button>
+        </div>
+        <div class="ota-risk-box">
+          <strong>请确认风险</strong>
+          <ul>
+            <li>旧版本可能不兼容新版本已写入或修改的数据库结构，可能导致部分数据无法读取。</li>
+            <li>回档后，新版本才有的功能与配置将不可用；再次升级前建议完整备份。</li>
+            <li>安装过程会重启服务，站点短暂不可用。</li>
+          </ul>
+        </div>
+        <p class="meta">下载完成后不会自动安装，右上角按钮会变为“安装 v{{ rollbackTarget.version }}”，你可以再次确认后执行回档。</p>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" @click="rollbackTarget = null">取消</button>
+          <button class="btn" type="button" @click="confirmRollback">下载回档包</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

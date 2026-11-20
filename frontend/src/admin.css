@@ -2528,6 +2528,117 @@
   flex-wrap: wrap;
 }
 
+.ota-proxy-btn {
+  gap: 6px;
+}
+
+.ota-proxy-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 0 3px rgba(79, 201, 160, 0.12);
+}
+
+.ota-primary-action {
+  position: relative;
+  overflow: hidden;
+  min-width: 126px;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.ota-primary-action.is-downloading {
+  min-width: 166px;
+  color: var(--adm-accent);
+  background: var(--adm-card-solid);
+  border-color: rgba(79, 201, 160, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(79, 201, 160, 0.08);
+}
+
+.ota-primary-action.is-downloading:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+.ota-primary-action.is-idle {
+  color: var(--adm-muted);
+  background: transparent;
+  border-color: var(--adm-line-strong);
+}
+
+.ota-primary-action.is-idle:hover:not(:disabled) {
+  color: var(--adm-ink);
+  border-color: var(--adm-accent);
+}
+
+.ota-btn-progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 0;
+  background: linear-gradient(90deg, rgba(79, 201, 160, 0.24), rgba(79, 201, 160, 0.38));
+  transition: width 0.35s ease;
+}
+
+.ota-btn-label {
+  position: relative;
+  z-index: 1;
+}
+
+.ota-proxy-modal,
+.ota-rollback-modal {
+  width: min(580px, 100%);
+}
+
+.ota-proxy-presets {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.ota-risk-box {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px solid rgba(205, 113, 53, 0.34);
+  border-radius: 11px;
+  background: rgba(205, 113, 53, 0.08);
+  color: var(--adm-ink);
+}
+
+.ota-risk-box strong {
+  color: var(--adm-amber);
+  font-size: 13px;
+}
+
+.ota-risk-box ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--adm-muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.ota-rollback-warning {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid rgba(205, 113, 53, 0.34);
+  border-radius: 9px;
+  background: rgba(205, 113, 53, 0.08);
+  color: var(--adm-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.ota-rollback-warning strong {
+  color: var(--adm-amber);
+}
+
 .ota-online-card {
   padding: 24px 26px;
 }

@@ -2,6 +2,7 @@ package com.deek.blog.controller;
 
 import com.deek.blog.common.ApiResponse;
 import com.deek.blog.service.GithubReleaseService;
+import com.deek.blog.service.OtaDownloadService;
 import com.deek.blog.service.OtaService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,10 +22,13 @@ import java.util.Map;
 public class OtaController {
 
     private final OtaService otaService;
+    private final OtaDownloadService otaDownloadService;
     private final GithubReleaseService githubReleaseService;
 
-    public OtaController(OtaService otaService, GithubReleaseService githubReleaseService) {
+    public OtaController(OtaService otaService, OtaDownloadService otaDownloadService,
+                         GithubReleaseService githubReleaseService) {
         this.otaService = otaService;
+        this.otaDownloadService = otaDownloadService;
         this.githubReleaseService = githubReleaseService;
     }
 
@@ -44,11 +48,11 @@ public class OtaController {
         return ApiResponse.ok(otaService.upload(file));
     }
 
-    public record DownloadReq(String tag) {
+    public record DownloadReq(String tag, String mode) {
     }
 
     @PostMapping("/download")
-    public ApiResponse<OtaService.PendingInfo> download(@RequestBody(required = false) DownloadReq req) {
+    public ApiResponse<OtaDownloadService.DownloadJobView> download(@RequestBody(required = false) DownloadReq req) {
         String tag = req == null ? "" : req.tag() == null ? "" : req.tag().trim();
         GithubReleaseService.ReleasesView view = githubReleaseService.releases(otaService.getCurrentVersion(), false);
         List<GithubReleaseService.ReleaseInfo> releases = view.releases();
@@ -62,11 +66,20 @@ public class OtaController {
         if (target == null) {
             throw new com.deek.blog.common.BizException("没有找到指定的 Release 版本");
         }
-        if (target.jarAsset() == null || target.jarAsset().downloadUrl() == null
-                || target.jarAsset().downloadUrl().isBlank()) {
-            throw new com.deek.blog.common.BizException("这个 Release 没有可下载的 jar 资产");
-        }
-        return ApiResponse.ok(otaService.downloadFromGitHub(target.jarAsset().downloadUrl(), target.jarAsset().name()));
+        String mode = req == null || req.mode() == null ? "UPDATE" : req.mode().trim();
+        return ApiResponse.ok(otaDownloadService.start(target, mode));
+    }
+
+    @GetMapping("/download/status")
+    public ApiResponse<OtaDownloadService.DownloadJobView> downloadStatus(
+            @RequestParam(name = "jobId", required = false) String jobId) {
+        return ApiResponse.ok(otaDownloadService.status(jobId));
+    }
+
+    @PostMapping("/cache/clear")
+    public ApiResponse<Map<String, Object>> clearCache() {
+        githubReleaseService.clearCache();
+        return ApiResponse.ok(Map.of("cleared", true));
     }
 
     @PostMapping("/apply")
