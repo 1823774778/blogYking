@@ -32,8 +32,16 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${TAG#v}"
-if ! unzip -l "$JAR" 2>/dev/null | grep -q 'BOOT-INF/classes/application.yml'; then
+JAR_LIST="$(unzip -l "$JAR" 2>/dev/null || true)"
+if ! grep -q 'BOOT-INF/classes/application.yml' <<<"$JAR_LIST"; then
   echo "不是本项目的 Spring Boot 可执行 jar：$JAR"
+  exit 1
+fi
+
+MANIFEST="$(unzip -p "$JAR" META-INF/MANIFEST.MF 2>/dev/null || true)"
+if ! grep -q "Implementation-Version: ${VERSION}" <<<"$MANIFEST"; then
+  echo "jar 版本与 tag 不一致：tag=$VERSION"
+  grep 'Implementation-Version' <<<"$MANIFEST" || true
   exit 1
 fi
 
