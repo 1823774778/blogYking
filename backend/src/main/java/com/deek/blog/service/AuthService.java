@@ -1,0 +1,206 @@
+package com.deek.blog.service;
+
+import com.deek.blog.common.BizException;
+import com.deek.blog.dto.AuthDtos.AuthResp;
+import com.deek.blog.dto.AuthDtos.LoginReq;
+import com.deek.blog.dto.AuthDtos.MsgResp;
+import com.deek.blog.dto.AuthDtos.RegisterReq;
+import com.deek.blog.dto.AuthDtos.ResetReq;
+import com.deek.blog.dto.AuthDtos.UpdateProfileReq;
+import com.deek.blog.dto.AuthDtos.UserView;
+import com.deek.blog.entity.ResetToken;
+import com.deek.blog.entity.User;
+import com.deek.blog.repository.ResetTokenRepository;
+import com.deek.blog.repository.UserRepository;
+import com.deek.blog.security.JwtUtil;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.util.HexFormat;
+import java.util.regex.Pattern;
+
+@Service
+public class AuthService {
+
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,20}$");
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[\\w.+-]+@[\\w-]+(\\.[\\w-]+)+$");
+    private static final int RESET_EXPIRE_MINUTES = 30;
+
+    private final UserRepository userRepository;
+    private final ResetTokenRepository resetTokenRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtUtil jwtUtil;
+    private final MailService mailService;
+    private final String siteUrl;
+    private final SecureRandom random = new SecureRandom();
+
+    public AuthService(UserRepository userRepository, ResetTokenRepository resetTokenRepository,
+                       PasswordEncoder passwordEncoder, JwtUtil jwtUtil, MailService mailService,
+                       @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
+        this.userRepository = userRepository;
+        this.resetTokenRepository = resetTokenRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtUtil = jwtUtil;
+        this.mailService = mailService;
+        this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
+    }
+
+    @Transactional
+    public AuthResp register(RegisterReq req) {
+        if (userRepository.countByRole("ADMIN") == 0) {
+            throw new BizException("站点尚未初始化，请先完成初始化设置管理员账号");
+        }
+        String username = trim(req.username());
+        String email = trim(req.email()).toLowerCase();
+        if (!USERNAME_PATTERN.matcher(username).matches()) {
+            throw new BizException("用户名需为 3-20 位字母、数字或下划线");
+        }
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
+            throw new BizException("邮箱格式不正确");
+        }
+        checkPassword(req.password());
+        if (userRepository.existsByUsername(username)) {
+            throw new BizException("用户名已被占用");
+        }
+        if (userRepository.existsByEmail(email)) {
+            throw new BizException("邮箱已被注册");
+        }
+        User user = new User();
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setPassword(passwordEncoder.encode(req.password()));
+        String nickname = trim(req.nickname());
+        user.setNickname(nickname.isEmpty() ? username : nickname);
+        user.setRole("USER");
+        user.setEnabled(true);
+        userRepository.save(user);
+        return new AuthResp(jwtUtil.generate(user.getId()), toView(user));
+    }
+
+    public AuthResp login(LoginReq req) {
+        String account = trim(req.account());
+        if (account.isEmpty() || req.password() == null || req.password().isEmpty()) {
+            throw new BizException("请输入账号和密码");
+        }
+        User user = userRepository.findByUsernameOrEmail(account, account.toLowerCase()).orElse(null);
+        if (user == null) {
+            throw new BizException("账号或密码错误");
+        }
+        if (!user.isEnabled()) {
+            throw new BizException(HttpStatus.FORBIDDEN, "账号已被禁用，请联系站长");
+        }
+        if (!passwordEncoder.matches(req.password(), user.getPassword())) {
+            throw new BizException("账号或密码错误");
+        }
+        return new AuthResp(jwtUtil.generate(user.getId()), toView(user));
+    }
+
+    public UserView me(Long userId) {
+        return toView(requireUser(userId));
+    }
+
+    @Transactional
+    public MsgResp forgotPassword(String email) {
+        String normalized = trim(email).toLowerCase();
+        if (!EMAIL_PATTERN.matcher(normalized).matches()) {
+            throw new BizException("邮箱格式不正确");
+        }
+        User user = userRepository.findByEmail(normalized).orElse(null);
+        if (user == null) {
+            // 不暴露邮箱是否注册
+            return new MsgResp("如果该邮箱已注册，我们已发送重置链接", null);
+        }
+        resetTokenRepository.deleteByUserId(user.getId());
+        byte[] bytes = new byte[24];
+        random.nextBytes(bytes);
+        String token = HexFormat.of().formatHex(bytes);
+
+        ResetToken rt = new ResetToken();
+        rt.setUserId(user.getId());
+        rt.setToken(token);
+        rt.setExpiresAt(LocalDateTime.now().plusMinutes(RESET_EXPIRE_MINUTES));
+        resetTokenRepository.save(rt);
+
+        String link = siteUrl + "/reset-password?token=" + token;
+        mailService.sendResetPassword(user.getEmail(), link, RESET_EXPIRE_MINUTES);
+        return new MsgResp("重置链接已发送至邮箱，30 分钟内有效",
+                mailService.isEnabled() ? null : link);
+    }
+
+    @Transactional
+    public MsgResp resetPassword(ResetReq req) {
+        checkPassword(req.password());
+        ResetToken rt = resetTokenRepository.findByToken(trim(req.token()))
+                .orElseThrow(() -> new BizException("重置链接无效，请重新申请"));
+        if (rt.isUsed()) {
+            throw new BizException("重置链接已使用，请重新申请");
+        }
+        if (rt.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new BizException("重置链接已过期，请重新申请");
+        }
+        User user = requireUser(rt.getUserId());
+        user.setPassword(passwordEncoder.encode(req.password()));
+        userRepository.save(user);
+        rt.setUsed(true);
+        resetTokenRepository.save(rt);
+        return new MsgResp("密码已重置，请使用新密码登录", null);
+    }
+
+    @Transactional
+    public UserView updateProfile(Long userId, UpdateProfileReq req) {
+        User user = requireUser(userId);
+        if (req.nickname() != null) {
+            String nickname = trim(req.nickname());
+            if (nickname.isEmpty() || nickname.length() > 32) {
+                throw new BizException("昵称需为 1-32 个字符");
+            }
+            user.setNickname(nickname);
+        }
+        if (req.bio() != null) {
+            if (req.bio().length() > 512) {
+                throw new BizException("个人简介最多 512 个字符");
+            }
+            user.setBio(req.bio().trim());
+        }
+        if (req.avatar() != null) {
+            user.setAvatar(req.avatar().trim());
+        }
+        if (req.newPassword() != null && !req.newPassword().isEmpty()) {
+            checkPassword(req.newPassword());
+            if (req.oldPassword() == null || !passwordEncoder.matches(req.oldPassword(), user.getPassword())) {
+                throw new BizException("原密码不正确");
+            }
+            user.setPassword(passwordEncoder.encode(req.newPassword()));
+        }
+        userRepository.save(user);
+        return toView(user);
+    }
+
+    public User requireUser(Long userId) {
+        if (userId == null) {
+            throw BizException.unauthorized();
+        }
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new BizException(HttpStatus.UNAUTHORIZED, "登录状态已失效，请重新登录"));
+    }
+
+    public static UserView toView(User user) {
+        return new UserView(user.getId(), user.getUsername(), user.getEmail(), user.getNickname(),
+                user.getAvatar(), user.getBio(), user.getRole(), user.isEnabled(), user.getCreatedAt());
+    }
+
+    private void checkPassword(String password) {
+        if (password == null || password.length() < 6 || password.length() > 64) {
+            throw new BizException("密码长度需为 6-64 位");
+        }
+    }
+
+    private String trim(String value) {
+        return value == null ? "" : value.trim();
+    }
+}

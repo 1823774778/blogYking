@@ -1,0 +1,98 @@
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  tomcat:
+    max-http-form-post-size: 100MB
+    max-swallow-size: 100MB
+
+spring:
+  application:
+    name: deek-blog
+  datasource:
+    url: jdbc:h2:file:./data/blog;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+  servlet:
+    multipart:
+      # OTA 上传完整 fat jar（当前约 63MB）
+      max-file-size: 100MB
+      max-request-size: 105MB
+      file-size-threshold: 0
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: ${MAIL_SSL:true}
+          starttls:
+            enable: ${MAIL_STARTTLS:false}
+          connectiontimeout: 8000
+          timeout: 8000
+          writetimeout: 8000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+      timeout: 3s
+      connect-timeout: 3s
+      repositories:
+        enabled: false
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:deek-blog-super-secret-key-please-change-in-production-2026}
+    expire-hours: ${JWT_EXPIRE_HOURS:72}
+  site-url: ${SITE_URL:http://localhost:8080}
+  upload-dir: ${UPLOAD_DIR:./uploads}
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+  redis:
+    enabled: ${REDIS_ENABLED:false}
+  setup:
+    # 首次启动向导写入的外部配置（会覆盖内置默认值，重启生效）
+    config-file: ${SETUP_CONFIG:./config/application.yml}
+  bootstrap:
+    # 仅用于空库首次建管理员；由初始化向导自动写入，无需手工配置
+    admin-username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    admin-password-hash: ${BOOTSTRAP_ADMIN_PASSWORD_HASH:}
+    admin-nickname: ${BOOTSTRAP_ADMIN_NICKNAME:}
+  version: ${APP_VERSION:}
+  build-time: ${BUILD_TIME:}
+  ota:
+    enabled: ${OTA_ENABLED:true}
+    # 留空时自动取当前运行 jar 的真实路径
+    jar-path: ${OTA_JAR_PATH:}
+    work-dir: ${OTA_WORK_DIR:./updates}
+    health-timeout-seconds: ${OTA_HEALTH_TIMEOUT:45}
+    github:
+      # 后台「更新」页读取的 Release 仓库；只读公开 API，不下载、不执行资产
+      repo: ${OTA_GITHUB_REPO:1823774778/blogYking}
+      api-base: ${OTA_GITHUB_API_BASE:https://api.github.com}
+      # 可选：GitHub 未认证 API 每小时 60 次；配置 token 可提高限额。token 不会返回前端。
+      token: ${GITHUB_TOKEN:}
+      cache-seconds: ${OTA_GITHUB_CACHE_SECONDS:600}
+      max-releases: ${OTA_GITHUB_MAX_RELEASES:12}
+
+logging:
+  level:
+    root: info
+    com.deek.blog: info
+    org.hibernate.SQL: warn

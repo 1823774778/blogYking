@@ -1,0 +1,15 @@
+node_modules/
+dist/
+target/
+/data/
+/uploads/
+/updates/
+/backups/
+*.log
+*.jar
+.DS_Store
+.idea/
+.vscode/
+
+# 首次初始化向导生成的数据库/Redis 口令与管理员哈希（仅项目根目录）
+/config/
