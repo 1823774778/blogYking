@@ -1,5 +1,33 @@
 # 更新日志
 
+## 1.7.0 — 2026-11-20
+
+### 站点更新
+
+- 当前版本改为读取正在运行的 jar：优先 `META-INF/MANIFEST.MF` 的 `Implementation-Version`，其次 `build-info.properties` 与 `pom.properties`，不再被旧的 `APP_VERSION` 环境变量覆盖。手动替换 jar 并重启后会显示真实版本。
+- 站点更新页右上角新增“本地升级”，弹窗选择并上传 `.jar`，显示文件大小、上传进度与校验结果；校验通过后只进入待安装区。
+- “清除缓存”改为清理当前已下载的待安装包、staging 残留、下载任务记录与 Release 列表缓存；本地上传的待安装包保留，下载任务运行中拒绝清理。
+- 更新成功启动后自动清理 `updates/backups/` 历史备份、staging 残留、`updater.jar` 和下载任务历史；GitHub 历史 Release 保留用于回档。
+- 待安装区显示来源（本地上传 / GitHub 在线下载 / 回档下载），更新页显示“读取自 JAR manifest”等版本来源。
+
+### 存储管理
+
+- 本地存储根目录改为 jar 同级 `local-storage/`，自动创建 `images/`、`audio/`、`video/`、`documents/`、`archives/`、`other/` 分类文件夹；旧 `uploads/` 文件首次启动自动复制迁移。
+- 新增 `stored_files` 元数据表，记录存储提供方、对象路径、原始文件名、分类、MIME、大小、访问地址、上传人 ID / 用户名 / 昵称与上传时间。
+- 本地文件列表新增上传人、文件类型、分类、大小、上传 / 修改时间、访问地址与操作列；支持按文件名、上传人、类型 / 分类关键字搜索，以及分类、上传人筛选。
+- 旧文章中的 `/uploads/<文件名>` 继续可访问，新文件使用 `/uploads/<分类>/<文件名>`。
+- 存储页合并为单一“存储设置”，新增 WebDAV 与 OpenList：WebDAV 使用 Basic Auth，OpenList 只填站点根地址时自动补 `/dav`，默认公开直链为 `/d/<对象路径>`。
+- 线上存储模式只显示连接配置与线上摘要，不显示本地文件列表、本地统计、分类文件夹和本地路径；本地文件接口同时拒绝线上模式访问。
+
+### 验证
+
+- 后端 `mvn -DskipTests package` 成功，前端 Vite 生产构建成功，`META-INF/MANIFEST.MF` 显示 `Implementation-Version: 1.7.0`。
+- 用 `APP_VERSION=1.6.0` 启动 1.7.0 jar，`/api/system/version` 仍返回 `1.7.0`，来源 `jar-manifest`。
+- 实测旧 `uploads/` 文件迁移到 `local-storage/images/`，旧 `/uploads/<文件名>` 与新分类地址均返回 200；上传后列表显示上传人 `deek`、类型“图片 · WEBP”，搜索 `legacy / avatar / WEBP / 图片 / deek` 与分类筛选均正确。
+- 实测 WebDAV 与 OpenList（本地 WebDAV 服务）连接测试、分类目录创建、文件上传与公开地址拼接；线上模式本地列表接口返回“已隐藏”，页面不渲染本地内容。
+- 实测本地上传进入待安装区，清除缓存保留本地上传包；伪造下载来源待安装包后，清除缓存返回 `removedPending=true` 并删除 staging。
+- 用同代码、版本改为 1.7.1 的测试 jar 完成更新重启，启动日志显示自动清理 `backups=2, staged=1, updater=true`，`historyCleanedForSha` 写入状态文件，页面版本变为 1.7.1。
+
 ## 1.6.0 — 2026-11-20
 
 ### 站点更新

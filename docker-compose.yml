@@ -1,7 +1,7 @@
 services:
   blog:
     build: .
-    image: deek-blog:1.6.0
+    image: deek-blog:1.7.0
     container_name: blog
     restart: unless-stopped
     ports:
@@ -20,10 +20,13 @@ services:
       MAIL_SSL: "true"
       MAIL_USERNAME: ""
       MAIL_PASSWORD: ""
-      APP_VERSION: "1.6.0"
+      APP_VERSION: "1.7.0"
     volumes:
-      # H2 数据库与上传图片持久化到宿主机
+      # H2 数据库持久化到宿主机
       - ./data:/app/data
+      # 本地存储根目录：jar 同级的 local-storage，按 images/audio/documents 等分类
+      - ./local-storage:/app/local-storage
+      # 旧版本上传目录，保留用于首次升级时自动迁移旧图片
       - ./uploads:/app/uploads
       # 首次初始化向导写入的配置（含数据库/Redis 口令），必须持久化
       - ./config:/app/config

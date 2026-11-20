@@ -45,7 +45,7 @@
 - 本地上传保留为弹窗，可与在线更新并行使用
 - 运行状态：`/api/system/health`（数据库产品名、Redis 状态）
 - SMTP 测试按钮，SMTP / AI 配置均以弹窗维护
-- 存储管理：本地文件列表与删除；线上 S3 兼容对象存储配置与连接测试
+- 存储管理：本地文件按类型分类保存，列表显示上传人 / 文件类型并支持搜索；线上支持 S3 兼容、WebDAV 与 OpenList，切换线上后不显示本地文件
 
 **主题**
 - Firefly 风格：薄荷绿主色、悬浮玻璃导航、大幅横幅壁纸
@@ -119,7 +119,8 @@ personal-blog/
 
 ```
 data/                 # H2 数据库文件
-uploads/              # 上传的图片
+local-storage/        # 本地存储根目录（images/audio/video/documents/archives/other）
+uploads/              # 旧版上传目录；升级后首次启动会复制到 local-storage
 config/application.yml # 初始化向导写入的连接信息与管理员哈希
 updates/              # OTA 暂存包、updater.jar、日志、updates/backups 旧包备份
 backups/              # scripts/ota-update.sh 命令行更新的备份目录
@@ -149,10 +150,10 @@ H2 + 不用 Redis 时不需要重启，提交后直接进入首页。
 ### 初始化后会生成什么
 
 - `data/blog.mv.db` —— H2 数据库（含管理员、演示文章）
-- `uploads/` —— 上传图片
+- `local-storage/` —— jar 同级本地存储，按 `images/`、`audio/`、`video/`、`documents/`、`archives/`、`other/` 分类
 - `config/application.yml` —— 向导写入的 MySQL/Redis 配置与管理员 bcrypt 哈希，权限 600
 
-备份 `data/`、`uploads/`、`config/` 即可完整迁移。使用外部 MySQL 时，还要备份数据库本身。
+备份 `data/`、`local-storage/`、`config/` 即可完整迁移。使用外部 MySQL 时，还要备份数据库本身。
 
 想完全重来：停服务，删除 `data/` 与 `config/application.yml`，再启动，就会重新进入向导（**会丢失原有内容，谨慎操作**）。
 
@@ -248,7 +249,7 @@ app:
 | `SITE_URL` | `http://localhost:8080` | 对外访问地址，用于拼接找回密码链接 |
 | `JWT_SECRET` | 内置示例值 | **务必替换**，至少 32 字符 |
 | `JWT_EXPIRE_HOURS` | `72` | 登录有效期（小时） |
-| `UPLOAD_DIR` | `./uploads` | 图片存储目录 |
+| `UPLOAD_DIR` | 空（jar 同级 `local-storage`） | 本地存储目录；留空时自动使用 jar 同级目录 |
 | `SETUP_CONFIG` | `./config/application.yml` | 初始化向导写入的外部配置文件路径 |
 | `REDIS_ENABLED` | `false` | 是否启用 Redis 去重 |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Redis 地址 |
@@ -258,7 +259,7 @@ app:
 | `MAIL_USERNAME` / `MAIL_PASSWORD` | 空 | SMTP 账号 / 授权码 |
 | `MAIL_SSL` | `true` | 465 端口一般开 SSL |
 | `MAIL_STARTTLS` | `false` | 587 端口改为 `true` 并关闭 SSL |
-| `APP_VERSION` | 空（读 jar 清单） | 版本号覆盖；留空时 OTA 探针读取 jar 的 `Implementation-Version` |
+| `APP_VERSION` | 空（读 jar 清单） | 兼容旧部署的兜底值；实际版本优先读取当前 jar 的清单与构建信息 |
 | `BUILD_TIME` | 空（显示 `dev`） | 构建时间，打包时注入 |
 | `OTA_ENABLED` | `true` | 是否允许后台本地上传 jar 更新 |
 | `OTA_JAR_PATH` | 空 | 当前 jar 路径；留空自动根据 `java.class.path` 定位 |
@@ -274,6 +275,23 @@ app:
 **优先级**：命令行参数 > 环境变量 > `config/application.yml` > jar 内 `application.yml`。
 
 所以向导生成的文件会覆盖内置默认值，但你在 systemd / compose 里显式设置的 `PORT`、`JWT_SECRET`、`SITE_URL`、`MAIL_*` 仍然优先。想改数据库/Redis，直接改 `config/application.yml` 或重新走向导（只能空库时）。
+
+### 存储方式与本地目录
+
+后台「存储管理」页统一配置，支持四种方式：
+
+| 方式 | 必填字段 | 说明 |
+| --- | --- | --- |
+| 本地存储 | 无 | 文件写入 jar 同级 `local-storage/`，自动建 `images/`、`audio/`、`video/`、`documents/`、`archives/`、`other/` |
+| S3 兼容 | Endpoint、Bucket、Access Key、Secret Key | 兼容 AWS S3、R2、MinIO、OSS 等 S3 接口 |
+| WebDAV | 地址、用户名、密码 | 使用 Basic Auth；地址填 WebDAV 根地址 |
+| OpenList | 地址、用户名、密码 | 走 WebDAV 协议；只填站点根地址时自动补 `/dav`，默认公开直链为 `/d/<对象路径>` |
+
+- 本地列表显示存储文件名、原始文件名、上传人、文件类型、分类、大小与上传时间；支持按文件名、上传人、类型/分类关键字搜索，以及分类、上传人筛选。
+- 新上传文件写入数据库 `stored_files` 记录上传人；旧 `uploads/` 中的文件首次启动会复制到 `local-storage` 对应分类，未找到元数据时显示「历史文件」。
+- 旧文章里的 `/uploads/<文件名>` 地址仍可访问；新文件地址为 `/uploads/<分类>/<文件名>`。
+- 切换到 S3 / WebDAV / OpenList 后，存储页只显示云端连接信息，不返回也不显示本地文件、本地目录统计和分类文件夹。
+- `storagePassword` / `storageSecretKey` 在接口中脱敏；保存表单时留空表示沿用已保存的密码。
 
 ### 开启 SMTP 找回密码
 
@@ -330,7 +348,7 @@ cd frontend && npm run dev     # http://localhost:5173，/api 与 /uploads 代�
 docker compose up -d --build
 ```
 
-- 数据持久化在 `./data`、`./uploads`
+- 数据持久化在 `./data`、`./local-storage`
 - **向导配置持久化在 `./config`**（compose 已挂载 `./config:/app/config`；不加这个卷，容器重建后 MySQL/Redis 配置会丢）
 - 端口 8080，`SITE_URL`、`JWT_SECRET`、SMTP 等都在 compose 的 `environment` 里改
 - 1Panel 的路径排查、反代与证书步骤见 [`deploy/1panel.md`](deploy/1panel.md)
@@ -405,23 +423,24 @@ server {
 
 **2. 版本级更新（GitHub Release 下载 + 备份 + 替换 + 重启）**
 
-后台「站点更新」不再提供本地上传入口，只从 GitHub Release 读取版本并下载资产：
+后台「站点更新」可以从 GitHub Release 下载，也可以从右上角「本地升级」上传手工构建的 jar：
 
 1. 页面读取最新与历史 Release；右上角显示「暂无更新」或「下载安装」。
 2. 点「下载安装」后，后端创建持久化下载任务，记录版本、总大小、已下载字节、状态与错误信息；页面按钮变为带进度的「下载 xx%」。
 3. 下载任务写入 `ota_download_tasks` 表，切换路由或刷新页面会按任务 ID 重新接上进度；服务重启会把未完成任务标记为失败，避免留下假进度。
 4. 下载完成后复用上传校验逻辑：检查 Spring Boot 启动类、应用配置、文件完整性、SHA-256 与磁盘空间，通过后进入待安装区。
-5. 点右上角「安装 vX」后备份当前 jar 到 `updates/backups/`，由独立 `updater.jar` 替换并重启；独立运行模式健康检查失败会自动回滚。
-6. 历史版本展开后可「回档到此版本」，先下载旧包，再显示回档风险确认；安装仍需管理员再次确认。
+5. 点「本地升级」可选择本机 `.jar`，显示文件大小与上传进度；校验通过后只进入待安装区，不会自动替换当前程序。本地上传与在线下载共用同一个待安装位置，新上传会替换旧包。
+6. 点右上角「安装 vX」后备份当前 jar 到 `updates/backups/`，由独立 `updater.jar` 替换并重启；独立运行模式健康检查失败会自动回滚。
+7. 历史版本展开后可「回档到此版本」，先下载旧包，再显示回档风险确认；安装仍需管理员再次确认。
 
 代理与缓存：
 
 - 右上角「代理前缀」可配置 Release 资产下载代理，保存到数据库。留空为直连；只填域名会自动补 `https://` 和末尾 `/`；默认推荐 `https://ghfast.top/`。
-- 「清理缓存」会清空 GitHub Releases 列表缓存，下一次读取重新请求 GitHub API。
+- 「清除缓存」删除当前已下载的待安装包、staging 残留、下载任务记录与 Release 列表缓存；本地上传但尚未安装的包会保留。下载任务正在运行时会拒绝清理。
 - GitHub 未认证 API 每小时只有 60 次，建议启动环境配置 `GITHUB_TOKEN`（只需公开仓库读取权限），token 不会返回前端。
 
-版本探针：`GET /api/system/version` → `{ version, buildTime, instanceId, pid, uptimeSeconds, ... }`。
-`instanceId` 每次 JVM 启动都会变化，用于区分「同一个版本被重新拉起」和「没有重启」。
+版本探针：`GET /api/system/version` → `{ version, versionSource, jarPath, buildTime, instanceId, pid, uptimeSeconds, ... }`。
+`versionSource` 取值为 `jar-manifest` / `build-info` / `pom.properties` / `config` / `unknown`；`instanceId` 每次 JVM 启动都会变化，用于区分「同一个版本被重新拉起」和「没有重启」。
 
 **运行模式**
 
@@ -433,9 +452,11 @@ server {
 | `dev` | 不支持 | 以 `target/classes` 开发目录运行时没有可替换的 jar |
 
 - systemd / Docker 模式必须保证服务管理器会自动重启；否则替换后站点会保持离线。
-- 更新失败后，`updates/backups/` 保留旧包；可手动覆盖回去再启动。
-- 更新只改 jar，不动 `data/`、`uploads/`、`config/`；JPA 为 `update` 模式，回滚代码不会破坏已有数据，但新版本已写入的内容会保留。
-- 每次更新会在 `updates/` 留一份 `updater.jar`（当前约 74MB）和 `app.log`，可定期清理；`backups/` 默认只保留最近 5 份。
+- 站点更新页右上角提供「本地升级 / 清除缓存 / 代理前缀」：本地升级上传 jar 后只进入待安装区；清除缓存删除已下载的待安装包、staging 残留和下载任务记录，本地上传的待安装包会保留；代理前缀用于加速 GitHub Release 下载。
+- 版本号优先读取当前运行 jar 的 `META-INF/MANIFEST.MF:Implementation-Version`，其次读取 `build-info.properties` 与 `pom.properties`；手动替换 jar 并重启后，旧的 `APP_VERSION` 不会再把页面显示成旧版本。
+- 更新成功启动后会自动清理 `updates/backups/`、staging 残留、`updater.jar` 与下载任务历史；GitHub 历史 Release 仍保留，供回档使用。
+- 更新只改 jar，不动 `data/`、`local-storage/`、`config/`；JPA 为 `update` 模式，回滚代码不会破坏已有数据，但新版本已写入的内容会保留。
+- 更新失败后，`updates/backups/` 保留旧包；可手动覆盖回去再启动。每次更新仍会在 `updates/` 留一份当前正在运行的 `updater.jar` 与 `app.log`，成功启动后 updater 副本会自动清理。
 
 **命令行备用方案**
 
@@ -458,11 +479,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.6.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.7.0.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.6.0 blog.jar release-notes/1.6.0.md
+  bash scripts/release-github.sh v1.7.0 blog.jar release-notes/1.7.0.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。
@@ -487,7 +508,7 @@ GH_REPO=1823774778/blogYking \
 | POST | `/api/setup/test/redis` | 测试 Redis 连接（PING） |
 | POST | `/api/setup/complete` | 创建管理员、写配置、播种演示文章，返回 token |
 | GET | `/api/system/health` | 数据库产品名、Redis 状态（`disabled` / `ok: PONG` / `error`） |
-| GET | `/api/system/version` | 版本、构建时间、`instanceId`、PID、运行时长 |
+| GET | `/api/system/version` | 版本、版本来源、jar 路径、构建时间、`instanceId`、PID、运行时长 |
 
 **OTA（管理员）**
 
@@ -495,9 +516,10 @@ GH_REPO=1823774778/blogYking \
 | --- | --- | --- |
 | GET | `/api/admin/ota/status` | 当前版本/SHA、运行模式、待更新包、上次更新结果 |
 | GET | `/api/admin/ota/releases` | GitHub 最新/历史 Release、更新内容、jar 资产信息；`refresh=1` 强制刷新 |
+| POST | `/api/admin/ota/upload` | 本地上传 `.jar` 并校验，进入待安装区 |
 | POST | `/api/admin/ota/download` | 创建 Release 下载任务，body `{tag, mode}`；`mode=ROLLBACK` 表示回档 |
 | GET | `/api/admin/ota/download/status` | 下载任务进度与终态，参数 `jobId` |
-| POST | `/api/admin/ota/cache/clear` | 清理 GitHub Releases 列表缓存 |
+| POST | `/api/admin/ota/cache/clear` | 清理已下载待安装包、staging、下载任务记录与 Release 列表缓存 |
 | POST | `/api/admin/ota/apply` | 应用待更新包，备份、替换并重启 |
 | DELETE | `/api/admin/ota/pending` | 丢弃已上传但未应用的包 |
 
@@ -527,6 +549,10 @@ GH_REPO=1823774778/blogYking \
 | GET | `/api/admin/comments` | 评论管理 |
 | GET/PUT | `/api/admin/users` `/api/admin/users/{id}/status` `/api/admin/users/{id}/role` | 用户管理 |
 | GET/PUT | `/api/admin/config` | 站点配置（热更新） |
+| GET | `/api/admin/storage` | 当前存储方式、连接状态；本地模式附目录统计与分类 |
+| GET | `/api/admin/storage/files` | 本地文件列表，参数 `page/size/keyword/category/uploader`；线上模式拒绝 |
+| DELETE | `/api/admin/storage/files` | 删除本地文件，参数 `path`（兼容旧 `name`） |
+| POST | `/api/admin/storage/test` | 测试当前线上存储连接 |
 | POST | `/api/admin/mail/test` | SMTP 测试 |
 
 ## 安全清单
@@ -535,10 +561,10 @@ GH_REPO=1823774778/blogYking \
 - [ ] 设置随机的 `JWT_SECRET`（≥ 32 字符）
 - [ ] `config/application.yml` 保持 600，且不要提交到 Git / 不要发群
 - [ ] 全站 HTTPS（Nginx 终止 TLS）
-- [ ] 限制 `uploads/` 目录权限，定期备份 `data/`、`uploads/`、`config/`
+- [ ] 限制 `local-storage/` 目录权限，定期备份 `data/`、`local-storage/`、`config/`
 - [ ] 使用外部 MySQL 时，数据库账号最小权限，并单独做数据库备份
 - [ ] OTA 的 `updates/` 里有完整 jar 与备份，只允许管理员访问；只上传自己构建并核对过 SHA 的包
-- [ ] 不要提交 `data/`、`uploads/`、`config/`、`updates/`、`node_modules/`、`target/` 到公开仓库（`.gitignore` 已处理）
+- [ ] 不要提交 `data/`、`local-storage/`、`uploads/`、`config/`、`updates/`、`node_modules/`、`target/` 到公开仓库（`.gitignore` 已处理）
 
 ## 已知边界
 

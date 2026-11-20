@@ -78,8 +78,16 @@ public class OtaController {
 
     @PostMapping("/cache/clear")
     public ApiResponse<Map<String, Object>> clearCache() {
+        OtaDownloadService.DownloadJobView current = otaDownloadService.status(null);
+        if (current != null && "RUNNING".equals(current.status())) {
+            throw new com.deek.blog.common.BizException("下载任务正在进行，请等待完成或失败后再清理");
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.putAll(otaService.clearDownloadArtifacts());
+        result.putAll(otaDownloadService.clearHistory());
         githubReleaseService.clearCache();
-        return ApiResponse.ok(Map.of("cleared", true));
+        result.put("releaseCacheCleared", true);
+        return ApiResponse.ok(result);
     }
 
     @PostMapping("/apply")

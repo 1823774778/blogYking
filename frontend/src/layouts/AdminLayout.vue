@@ -75,8 +75,7 @@ const sectionTabs = {
     { key: 'draft', label: '未发布' }
   ],
   storage: [
-    { key: 'local', label: '本地存储' },
-    { key: 'online', label: '线上存储' }
+    { key: 'storage', label: '存储设置' }
   ],
   settings: [
     { key: 'smtp', label: 'SMTP' },

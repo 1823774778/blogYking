@@ -21,7 +21,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -115,6 +117,28 @@ public class OtaDownloadService {
             task = repository.findById(jobId.trim()).orElse(null);
         }
         return task == null ? null : view(task);
+    }
+
+    /** 清理已结束的下载任务记录；运行中的任务必须先结束，避免下载线程继续写入已删除任务。 */
+    public synchronized Map<String, Object> clearHistory() {
+        OtaDownloadTask current = repository.findFirstByOrderByCreatedAtDesc();
+        if (current != null && "RUNNING".equals(current.getStatus())) {
+            throw new BizException("下载任务正在进行，请等待完成或失败后再清理");
+        }
+        long count = repository.count();
+        repository.deleteAll();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("removedTasks", count);
+        return result;
+    }
+
+    /** 更新成功后清空下载任务历史；失败记录也一并移除。 */
+    public synchronized Map<String, Object> clearHistoryAfterUpdate() {
+        long count = repository.count();
+        repository.deleteAll();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("removedTasks", count);
+        return result;
     }
 
     private void runDownload(OtaDownloadTask task, URI target, String proxyPrefix, long expectedBytes) {

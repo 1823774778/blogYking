@@ -48,7 +48,16 @@ public class SystemController {
     @GetMapping("/version")
     public ApiResponse<Map<String, Object>> version() {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("version", version == null || version.isBlank() ? otaService.getCurrentVersion() : version);
+        String jarVersion = otaService.getCurrentVersion();
+        String configuredVersion = version == null ? "" : version.trim();
+        String effectiveVersion = "未知".equals(jarVersion) && !configuredVersion.isBlank()
+                ? configuredVersion
+                : jarVersion;
+        data.put("version", effectiveVersion);
+        data.put("versionSource", "未知".equals(jarVersion)
+                ? (configuredVersion.isBlank() ? "unknown" : "config")
+                : otaService.getVersionSource());
+        data.put("jarPath", otaService.getJarPath() == null ? "" : otaService.getJarPath().toString());
         data.put("buildTime", buildTime == null || buildTime.isBlank() ? "dev" : buildTime);
         data.put("instanceId", otaService.getInstanceId());
         data.put("pid", otaService.getPid());

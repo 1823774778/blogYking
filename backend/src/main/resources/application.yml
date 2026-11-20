@@ -60,7 +60,8 @@ app:
     secret: ${JWT_SECRET:deek-blog-super-secret-key-please-change-in-production-2026}
     expire-hours: ${JWT_EXPIRE_HOURS:72}
   site-url: ${SITE_URL:http://localhost:8080}
-  upload-dir: ${UPLOAD_DIR:./uploads}
+  # 留空时自动使用当前 jar 同级的 local-storage 目录；也可用 UPLOAD_DIR 显式指定。
+  upload-dir: ${UPLOAD_DIR:}
   mail:
     enabled: ${MAIL_ENABLED:false}
   redis:

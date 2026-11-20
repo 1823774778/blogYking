@@ -24,7 +24,8 @@ public class UploadController {
 
     @PostMapping
     public ApiResponse<Map<String, String>> upload(@RequestParam("file") MultipartFile file) {
-        return ApiResponse.ok(Map.of("url", storageService.store(file)));
+        return ApiResponse.ok(Map.of("url",
+                storageService.store(file, SecurityUtils.currentUserId())));
     }
 
     @PostMapping("/audio")
@@ -32,6 +33,7 @@ public class UploadController {
         if (!SecurityUtils.isAdmin()) {
             throw BizException.forbidden("只有管理员可以上传站点音乐");
         }
-        return ApiResponse.ok(Map.of("url", storageService.storeAudio(file)));
+        return ApiResponse.ok(Map.of("url",
+                storageService.storeAudio(file, SecurityUtils.currentUserId())));
     }
 }

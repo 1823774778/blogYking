@@ -284,6 +284,9 @@ public class AdminController {
         if (values.getOrDefault("storageSecretKey", "").isBlank()) {
             values.remove("storageSecretKey");
         }
+        if (values.getOrDefault("storagePassword", "").isBlank()) {
+            values.remove("storagePassword");
+        }
         return ApiResponse.ok(maskedConfig(siteConfigService.update(values)));
     }
 
@@ -294,13 +297,17 @@ public class AdminController {
 
     @GetMapping("/storage/files")
     public ApiResponse<Map<String, Object>> storageFiles(@RequestParam(defaultValue = "0") int page,
-                                                         @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(storageService.listLocal(page, size));
+                                                         @RequestParam(defaultValue = "20") int size,
+                                                         @RequestParam(required = false) String keyword,
+                                                         @RequestParam(required = false) String category,
+                                                         @RequestParam(required = false) String uploader) {
+        return ApiResponse.ok(storageService.listLocal(page, size, keyword, category, uploader));
     }
 
     @DeleteMapping("/storage/files")
-    public ApiResponse<Void> deleteStorageFile(@RequestParam String name) {
-        storageService.deleteLocal(name);
+    public ApiResponse<Void> deleteStorageFile(@RequestParam(required = false) String path,
+                                               @RequestParam(required = false) String name) {
+        storageService.deleteLocal(path != null && !path.isBlank() ? path : name);
         return ApiResponse.ok();
     }
 
@@ -331,9 +338,11 @@ public class AdminController {
         map.put("smtpPasswordSet", raw.getOrDefault("smtpPassword", "").isBlank() ? "false" : "true");
         map.put("aiApiKeySet", raw.getOrDefault("aiApiKey", "").isBlank() ? "false" : "true");
         map.put("storageSecretKeySet", raw.getOrDefault("storageSecretKey", "").isBlank() ? "false" : "true");
+        map.put("storagePasswordSet", raw.getOrDefault("storagePassword", "").isBlank() ? "false" : "true");
         map.put("smtpPassword", "");
         map.put("aiApiKey", "");
         map.put("storageSecretKey", "");
+        map.put("storagePassword", "");
         return map;
     }
 }

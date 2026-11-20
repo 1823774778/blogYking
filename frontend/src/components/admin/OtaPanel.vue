@@ -21,6 +21,12 @@ const proxyOpen = ref(false)
 const proxyInput = ref('')
 const proxySaving = ref(false)
 const rollbackTarget = ref(null)
+const localOpen = ref(false)
+const localFile = ref(null)
+const localUploading = ref(false)
+const localProgress = ref(0)
+const localError = ref('')
+const localInput = ref(null)
 
 let otaTimer = null
 let downloadTimer = null
@@ -50,6 +56,15 @@ const primaryDisabled = computed(() =>
   otaApplying.value || jobRunning.value || downloadStarting.value || (releasesLoading.value && !releases.value)
 )
 const proxyConfigured = computed(() => Boolean(String(config.value.otaDownloadProxyPrefix || '').trim()))
+const versionSourceLabel = computed(() => ({
+  'jar-manifest': 'JAR manifest',
+  'build-info': 'JAR build-info',
+  'pom.properties': 'JAR pom.properties',
+  config: '启动参数（未找到 JAR 版本）',
+  unknown: '未知来源'
+})[String(ota.value?.versionSource || '')] || 'JAR')
+const localFileName = computed(() => localFile.value?.name || '')
+const localFileSize = computed(() => localFile.value ? formatBytes(localFile.value.size) : '')
 
 async function loadOta() {
   try {
@@ -264,7 +279,9 @@ function pollOta(target, baselineSha, rollback) {
           || (last.status === 'SUCCESS' && last.targetSha === target.sha256)) {
         otaApplying.value = false
         forgetJob()
-        toast(rollback ? `已回档到 ${res.data.version}` : `更新成功，当前版本 ${res.data.version}`)
+        toast(rollback
+          ? `已回档到 ${res.data.version}，历史版本缓存已自动清理`
+          : `更新成功，当前版本 ${res.data.version}，历史版本缓存已自动清理`)
         loadOta()
         loadReleases(false)
         return
@@ -316,16 +333,75 @@ async function cancelPending() {
 }
 
 async function clearCache() {
-  if (cacheClearing.value) return
+  if (cacheClearing.value || jobRunning.value || otaApplying.value) return
   cacheClearing.value = true
   try {
-    await http.post('/admin/ota/cache/clear')
-    toast('已清理 Release 缓存')
-    await loadReleases(true)
+    const res = await http.post('/admin/ota/cache/clear', null, { timeout: 30000 })
+    const result = res.data || {}
+    const removed = Number(result.removedFiles || 0) + Number(result.removedTasks || 0)
+    forgetJob()
+    await Promise.all([loadOta(), loadReleases(true)])
+    if (result.removedPending) {
+      toast('已清除已下载的待安装包和下载缓存')
+    } else if (removed > 0) {
+      toast(`已清除 ${removed} 项已下载内容与任务记录`)
+    } else {
+      toast('没有可清理的已下载内容')
+    }
   } catch (e) {
     toast(e.message, 'error')
   } finally {
     cacheClearing.value = false
+  }
+}
+
+function openLocalUpgrade() {
+  localFile.value = null
+  localProgress.value = 0
+  localError.value = ''
+  localOpen.value = true
+}
+
+function chooseLocalFile(event) {
+  const file = event.target.files?.[0] || null
+  localFile.value = file
+  localError.value = ''
+  localProgress.value = 0
+}
+
+async function uploadLocalJar() {
+  if (!localFile.value || localUploading.value) return
+  if (!localFile.value.name.toLowerCase().endsWith('.jar')) {
+    localError.value = '只支持上传 .jar 文件'
+    return
+  }
+  if (!ota.value?.canAutoUpdate) {
+    localError.value = ota.value?.modeNote || '当前运行方式不支持自动替换 jar'
+    return
+  }
+  localUploading.value = true
+  localProgress.value = 0
+  localError.value = ''
+  const form = new FormData()
+  form.append('file', localFile.value)
+  try {
+    const res = await http.post('/admin/ota/upload', form, {
+      timeout: 180000,
+      onUploadProgress: (event) => {
+        if (event.total) {
+          localProgress.value = Math.min(99, Math.round((event.loaded / event.total) * 100))
+        }
+      }
+    })
+    localProgress.value = 100
+    localOpen.value = false
+    await loadOta()
+    toast(`本地 jar 已校验通过，待安装 v${res.data?.version || '未知'}`)
+  } catch (e) {
+    localError.value = e.message || '本地升级包上传失败'
+  } finally {
+    localUploading.value = false
+    if (localInput.value) localInput.value.value = ''
   }
 }
 
@@ -433,11 +509,12 @@ onBeforeUnmount(() => {
     <div class="ota-toolbar">
       <div class="ota-toolbar-status">
         <span class="badge" :class="ota?.canAutoUpdate ? 'on' : 'warn'">{{ otaModeLabel(ota?.mode) }}</span>
-        <span class="meta">当前版本 <code>{{ ota?.version || '—' }}</code></span>
+        <span class="meta">当前版本 <code>{{ ota?.version || '—' }}</code><span class="ota-version-source">读取自 {{ versionSourceLabel }}</span></span>
       </div>
       <div class="ota-toolbar-actions">
-        <button class="btn btn-ghost btn-sm" type="button" :disabled="cacheClearing" @click="clearCache">
-          {{ cacheClearing ? '清理中…' : '清理缓存' }}
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="localUploading || otaApplying || jobRunning" @click="openLocalUpgrade">本地升级</button>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="cacheClearing || jobRunning || otaApplying" @click="clearCache">
+          {{ cacheClearing ? '清除中…' : '清除缓存' }}
         </button>
         <button class="btn btn-ghost btn-sm ota-proxy-btn" type="button" @click="openProxy">
           代理前缀
@@ -489,13 +566,13 @@ onBeforeUnmount(() => {
       </div>
       <div v-else-if="!releasesLoading" class="ota-release-empty">
         <p>{{ releases?.error || '还没有读取到发布版本。' }}</p>
-        <p class="meta">可点击右上角“清理缓存”后重新读取。</p>
+        <p class="meta">可点击右上角“清除缓存”后重新读取。</p>
       </div>
     </section>
 
     <section v-if="ota?.pending" class="panel ota-pending">
       <div class="ota-pending-head"><div><span class="badge on">已校验</span><strong>{{ ota.pending.fileName }}</strong></div><span class="meta">{{ formatBytes(ota.pending.size) }}</span></div>
-      <div class="ota-pending-meta"><span>目标版本 <b>{{ ota.pending.version }}</b></span><span>SHA-256 <code>{{ shortSha(ota.pending.sha256) }}</code></span></div>
+      <div class="ota-pending-meta"><span>目标版本 <b>{{ ota.pending.version }}</b></span><span>来源 {{ ota.pending.source || '未知' }}</span><span>SHA-256 <code>{{ shortSha(ota.pending.sha256) }}</code></span></div>
       <div v-if="pendingIsRollback" class="ota-rollback-warning">
         <strong>回档风险</strong>
         <span>即将安装的是旧版本，可能不兼容现有数据；回档后新版本功能将不可用，请先备份数据库、配置与上传文件。</span>
@@ -539,6 +616,52 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="!releases?.history?.length" class="meta ota-release-history-empty">暂无更早的历史发布。</p>
     </section>
+
+    <div v-if="localOpen" class="adm-modal-wrap" @click.self="!localUploading && (localOpen = false)">
+      <div class="adm-modal ota-local-modal">
+        <div class="adm-modal-head">
+          <div>
+            <span class="adm-card-kicker">LOCAL UPGRADE</span>
+            <h2>本地升级</h2>
+            <p class="meta">上传本博客的可执行 jar，校验通过后进入待安装区；不会自动替换当前程序。</p>
+          </div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="localUploading" @click="localOpen = false">×</button>
+        </div>
+
+        <div class="ota-local-current">
+          <span>当前版本 <code>{{ ota?.version || '—' }}</code></span>
+          <span class="meta">版本读取自 {{ versionSourceLabel }}</span>
+        </div>
+
+        <div v-if="!ota?.canAutoUpdate" class="ota-notice danger">{{ ota?.modeNote || '当前运行方式不支持自动替换 jar' }}</div>
+
+        <div class="ota-local-picker">
+          <input ref="localInput" class="ota-hidden-input" type="file" accept=".jar,application/java-archive" @change="chooseLocalFile" />
+          <button class="btn btn-ghost" type="button" :disabled="localUploading" @click="localInput?.click()">选择 jar 文件</button>
+          <div v-if="localFileName" class="ota-local-file">
+            <strong>{{ localFileName }}</strong>
+            <span class="meta">{{ localFileSize }}</span>
+          </div>
+          <p v-else class="meta">只支持本博客的 Spring Boot 可执行 jar，最大 100 MB。</p>
+        </div>
+
+        <div v-if="localUploading" class="ota-local-progress" role="progressbar" :aria-valuenow="localProgress" aria-valuemin="0" aria-valuemax="100">
+          <span :style="{ width: `${localProgress}%` }"></span>
+          <b>{{ localProgress }}%</b>
+        </div>
+
+        <p v-if="localError" class="ota-local-error">{{ localError }}</p>
+
+        <p class="ota-warn-text">上传并校验会替换当前“待安装”包。安装阶段仍会备份当前 jar、重启服务，独立运行模式健康检查失败会自动回滚。</p>
+
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="localUploading" @click="localOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="localUploading || !localFile || !ota?.canAutoUpdate" @click="uploadLocalJar">
+            {{ localUploading ? '上传并校验中…' : '上传并校验' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="proxyOpen" class="adm-modal-wrap" @click.self="proxyOpen = false">
       <div class="adm-modal ota-proxy-modal">

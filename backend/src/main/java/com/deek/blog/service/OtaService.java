@@ -23,6 +23,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
@@ -66,6 +67,7 @@ public class OtaService {
     private final Path backupDir;
     private final int healthTimeoutSeconds;
     private final int port;
+    private final String fallbackVersion;
     private final AtomicBoolean applying = new AtomicBoolean(false);
     private final String instanceId = UUID.randomUUID().toString();
     private final Instant startedAt = Instant.now();
@@ -80,7 +82,9 @@ public class OtaService {
     private volatile String currentSha = "";
     private volatile long currentSize;
     private volatile long jarLastModified = -1;
+    private volatile String jarFileKey = "";
     private volatile String currentVersion = "未知";
+    private volatile String currentVersionSource = "unknown";
     private volatile String mode = "unknown";
     private volatile String modeNote = "";
 
@@ -88,7 +92,8 @@ public class OtaService {
                       @Value("${app.ota.jar-path:}") String configuredJarPath,
                       @Value("${app.ota.work-dir:./updates}") String workDir,
                       @Value("${app.ota.health-timeout-seconds:45}") int healthTimeoutSeconds,
-                      @Value("${server.port:8080}") int port) {
+                      @Value("${server.port:8080}") int port,
+                      @Value("${app.version:}") String fallbackVersion) {
         this.enabled = enabled;
         this.configuredJarPath = configuredJarPath == null ? "" : configuredJarPath.trim();
         this.workDir = Paths.get(workDir).toAbsolutePath().normalize();
@@ -96,6 +101,7 @@ public class OtaService {
         this.backupDir = this.workDir.resolve("backups");
         this.healthTimeoutSeconds = Math.max(10, healthTimeoutSeconds);
         this.port = port;
+        this.fallbackVersion = fallbackVersion == null ? "" : fallbackVersion.trim();
         this.pendingFile = this.workDir.resolve("pending.properties");
         this.stateFile = this.workDir.resolve("ota-state.properties");
         this.updaterJar = this.workDir.resolve("updater.jar");
@@ -132,6 +138,14 @@ public class OtaService {
 
     public String getCurrentVersion() {
         return currentVersion;
+    }
+
+    public String getVersionSource() {
+        return currentVersionSource;
+    }
+
+    public Path getJarPath() {
+        return jarPath;
     }
 
     public boolean canAutoUpdate() {
@@ -309,11 +323,12 @@ public class OtaService {
         p.setProperty("size", Long.toString(size));
         p.setProperty("sha256", meta.sha256());
         p.setProperty("version", meta.version());
+        p.setProperty("source", source == null ? "" : source);
         p.setProperty("uploadedAt", LocalDateTime.now().format(TIME));
         writeProperties(pendingFile, p);
         log.info("OTA jar 已{}并通过校验：{} ({}), sha={}", source, originalName, humanSize(size), meta.sha256());
         return new PendingInfo(originalName, size, meta.sha256(), meta.version(),
-                LocalDateTime.now().format(TIME));
+                source == null ? "" : source, LocalDateTime.now().format(TIME));
     }
 
     public synchronized Map<String, Object> apply() {
@@ -462,16 +477,147 @@ public class OtaService {
         log.info("OTA 待更新 jar 已取消");
     }
 
+    /**
+     * 只清理下载相关缓存：下载产生的待安装包、staging 残留与临时文件。
+     * 本地上传的待安装包不属于“已下载内容”，不会被删除。
+     */
+    public synchronized Map<String, Object> clearDownloadArtifacts() {
+        if (applying.get()) {
+            throw new BizException(HttpStatus.CONFLICT, "更新正在执行，暂时不能清理下载缓存");
+        }
+        Pending pending = loadPendingRaw();
+        boolean removedPending = false;
+        if (pending != null && isDownloadSource(pending.source())) {
+            deletePendingFiles();
+            removedPending = true;
+            pending = null;
+        }
+
+        int files = 0;
+        long bytes = 0;
+        try (Stream<Path> stream = Files.list(stagingDir)) {
+            List<Path> paths = stream.toList();
+            for (Path path : paths) {
+                if (!Files.isRegularFile(path)) {
+                    continue;
+                }
+                if (pending != null && path.getFileName().toString().equals(pending.storedFile())) {
+                    continue;
+                }
+                try {
+                    bytes += Files.size(path);
+                    Files.delete(path);
+                    files++;
+                } catch (IOException e) {
+                    log.warn("清理 OTA 下载缓存失败 {}: {}", path, e.getMessage());
+                }
+            }
+        } catch (IOException e) {
+            log.warn("读取 OTA staging 目录失败: {}", e.getMessage());
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("removedFiles", files);
+        result.put("removedBytes", bytes);
+        result.put("removedPending", removedPending);
+        log.info("OTA 下载缓存清理完成：files={}, bytes={}, pending={}", files, bytes, removedPending);
+        return result;
+    }
+
+    private static boolean isDownloadSource(String source) {
+        return source != null && source.contains("下载");
+    }
+
+    /**
+     * 更新成功启动后的历史清理：删除旧备份 jar、staging 残留和 updater 副本。
+     * 只用 GitHub 历史 Release 仍可回档，不再保留体积较大的本地旧版本。
+     */
+    public synchronized Map<String, Object> cleanupHistoryAfterSuccessfulUpdate() {
+        Properties state = readProperties(stateFile);
+        String status = state.getProperty("status", "");
+        String targetSha = state.getProperty("targetSha", "");
+        String cleanedSha = state.getProperty("historyCleanedForSha", "");
+        if (!"SUCCESS".equals(status) || currentSha.isBlank()
+                || !currentSha.equalsIgnoreCase(targetSha)
+                || currentSha.equalsIgnoreCase(cleanedSha)) {
+            return Map.of("skipped", true);
+        }
+
+        deletePendingFiles();
+        int backupFiles = 0;
+        long backupBytes = 0;
+        try (Stream<Path> stream = Files.list(backupDir)) {
+            for (Path path : stream.filter(Files::isRegularFile).toList()) {
+                try {
+                    backupBytes += Files.size(path);
+                    Files.delete(path);
+                    backupFiles++;
+                } catch (IOException e) {
+                    log.warn("清理 OTA 历史备份失败 {}: {}", path, e.getMessage());
+                }
+            }
+        } catch (IOException ignored) {
+        }
+
+        int stagedFiles = 0;
+        long stagedBytes = 0;
+        Pending pending = loadPendingRaw();
+        try (Stream<Path> stream = Files.list(stagingDir)) {
+            for (Path path : stream.filter(Files::isRegularFile).toList()) {
+                if (pending != null && path.getFileName().toString().equals(pending.storedFile())) {
+                    continue;
+                }
+                try {
+                    stagedBytes += Files.size(path);
+                    Files.delete(path);
+                    stagedFiles++;
+                } catch (IOException e) {
+                    log.warn("清理 OTA 历史 staging 失败 {}: {}", path, e.getMessage());
+                }
+            }
+        } catch (IOException ignored) {
+        }
+
+        boolean updaterRemoved = false;
+        try {
+            updaterRemoved = Files.deleteIfExists(updaterJar);
+            Files.deleteIfExists(workDir.resolve("update.properties"));
+        } catch (IOException e) {
+            log.warn("清理 updater 副本失败: {}", e.getMessage());
+        }
+
+        try {
+            Map<String, String> patch = new LinkedHashMap<>();
+            patch.put("historyCleanedForSha", currentSha);
+            patch.put("historyCleanedAt", LocalDateTime.now().format(TIME));
+            patch.put("message", "新版本已启动：" + currentVersion + "，历史版本缓存已自动清理");
+            writeState(patch);
+        } catch (IOException e) {
+            log.warn("写入历史版本清理状态失败: {}", e.getMessage());
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("backupFiles", backupFiles);
+        result.put("backupBytes", backupBytes);
+        result.put("stagedFiles", stagedFiles);
+        result.put("stagedBytes", stagedBytes);
+        result.put("updaterRemoved", updaterRemoved);
+        log.info("OTA 更新成功，已自动清理历史版本：backups={}, staged={}, updater={}",
+                backupFiles, stagedFiles, updaterRemoved);
+        return result;
+    }
+
     public StatusView status() {
         refreshCurrentJar(false);
         PendingInfo pendingInfo = null;
         Pending pending = loadPendingRaw();
         if (pending != null) {
             pendingInfo = new PendingInfo(pending.fileName(), pending.size(), pending.sha256(),
-                    pending.version(), pending.uploadedAt());
+                    pending.version(), pending.source(), pending.uploadedAt());
         }
         return new StatusView(enabled, canAutoUpdate(), applying.get(), mode, modeNote,
-                currentVersion, currentSha, currentSize, jarPath == null ? "" : jarPath.toString(),
+                currentVersion, currentVersionSource, currentSha, currentSize,
+                jarPath == null ? "" : jarPath.toString(),
                 getPid(), instanceId, durationSeconds(), pendingInfo, lastUpdate());
     }
 
@@ -551,35 +697,74 @@ public class OtaService {
         if (jar == null || !Files.isRegularFile(jar)) {
             currentSha = "";
             currentSize = 0;
-            currentVersion = "未知";
+            jarLastModified = -1;
+            jarFileKey = "";
+            currentVersion = fallbackVersion.isBlank() ? "未知" : fallbackVersion;
+            currentVersionSource = fallbackVersion.isBlank() ? "unknown" : "config";
             return;
         }
         try {
-            long mod = Files.getLastModifiedTime(jar).toMillis();
-            long size = Files.size(jar);
-            if (force || mod != jarLastModified || size != currentSize) {
+            BasicFileAttributes attrs = Files.readAttributes(jar, BasicFileAttributes.class);
+            long mod = attrs.lastModifiedTime().toMillis();
+            long size = attrs.size();
+            String fileKey = attrs.fileKey() == null ? "" : attrs.fileKey().toString();
+            if (force || mod != jarLastModified || size != currentSize || !fileKey.equals(jarFileKey)) {
                 currentSha = sha256(jar);
                 currentSize = size;
                 jarLastModified = mod;
-                currentVersion = jarVersion(jar);
+                jarFileKey = fileKey;
+                JarVersion version = jarVersion(jar);
+                currentVersion = version.version();
+                currentVersionSource = version.source();
+                if ("unknown".equals(currentVersionSource) && !fallbackVersion.isBlank()) {
+                    currentVersion = fallbackVersion;
+                    currentVersionSource = "config";
+                }
             }
         } catch (Exception e) {
             log.warn("读取当前 jar 信息失败: {}", e.getMessage());
         }
     }
 
-    private static String jarVersion(Path jar) {
+    /**
+     * 版本号始终优先读取当前磁盘上的可执行 jar，而不是环境变量 APP_VERSION。
+     * 这样手动替换 jar 并重启后，即使旧的 APP_VERSION 仍指向旧版本，页面也会显示真实版本。
+     */
+    private static JarVersion jarVersion(Path jar) {
         try (JarFile jf = new JarFile(jar.toFile(), false)) {
             Manifest mf = jf.getManifest();
             if (mf != null) {
-                String v = mf.getMainAttributes().getValue("Implementation-Version");
-                if (v != null && !v.isBlank()) {
-                    return v.trim();
+                String version = mf.getMainAttributes().getValue("Implementation-Version");
+                if (version != null && !version.isBlank()) {
+                    return new JarVersion(version.trim(), "jar-manifest");
                 }
+            }
+            String buildInfo = entryProperty(jf, "BOOT-INF/classes/META-INF/build-info.properties", "build.version");
+            if (!buildInfo.isBlank()) {
+                return new JarVersion(buildInfo, "build-info");
+            }
+            String pomVersion = entryProperty(
+                    jf, "BOOT-INF/classes/META-INF/maven/com.deek/blog/pom.properties", "version");
+            if (!pomVersion.isBlank()) {
+                return new JarVersion(pomVersion, "pom.properties");
             }
         } catch (Exception ignored) {
         }
-        return "未知";
+        return new JarVersion("未知", "unknown");
+    }
+
+    private static String entryProperty(JarFile jar, String entryName, String key) {
+        JarEntry entry = jar.getJarEntry(entryName);
+        if (entry == null) {
+            return "";
+        }
+        Properties properties = new Properties();
+        try (InputStream in = jar.getInputStream(entry)) {
+            properties.load(in);
+            return properties.getProperty(key, "").trim();
+        } catch (IOException ignored) {
+            return "";
+        }
     }
 
     private JarMeta inspectJar(Path path) throws IOException {
@@ -889,7 +1074,8 @@ public class OtaService {
         try {
             long size = Long.parseLong(p.getProperty("size", "0"));
             return new Pending(stored, p.getProperty("fileName", "blog.jar"), size, sha,
-                    p.getProperty("version", "未知"), p.getProperty("uploadedAt", ""));
+                    p.getProperty("version", "未知"), p.getProperty("source", ""),
+                    p.getProperty("uploadedAt", ""));
         } catch (NumberFormatException e) {
             return null;
         }
@@ -1011,8 +1197,11 @@ public class OtaService {
     private record JarMeta(String sha256, String version) {
     }
 
+    private record JarVersion(String version, String source) {
+    }
+
     private record Pending(String storedFile, String fileName, long size, String sha256,
-                           String version, String uploadedAt) {
+                           String version, String source, String uploadedAt) {
     }
 
     private record RestartSpec(long pid, String instanceId, Path jarPath, Path newJar, Path backup,
@@ -1020,12 +1209,13 @@ public class OtaService {
                                List<String> appArgs, String mode, String targetVersion) {
     }
 
-    public record PendingInfo(String fileName, long size, String sha256, String version, String uploadedAt) {
+    public record PendingInfo(String fileName, long size, String sha256, String version,
+                              String source, String uploadedAt) {
     }
 
     public record StatusView(boolean enabled, boolean canAutoUpdate, boolean applying,
-                             String mode, String modeNote, String version, String sha256, long size,
-                             String jarPath, long pid, String instanceId, long uptimeSeconds,
-                             PendingInfo pending, Map<String, Object> lastUpdate) {
+                             String mode, String modeNote, String version, String versionSource,
+                             String sha256, long size, String jarPath, long pid, String instanceId,
+                             long uptimeSeconds, PendingInfo pending, Map<String, Object> lastUpdate) {
     }
 }

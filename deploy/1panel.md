@@ -35,7 +35,7 @@ ls -lh /opt/1panel/apps/blog/blog.jar    # 按你的实际目录调整
 4. 挂载关系应是：
    - `宿主机 /opt/1panel/apps/blog/blog.jar` → 容器 `/app/blog.jar`（文件挂载）
    - 或者 `宿主机 /opt/1panel/apps/blog` → 容器 `/app`（目录挂载）
-5. 数据目录也要挂：`/opt/1panel/apps/blog/data → /app/data`、`/opt/1panel/apps/blog/uploads → /app/uploads`、`/opt/1panel/apps/blog/config → /app/config`，否则重建容器后数据库、图片和首次初始化配置都会丢。
+5. 数据目录也要挂：`/opt/1panel/apps/blog/data → /app/data`、`/opt/1panel/apps/blog/local-storage → /app/local-storage`、`/opt/1panel/apps/blog/uploads → /app/uploads`（旧目录，保留用于首次迁移）、`/opt/1panel/apps/blog/config → /app/config`，否则重建容器后数据库、图片和首次初始化配置都会丢。
 
 ## 方案 B：用项目里的 Dockerfile / compose（推荐）
 
@@ -47,7 +47,8 @@ ls -lh /opt/1panel/apps/blog/blog.jar    # 按你的实际目录调整
 ├── Dockerfile
 ├── docker-compose.yml
 ├── data/
-├── uploads/
+├── local-storage/   # 本地图片分类存储（新版本默认目录）
+├── uploads/         # 旧版图片目录，保留用于首次自动迁移
 └── config/          # 首次初始化向导生成，含数据库/Redis 口令
 ```
 
