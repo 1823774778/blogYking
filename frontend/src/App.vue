@@ -1,17 +1,51 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import http from './api'
-import { state, applyTheme } from './state'
+import { state, applyTheme, toast } from './state'
 
 const route = useRoute()
 const router = useRouter()
 const year = new Date().getFullYear()
+const musicAudio = ref(null)
+const musicPlaying = ref(false)
 
+const isAdminArea = computed(() => route.path.startsWith('/admin'))
+const showPublicChrome = computed(() => state.setupRequired === false && !isAdminArea.value)
 const showFooter = computed(
-  () => route.path !== '/login' && route.path !== '/register' && route.path !== '/setup' && state.setupRequired === false
+  () => showPublicChrome.value && route.path !== '/login' && route.path !== '/register' && route.path !== '/setup'
 )
+const showMusic = computed(
+  () => showPublicChrome.value
+    && state.site.musicEnabled === 'true'
+    && Boolean(state.site.musicUrl)
+)
+
+function toggleMusic() {
+  const audio = musicAudio.value
+  if (!audio) return
+  if (audio.paused) {
+    audio.play()
+      .then(() => { musicPlaying.value = true })
+      .catch(() => toast('浏览器阻止了播放，请再点一次', 'error'))
+  } else {
+    audio.pause()
+    musicPlaying.value = false
+  }
+}
+
+function syncDocumentTitle() {
+  const name = state.site?.siteName || '墨记'
+  document.title = route.meta?.title ? `${route.meta.title} · ${name}` : name
+}
+
+watch(() => state.site.siteName, syncDocumentTitle)
+
+watch(() => state.site.musicUrl, () => {
+  musicPlaying.value = false
+  if (musicAudio.value) musicAudio.value.load()
+})
 
 onMounted(async () => {
   applyTheme(state.theme)
@@ -31,7 +65,7 @@ onMounted(async () => {
     const res = await http.get('/meta/site')
     state.site = { ...state.site, ...res.data }
     if (!state.setupRequired) {
-      document.title = `${res.data.siteName || '墨记'}`
+      syncDocumentTitle()
     }
   } catch (e) {
     /* 站点信息加载失败不阻塞页面 */
@@ -49,9 +83,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app">
-    <NavBar v-if="state.setupRequired === false" />
-    <main class="shell main" :class="{ 'setup-main': state.setupRequired }">
+  <div class="app" :class="{ 'is-admin': isAdminArea }">
+    <NavBar v-if="showPublicChrome" />
+    <router-view v-if="isAdminArea" />
+    <main v-else class="shell main" :class="{ 'setup-main': state.setupRequired }">
       <router-view />
     </main>
 
@@ -67,7 +102,7 @@ onMounted(async () => {
       </div>
     </footer>
 
-    <nav v-if="showFooter" class="ff-dock" aria-label="移动端导航">
+    <nav v-if="showPublicChrome" class="ff-dock" aria-label="移动端导航">
       <router-link to="/" :class="{ active: route.path === '/' }">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
           <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2v-9Z" />
@@ -83,18 +118,14 @@ onMounted(async () => {
       </router-link>
       <router-link
         v-if="state.user"
-        :to="state.user.role === 'ADMIN' ? '/admin' : '/profile'"
-        :class="{ active: route.path.startsWith('/admin') || route.path.startsWith('/profile') }"
+        to="/profile"
+        :class="{ active: route.path.startsWith('/profile') }"
       >
-        <svg v-if="state.user.role === 'ADMIN'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M3 9h18M8 13h3M8 16h6" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
           <circle cx="12" cy="8" r="3.2" />
           <path d="M5 20a7 7 0 0 1 14 0" />
         </svg>
-        {{ state.user.role === 'ADMIN' ? '后台' : '我的' }}
+        我的
       </router-link>
       <router-link v-else to="/login" :class="{ active: route.path.startsWith('/login') }">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
@@ -103,6 +134,29 @@ onMounted(async () => {
         登录
       </router-link>
     </nav>
+
+    <div v-if="showMusic" class="site-music" :class="{ playing: musicPlaying }">
+      <audio
+        ref="musicAudio"
+        :src="state.site.musicUrl"
+        preload="none"
+        loop
+        @play="musicPlaying = true"
+        @pause="musicPlaying = false"
+      ></audio>
+      <button type="button" class="site-music-btn" :aria-label="musicPlaying ? '暂停站点音乐' : '播放站点音乐'" @click="toggleMusic">
+        <span class="site-music-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span class="site-music-icon" aria-hidden="true">
+          <svg v-if="musicPlaying" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M7 5v14M17 5v14" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m8 5 11 7-11 7V5Z" />
+          </svg>
+        </span>
+        <span v-if="state.site.musicTitle" class="site-music-title">{{ state.site.musicTitle }}</span>
+      </button>
+    </div>
 
     <div class="toasts">
       <div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.type">{{ t.message }}</div>

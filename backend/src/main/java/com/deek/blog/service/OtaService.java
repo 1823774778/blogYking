@@ -12,10 +12,14 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.File;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.Reader;
 import java.io.Writer;
 import java.lang.management.ManagementFactory;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -165,36 +169,7 @@ public class OtaService {
                 Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            JarMeta meta = inspectJar(temp);
-            if (meta.sha256().equalsIgnoreCase(currentSha)) {
-                throw new BizException("这个 jar 与当前运行的版本完全相同，无需更新");
-            }
-            long usable = Files.getFileStore(workDir).getUsableSpace();
-            if (usable < file.getSize() * 3 + 20L * 1024 * 1024) {
-                throw new BizException("磁盘剩余空间不足，更新至少需要约 " + humanSize(file.getSize() * 3));
-            }
-
-            String storedName = meta.sha256().substring(0, 16) + "-" + UUID.randomUUID().toString().substring(0, 8) + ".jar";
-            Path stored = stagingDir.resolve(storedName);
-            moveReplace(temp, stored);
-            temp = null;
-
-            if (loadPendingRaw() != null) {
-                deletePendingFiles();
-            }
-
-            Properties p = new Properties();
-            p.setProperty("storedFile", storedName);
-            p.setProperty("fileName", originalName);
-            p.setProperty("size", Long.toString(file.getSize()));
-            p.setProperty("sha256", meta.sha256());
-            p.setProperty("version", meta.version());
-            p.setProperty("uploadedAt", LocalDateTime.now().format(TIME));
-            writeProperties(pendingFile, p);
-            log.info("OTA jar 已上传并通过校验：{} ({}), sha={}", originalName, humanSize(file.getSize()), meta.sha256());
-
-            return new PendingInfo(originalName, file.getSize(), meta.sha256(), meta.version(),
-                    LocalDateTime.now().format(TIME));
+            return stageJar(temp, originalName, file.getSize(), "本地上传");
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
@@ -208,6 +183,115 @@ public class OtaService {
                 }
             }
         }
+    }
+
+    /**
+     * 从可信 GitHub Release 资产地址下载 jar，落盘前复用本地上传的启动类、配置与 SHA-256 校验。
+     */
+    public synchronized PendingInfo downloadFromGitHub(String rawUrl, String rawFileName) {
+        if (!enabled) {
+            throw new BizException(HttpStatus.FORBIDDEN, "OTA 更新已关闭（app.ota.enabled=false）");
+        }
+        if (!canAutoUpdate()) {
+            throw new BizException(HttpStatus.CONFLICT, modeNote);
+        }
+        if (applying.get()) {
+            throw new BizException(HttpStatus.CONFLICT, "已有更新正在执行，请等待当前进程完成重启");
+        }
+        URI uri;
+        try {
+            uri = URI.create(rawUrl == null ? "" : rawUrl.trim());
+        } catch (Exception e) {
+            throw new BizException("下载地址不合法");
+        }
+        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || !(host.equals("github.com")
+                || host.endsWith(".githubusercontent.com"))) {
+            throw new BizException("只允许从 GitHub Release 下载更新包");
+        }
+        String fileName = safeFileName(rawFileName);
+        if (!fileName.toLowerCase().endsWith(".jar")) {
+            throw new BizException("Release 资产不是 jar 文件");
+        }
+        Path temp = null;
+        try {
+            temp = Files.createTempFile(stagingDir, "github-", ".part");
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(Duration.ofSeconds(120))
+                    .header("Accept", "application/octet-stream")
+                    .header("User-Agent", "deek-blog-ota/1.0")
+                    .GET().build();
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new BizException("GitHub 下载失败：HTTP " + response.statusCode());
+            }
+            long declared = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+            if (declared > MAX_JAR_BYTES) {
+                throw new BizException("Release 中的 jar 超过 100MB");
+            }
+            long copied = 0;
+            try (InputStream in = response.body(); OutputStream out = Files.newOutputStream(temp)) {
+                byte[] buffer = new byte[8192];
+                int n;
+                while ((n = in.read(buffer)) > 0) {
+                    copied += n;
+                    if (copied > MAX_JAR_BYTES) {
+                        throw new BizException("Release 中的 jar 超过 100MB");
+                    }
+                    out.write(buffer, 0, n);
+                }
+            }
+            if (copied <= 0) {
+                throw new BizException("GitHub 返回了空文件");
+            }
+            PendingInfo pending = stageJar(temp, fileName, copied, "GitHub 在线下载");
+            temp = null;
+            return pending;
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BizException("GitHub 下载失败：" + e.getMessage());
+        } finally {
+            if (temp != null) {
+                try { Files.deleteIfExists(temp); } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    private PendingInfo stageJar(Path temp, String originalName, long size, String source) throws IOException {
+        JarMeta meta = inspectJar(temp);
+        if (meta.sha256().equalsIgnoreCase(currentSha)) {
+            throw new BizException("这个 jar 与当前运行的版本完全相同，无需更新");
+        }
+        long usable = Files.getFileStore(workDir).getUsableSpace();
+        if (usable < size * 3 + 20L * 1024 * 1024) {
+            throw new BizException("磁盘剩余空间不足，更新至少需要约 " + humanSize(size * 3));
+        }
+
+        String storedName = meta.sha256().substring(0, 16) + "-" + UUID.randomUUID().toString().substring(0, 8) + ".jar";
+        Path stored = stagingDir.resolve(storedName);
+        moveReplace(temp, stored);
+
+        if (loadPendingRaw() != null) {
+            deletePendingFiles();
+        }
+
+        Properties p = new Properties();
+        p.setProperty("storedFile", storedName);
+        p.setProperty("fileName", originalName);
+        p.setProperty("size", Long.toString(size));
+        p.setProperty("sha256", meta.sha256());
+        p.setProperty("version", meta.version());
+        p.setProperty("uploadedAt", LocalDateTime.now().format(TIME));
+        writeProperties(pendingFile, p);
+        log.info("OTA jar 已{}并通过校验：{} ({}), sha={}", source, originalName, humanSize(size), meta.sha256());
+        return new PendingInfo(originalName, size, meta.sha256(), meta.version(),
+                LocalDateTime.now().format(TIME));
     }
 
     public synchronized Map<String, Object> apply() {
@@ -282,6 +366,69 @@ public class OtaService {
             log.error("OTA 更新启动失败", e);
             writeFailure("更新启动失败：" + e.getMessage());
             throw new BizException("更新启动失败：" + e.getMessage());
+        }
+    }
+
+    /** 不更换 jar，只按当前 jar 重启站点。 */
+    public synchronized Map<String, Object> restart() {
+        if (!canAutoUpdate()) {
+            throw new BizException(HttpStatus.CONFLICT, modeNote);
+        }
+        if (!applying.compareAndSet(false, true)) {
+            throw new BizException(HttpStatus.CONFLICT, "已有更新正在执行，请勿重复提交");
+        }
+        try {
+            if (jarPath == null || !Files.isRegularFile(jarPath)) {
+                throw new BizException("当前运行的不是可重启的 jar 文件");
+            }
+            String backupName = "restart-" + LocalDateTime.now().format(STAMP) + "-"
+                    + UUID.randomUUID().toString().substring(0, 4) + ".jar";
+            Path backup = backupDir.resolve(backupName);
+            long usable = Files.getFileStore(backupDir).getUsableSpace();
+            if (usable < currentSize * 2 + 20L * 1024 * 1024) {
+                throw new BizException("磁盘剩余空间不足，无法安全重启");
+            }
+
+            RestartSpec spec = buildRestartSpec(jarPath, backup, currentVersion);
+            writeApplyConfig(spec);
+            Files.copy(jarPath, updaterJar, StandardCopyOption.REPLACE_EXISTING);
+
+            Map<String, String> state = new LinkedHashMap<>();
+            state.put("status", "RESTARTING");
+            state.put("message", "正在按当前 jar 重启站点");
+            state.put("targetSha", currentSha);
+            state.put("previousSha", currentSha);
+            state.put("targetVersion", currentVersion);
+            state.put("previousVersion", currentVersion);
+            state.put("backup", backup.toString());
+            state.put("mode", mode);
+            state.put("updatedAt", LocalDateTime.now().format(TIME));
+            writeState(state);
+
+            launchUpdater();
+            log.info("站点重启已启动，版本 {}，backup={}", currentVersion, backup);
+
+            if ("standalone".equals(mode)) {
+                scheduleExit(3);
+            } else {
+                monitorSupervisedReplacement();
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("status", "RESTARTING");
+            result.put("targetVersion", currentVersion);
+            result.put("previousVersion", currentVersion);
+            result.put("instanceId", instanceId);
+            result.put("restartMode", mode);
+            return result;
+        } catch (BizException e) {
+            applying.set(false);
+            throw e;
+        } catch (Exception e) {
+            applying.set(false);
+            log.error("站点重启启动失败", e);
+            writeFailure("重启启动失败：" + e.getMessage());
+            throw new BizException("重启启动失败：" + e.getMessage());
         }
     }
 
@@ -467,6 +614,10 @@ public class OtaService {
     // ---------- 更新执行 ----------
 
     private RestartSpec buildRestartSpec(Pending pending, Path newJar, Path backup) {
+        return buildRestartSpec(newJar, backup, pending.version());
+    }
+
+    private RestartSpec buildRestartSpec(Path newJar, Path backup, String targetVersion) {
         String os = System.getProperty("os.name", "").toLowerCase();
         Path javaBin = Paths.get(System.getProperty("java.home"), "bin",
                 os.contains("win") ? "java.exe" : "java");
@@ -475,7 +626,7 @@ public class OtaService {
         List<String> appArgs = currentApplicationArgs();
         return new RestartSpec(getPid(), instanceId, jarPath, newJar, backup,
                 port, Paths.get(work).toAbsolutePath().normalize(), javaBin,
-                jvmArgs, appArgs, mode, pending.version());
+                jvmArgs, appArgs, mode, targetVersion);
     }
 
     private List<String> currentApplicationArgs() {

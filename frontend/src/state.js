@@ -23,7 +23,12 @@ export const state = reactive({
     github: '',
     email: '',
     about: '',
-    avatar: ''
+    avatar: '',
+    logo: '',
+    musicEnabled: 'false',
+    musicUrl: '',
+    musicTitle: '',
+    commentReview: 'false'
   },
   theme: savedTheme,
   setupRequired: null,

@@ -1,6 +1,8 @@
 package com.deek.blog.controller;
 
 import com.deek.blog.common.ApiResponse;
+import com.deek.blog.common.BizException;
+import com.deek.blog.security.SecurityUtils;
 import com.deek.blog.service.StorageService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,5 +25,13 @@ public class UploadController {
     @PostMapping
     public ApiResponse<Map<String, String>> upload(@RequestParam("file") MultipartFile file) {
         return ApiResponse.ok(Map.of("url", storageService.store(file)));
+    }
+
+    @PostMapping("/audio")
+    public ApiResponse<Map<String, String>> uploadAudio(@RequestParam("file") MultipartFile file) {
+        if (!SecurityUtils.isAdmin()) {
+            throw BizException.forbidden("只有管理员可以上传站点音乐");
+        }
+        return ApiResponse.ok(Map.of("url", storageService.storeAudio(file)));
     }
 }

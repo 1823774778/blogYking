@@ -161,12 +161,50 @@ public class PostService {
         postRepository.delete(post);
     }
 
-    public PageResp<PostView> adminList(int page, int size) {
+    public PageResp<PostView> adminList(int page, int size, String keyword, String status) {
         int p = Math.max(1, page);
         int s = Math.min(100, Math.max(1, size));
-        Page<Post> result = postRepository.findAll(PageRequest.of(p - 1, s, Sort.by(Order.desc("createdAt"))));
+        String normalizedStatus = blankToNull(status);
+        if (normalizedStatus != null) {
+            normalizedStatus = normalizedStatus.toUpperCase();
+            if (!List.of("DRAFT", "PENDING", "PUBLISHED", "REJECTED").contains(normalizedStatus)) {
+                throw new BizException("文章状态筛选不合法");
+            }
+        }
+        Page<Post> result = postRepository.adminSearch(normalizedStatus, blankToNull(keyword),
+                PageRequest.of(p - 1, s, Sort.by(Order.desc("createdAt"))));
         return new PageResp<>(result.getContent().stream().map(this::toView).toList(),
                 result.getTotalElements(), p, s);
+    }
+
+    public PostDetail adminDetail(Long id) {
+        Post post = postRepository.findById(id)
+                .orElseThrow(() -> BizException.notFound("文章不存在"));
+        return new PostDetail(toView(post), post.getContent(), false, false);
+    }
+
+    @Transactional
+    public PostView review(Long id, String status, String note, User reviewer) {
+        Post post = postRepository.findById(id)
+                .orElseThrow(() -> BizException.notFound("文章不存在"));
+        String normalized = status == null ? "" : status.trim().toUpperCase();
+        if (!List.of("PUBLISHED", "REJECTED", "DRAFT").contains(normalized)) {
+            throw new BizException("审核结果只能是 PUBLISHED、REJECTED 或 DRAFT");
+        }
+        String reviewNote = note == null ? "" : note.trim();
+        if (reviewNote.length() > 512) {
+            reviewNote = reviewNote.substring(0, 512);
+        }
+        if ("REJECTED".equals(normalized) && reviewNote.isEmpty()) {
+            throw new BizException("退回文章时请填写修改意见");
+        }
+        post.setStatus(normalized);
+        post.setReviewNote(reviewNote.isEmpty() ? null : reviewNote);
+        post.setReviewedAt(LocalDateTime.now());
+        post.setReviewedBy(reviewer == null ? null : displayName(reviewer));
+        post.setUpdatedAt(LocalDateTime.now());
+        postRepository.save(post);
+        return toView(post);
     }
 
     @Transactional
@@ -225,7 +263,22 @@ public class PostService {
         return new PostView(post.getId(), post.getTitle(), post.getSummary(), post.getCover(), post.getTags(),
                 post.getStatus(), post.getViews(), post.getLikeCount(), post.getFavoriteCount(),
                 post.getCommentCount(), post.isTop(), post.getCreatedAt(), post.getUpdatedAt(),
-                post.getAuthorId(), post.getAuthorName(), post.getAuthorAvatar());
+                post.getAuthorId(), post.getAuthorName(), post.getAuthorAvatar(),
+                post.getReviewNote(), post.getReviewedAt(), post.getReviewedBy(),
+                post.getCommentSummary(), post.getCommentSummaryAt());
+    }
+
+    @Transactional
+    public PostView saveCommentSummary(Long id, String summary) {
+        Post post = postRepository.findById(id)
+                .orElseThrow(() -> BizException.notFound("文章不存在"));
+        String text = summary == null ? "" : summary.trim();
+        if (text.length() > 2000) text = text.substring(0, 2000);
+        post.setCommentSummary(text);
+        post.setCommentSummaryAt(LocalDateTime.now());
+        post.setUpdatedAt(LocalDateTime.now());
+        postRepository.save(post);
+        return toView(post);
     }
 
     private List<PostView> resolvePosts(List<Long> ids) {
@@ -310,8 +363,8 @@ public class PostService {
         post.setCover(req.cover() == null ? null : req.cover().trim());
         post.setTags(normalizeTags(req.tags()));
         String status = req.status() == null ? "PUBLISHED" : req.status().toUpperCase();
-        if (!"PUBLISHED".equals(status) && !"DRAFT".equals(status)) {
-            throw new BizException("文章状态只能是 PUBLISHED 或 DRAFT");
+        if (!List.of("PUBLISHED", "DRAFT", "PENDING", "REJECTED").contains(status)) {
+            throw new BizException("文章状态只能是 DRAFT、PENDING、PUBLISHED 或 REJECTED");
         }
         post.setStatus(status);
         post.setTop(Boolean.TRUE.equals(req.top()));

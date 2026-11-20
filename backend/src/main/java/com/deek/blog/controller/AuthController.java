@@ -2,6 +2,7 @@ package com.deek.blog.controller;
 
 import com.deek.blog.common.ApiResponse;
 import com.deek.blog.dto.AuthDtos.AuthResp;
+import com.deek.blog.dto.AuthDtos.EmailCodeReq;
 import com.deek.blog.dto.AuthDtos.ForgotReq;
 import com.deek.blog.dto.AuthDtos.LoginReq;
 import com.deek.blog.dto.AuthDtos.MsgResp;
@@ -11,6 +12,7 @@ import com.deek.blog.dto.AuthDtos.UpdateProfileReq;
 import com.deek.blog.dto.AuthDtos.UserView;
 import com.deek.blog.security.SecurityUtils;
 import com.deek.blog.service.AuthService;
+import com.deek.blog.service.RegistrationCodeService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -23,14 +25,22 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final AuthService authService;
+    private final RegistrationCodeService registrationCodeService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, RegistrationCodeService registrationCodeService) {
         this.authService = authService;
+        this.registrationCodeService = registrationCodeService;
     }
 
     @PostMapping("/register")
     public ApiResponse<AuthResp> register(@RequestBody RegisterReq req) {
         return ApiResponse.ok(authService.register(req));
+    }
+
+    @PostMapping("/email-code")
+    public ApiResponse<MsgResp> emailCode(@RequestBody EmailCodeReq req) {
+        registrationCodeService.send(req.email());
+        return ApiResponse.ok(new MsgResp("验证码已发送，请查收邮箱", null));
     }
 
     @PostMapping("/login")

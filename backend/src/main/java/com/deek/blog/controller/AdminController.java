@@ -5,6 +5,7 @@ import com.deek.blog.common.BizException;
 import com.deek.blog.dto.AuthDtos.UserView;
 import com.deek.blog.dto.CommentDtos.CommentView;
 import com.deek.blog.dto.PostDtos.PageResp;
+import com.deek.blog.dto.PostDtos.PostDetail;
 import com.deek.blog.dto.PostDtos.PostReq;
 import com.deek.blog.dto.PostDtos.PostView;
 import com.deek.blog.dto.PostDtos.StatsResp;
@@ -15,14 +16,17 @@ import com.deek.blog.repository.PostLikeRepository;
 import com.deek.blog.repository.PostRepository;
 import com.deek.blog.repository.UserRepository;
 import com.deek.blog.security.SecurityUtils;
+import com.deek.blog.service.AiService;
 import com.deek.blog.service.AuthService;
 import com.deek.blog.service.CommentService;
 import com.deek.blog.service.MailService;
 import com.deek.blog.service.PostService;
 import com.deek.blog.service.SiteConfigService;
+import com.deek.blog.service.StorageService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,7 +37,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -46,6 +52,15 @@ public class AdminController {
     public record RoleReq(String role) {
     }
 
+    public record MuteReq(LocalDateTime mutedUntil, String reason) {
+    }
+
+    public record ReviewReq(String status, String note) {
+    }
+
+    public record CommentStatusReq(String status) {
+    }
+
     public record MailTestReq(String to) {
     }
 
@@ -54,6 +69,8 @@ public class AdminController {
     private final AuthService authService;
     private final SiteConfigService siteConfigService;
     private final MailService mailService;
+    private final AiService aiService;
+    private final StorageService storageService;
     private final PostRepository postRepository;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
@@ -61,8 +78,8 @@ public class AdminController {
     private final PostFavoriteRepository favoriteRepository;
 
     public AdminController(PostService postService, CommentService commentService, AuthService authService,
-                           SiteConfigService siteConfigService, MailService mailService,
-                           PostRepository postRepository, CommentRepository commentRepository,
+                           SiteConfigService siteConfigService, MailService mailService, AiService aiService,
+                           StorageService storageService, PostRepository postRepository, CommentRepository commentRepository,
                            UserRepository userRepository, PostLikeRepository likeRepository,
                            PostFavoriteRepository favoriteRepository) {
         this.postService = postService;
@@ -70,6 +87,8 @@ public class AdminController {
         this.authService = authService;
         this.siteConfigService = siteConfigService;
         this.mailService = mailService;
+        this.aiService = aiService;
+        this.storageService = storageService;
         this.postRepository = postRepository;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
@@ -82,19 +101,34 @@ public class AdminController {
         Map<String, Object> data = new LinkedHashMap<>();
         StatsResp base = postService.stats();
         data.put("posts", base.posts());
-        data.put("drafts", postRepository.count() - base.posts());
+        data.put("drafts", postRepository.countByStatus("DRAFT"));
+        data.put("pendingPosts", postRepository.countByStatus("PENDING"));
+        data.put("rejectedPosts", postRepository.countByStatus("REJECTED"));
         data.put("users", base.users());
         data.put("comments", base.comments());
+        data.put("pendingComments", commentRepository.countByStatus("PENDING"));
+        data.put("hiddenComments", commentRepository.countByStatus("HIDDEN"));
+        data.put("commentReview", siteConfigService.get().getOrDefault("commentReview", "false"));
         data.put("totalViews", base.totalViews());
         data.put("likes", likeRepository.count());
         data.put("favorites", favoriteRepository.count());
+        data.put("admins", userRepository.countByRole("ADMIN"));
+        data.put("disabledUsers", userRepository.countByEnabledFalse());
+        data.put("mutedUsers", userRepository.countMuted(LocalDateTime.now()));
         return ApiResponse.ok(data);
     }
 
     @GetMapping("/posts")
     public ApiResponse<PageResp<PostView>> posts(@RequestParam(defaultValue = "1") int page,
-                                                 @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(postService.adminList(page, size));
+                                                 @RequestParam(defaultValue = "20") int size,
+                                                 @RequestParam(required = false) String keyword,
+                                                 @RequestParam(required = false) String status) {
+        return ApiResponse.ok(postService.adminList(page, size, keyword, status));
+    }
+
+    @GetMapping("/posts/{id}")
+    public ApiResponse<PostDetail> post(@PathVariable Long id) {
+        return ApiResponse.ok(postService.adminDetail(id));
     }
 
     @PostMapping("/posts")
@@ -108,24 +142,68 @@ public class AdminController {
         return ApiResponse.ok(postService.update(id, req));
     }
 
+    @PutMapping("/posts/{id}/review")
+    public ApiResponse<PostView> reviewPost(@PathVariable Long id, @RequestBody ReviewReq req) {
+        User reviewer = authService.requireUser(SecurityUtils.requireUserId());
+        return ApiResponse.ok(postService.review(id, req.status(), req.note(), reviewer));
+    }
+
     @DeleteMapping("/posts/{id}")
     public ApiResponse<Void> deletePost(@PathVariable Long id) {
         postService.delete(id);
         return ApiResponse.ok();
     }
 
+    @PostMapping("/posts/{id}/ai-comment-summary")
+    public ApiResponse<PostView> summarizePostComments(@PathVariable Long id) {
+        PostDetail detail = postService.adminDetail(id);
+        List<String> comments = commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(id, "VISIBLE")
+                .stream().map(com.deek.blog.entity.Comment::getContent).limit(80).toList();
+        String summary = aiService.summarizeComments(detail.post().title(), comments);
+        return ApiResponse.ok(postService.saveCommentSummary(id, summary));
+    }
+
     @GetMapping("/comments")
     public ApiResponse<PageResp<CommentView>> comments(@RequestParam(defaultValue = "1") int page,
-                                                       @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(commentService.adminList(page, size));
+                                                       @RequestParam(defaultValue = "20") int size,
+                                                       @RequestParam(required = false) String keyword,
+                                                       @RequestParam(required = false) String status) {
+        return ApiResponse.ok(commentService.adminList(page, size, status, keyword));
+    }
+
+    @PutMapping("/comments/{id}/status")
+    public ApiResponse<CommentView> moderateComment(@PathVariable Long id,
+                                                     @RequestBody CommentStatusReq req) {
+        return ApiResponse.ok(commentService.moderate(id, req.status()));
     }
 
     @GetMapping("/users")
     public ApiResponse<PageResp<UserView>> users(@RequestParam(defaultValue = "1") int page,
-                                                 @RequestParam(defaultValue = "20") int size) {
+                                                 @RequestParam(defaultValue = "20") int size,
+                                                 @RequestParam(required = false) String keyword,
+                                                 @RequestParam(required = false) String role,
+                                                 @RequestParam(required = false) String status,
+                                                 @RequestParam(required = false) Boolean muted) {
         int p = Math.max(1, page);
         int s = Math.min(100, Math.max(1, size));
-        Page<User> result = userRepository.findAll(PageRequest.of(p - 1, s, Sort.by(Sort.Order.desc("createdAt"))));
+        String normalizedRole = role == null || role.isBlank() ? null : role.trim().toUpperCase();
+        if (normalizedRole != null && !"USER".equals(normalizedRole) && !"ADMIN".equals(normalizedRole)) {
+            throw new BizException("角色筛选不合法");
+        }
+        Boolean enabled = null;
+        if (status != null && !status.isBlank()) {
+            if ("active".equalsIgnoreCase(status) || "enabled".equalsIgnoreCase(status)) {
+                enabled = true;
+            } else if ("disabled".equalsIgnoreCase(status) || "banned".equalsIgnoreCase(status)) {
+                enabled = false;
+            } else {
+                throw new BizException("用户状态筛选不合法");
+            }
+        }
+        Page<User> result = userRepository.adminSearch(
+                keyword == null || keyword.isBlank() ? null : keyword.trim(),
+                normalizedRole, enabled, muted, LocalDateTime.now(),
+                PageRequest.of(p - 1, s, Sort.by(Sort.Order.desc("createdAt"))));
         return ApiResponse.ok(new PageResp<>(result.getContent().stream().map(AuthService::toView).toList(),
                 result.getTotalElements(), p, s));
     }
@@ -136,6 +214,9 @@ public class AdminController {
             throw new BizException("不能禁用自己的账号");
         }
         User user = userRepository.findById(id).orElseThrow(() -> BizException.notFound("用户不存在"));
+        if (!req.enabled() && "ADMIN".equals(user.getRole()) && userRepository.countByRole("ADMIN") <= 1) {
+            throw new BizException("至少保留一名可用管理员，不能封禁最后一名管理员");
+        }
         user.setEnabled(req.enabled());
         userRepository.save(user);
         return ApiResponse.ok(AuthService.toView(user));
@@ -143,30 +224,90 @@ public class AdminController {
 
     @PutMapping("/users/{id}/role")
     public ApiResponse<UserView> updateUserRole(@PathVariable Long id, @RequestBody RoleReq req) {
+        if (id.equals(SecurityUtils.currentUserId())) {
+            throw new BizException("不能修改自己的管理员角色");
+        }
         String role = req.role() == null ? "" : req.role().toUpperCase();
         if (!"USER".equals(role) && !"ADMIN".equals(role)) {
             throw new BizException("角色只能是 USER 或 ADMIN");
         }
         User user = userRepository.findById(id).orElseThrow(() -> BizException.notFound("用户不存在"));
+        if ("ADMIN".equals(user.getRole()) && "USER".equals(role)
+                && userRepository.countByRole("ADMIN") <= 1) {
+            throw new BizException("至少保留一名管理员，不能降级最后一名管理员");
+        }
         user.setRole(role);
+        userRepository.save(user);
+        return ApiResponse.ok(AuthService.toView(user));
+    }
+
+    @PutMapping("/users/{id}/mute")
+    public ApiResponse<UserView> updateUserMute(@PathVariable Long id, @RequestBody MuteReq req) {
+        if (id.equals(SecurityUtils.currentUserId())) {
+            throw new BizException("不能禁言自己的账号");
+        }
+        User user = userRepository.findById(id).orElseThrow(() -> BizException.notFound("用户不存在"));
+        LocalDateTime until = req.mutedUntil();
+        if (until != null && until.isBefore(LocalDateTime.now())) {
+            until = null;
+        }
+        user.setMutedUntil(until);
+        String reason = req.reason() == null ? "" : req.reason().trim();
+        if (reason.length() > 512) {
+            reason = reason.substring(0, 512);
+        }
+        user.setMuteReason(until == null ? null : reason);
         userRepository.save(user);
         return ApiResponse.ok(AuthService.toView(user));
     }
 
     @GetMapping("/config")
     public ApiResponse<Map<String, String>> getConfig() {
-        return ApiResponse.ok(siteConfigService.get());
+        return ApiResponse.ok(maskedConfig(siteConfigService.get()));
     }
 
     @PutMapping("/config")
     public ApiResponse<Map<String, String>> updateConfig(@RequestBody Map<String, String> body) {
-        return ApiResponse.ok(siteConfigService.update(body));
+        Map<String, String> values = new LinkedHashMap<>(body == null ? Map.of() : body);
+        // 密钥留空表示沿用旧值，避免后台表单无意中把密码清空。
+        if (values.getOrDefault("smtpPassword", "").isBlank()) {
+            values.remove("smtpPassword");
+        }
+        if (values.getOrDefault("aiApiKey", "").isBlank()) {
+            values.remove("aiApiKey");
+        }
+        if (values.getOrDefault("storageSecretKey", "").isBlank()) {
+            values.remove("storageSecretKey");
+        }
+        return ApiResponse.ok(maskedConfig(siteConfigService.update(values)));
+    }
+
+    @GetMapping("/storage")
+    public ApiResponse<Map<String, Object>> storageOverview() {
+        return ApiResponse.ok(storageService.overview());
+    }
+
+    @GetMapping("/storage/files")
+    public ApiResponse<Map<String, Object>> storageFiles(@RequestParam(defaultValue = "0") int page,
+                                                         @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(storageService.listLocal(page, size));
+    }
+
+    @DeleteMapping("/storage/files")
+    public ApiResponse<Void> deleteStorageFile(@RequestParam String name) {
+        storageService.deleteLocal(name);
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/storage/test")
+    public ApiResponse<Map<String, Object>> testStorage() {
+        return ApiResponse.ok(storageService.testOnline());
     }
 
     @PostMapping("/mail/test")
     public ApiResponse<Void> testMail(@RequestBody MailTestReq req) {
         if (!mailService.isEnabled()) {
-            throw new BizException("SMTP 未启用：请设置环境变量 MAIL_ENABLED=true 并配置 spring.mail.*");
+            throw new BizException("SMTP 未启用：请先在站点设置里启用并填写 SMTP 参数");
         }
         String to = req.to() == null ? "" : req.to().trim();
         if (to.isEmpty()) {
@@ -178,5 +319,16 @@ public class AdminController {
             throw new BizException("发送失败：" + e.getMessage());
         }
         return ApiResponse.ok();
+    }
+
+    private Map<String, String> maskedConfig(Map<String, String> raw) {
+        Map<String, String> map = new LinkedHashMap<>(raw);
+        map.put("smtpPasswordSet", raw.getOrDefault("smtpPassword", "").isBlank() ? "false" : "true");
+        map.put("aiApiKeySet", raw.getOrDefault("aiApiKey", "").isBlank() ? "false" : "true");
+        map.put("storageSecretKeySet", raw.getOrDefault("storageSecretKey", "").isBlank() ? "false" : "true");
+        map.put("smtpPassword", "");
+        map.put("aiApiKey", "");
+        map.put("storageSecretKey", "");
+        return map;
     }
 }

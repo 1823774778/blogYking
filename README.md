@@ -17,6 +17,7 @@
 
 **账号体系**
 - 注册 / 登录（用户名或邮箱均可）/ JWT 无状态鉴权
+- 注册开关：后台可关闭注册；开放注册时可强制邮箱验证码（6 位、10 分钟有效、60 秒冷却）
 - 邮箱找回密码（SMTP 发信，30 分钟一次性令牌）
 - 个人资料、头像上传、修改密码
 - 账号禁用、角色（读者 / 管理员）
@@ -26,9 +27,12 @@
 - 标签、封面、摘要（留空自动截取正文）
 - 关键词搜索（标题 / 摘要 / 标签）、标签筛选、最新 / 热门排序
 - 后台在线写文章，保存后即时生效，无需重启
+- AI 文章：按主题、提纲、风格与篇幅生成草稿；AI 审核文章并返回评分、问题与修改建议
 
 **互动**
 - 评论（支持一级回复，回复的回复自动归并到顶层）
+- AI 评论审核：建议通过 / 人工复核 / 建议拒绝，可一键采纳处理
+- AI 评论总结：后台按文章汇总评论区并持久化，前台文章详情展示
 - 点赞、收藏
 - 浏览量（同一 IP 对同一篇文章 30 分钟内只计一次；可选 Redis 共享去重）
 
@@ -37,8 +41,11 @@
 - 亮色 / 暗色主题，响应式布局，history 路由
 - OTA 版本探针：`/api/system/version`
 - GitHub Releases 发布探测：后台「更新」页显示最新版本、更新内容与历史版本
+- 在线更新：从 GitHub Release 下载 `blog.jar`，校验启动类、配置与 SHA-256 后写入待更新区
+- 本地上传保留为弹窗，可与在线更新并行使用
 - 运行状态：`/api/system/health`（数据库产品名、Redis 状态）
-- SMTP 测试按钮
+- SMTP 测试按钮，SMTP / AI 配置均以弹窗维护
+- 存储管理：本地文件列表与删除；线上 S3 兼容对象存储配置与连接测试
 
 **主题**
 - Firefly 风格：薄荷绿主色、悬浮玻璃导航、大幅横幅壁纸
@@ -68,13 +75,13 @@
 | 数据库 | 默认 H2 文件库（零配置）；可在向导里切换 MySQL |
 | 缓存 | Redis 可选（仅用于浏览量去重，未启用时走进程内 Map） |
 | 前端 | Vue 3、Vue Router、Axios、marked + DOMPurify、Vite |
-| 打包 | 前端 `vite build` 输出到 `backend/src/main/resources/static`，Maven 打成可执行 jar（约 63MB） |
+| 打包 | 前端 `vite build` 输出到 `backend/src/main/resources/static`，Maven 打成可执行 jar（约 74MB） |
 
 ## 目录结构
 
 ```
 personal-blog/
-├── blog.jar                 # 已构建好的可执行包（约 63MB，不提交 Git，发布到 Releases）
+├── blog.jar                 # 已构建好的可执行包（约 74MB，不提交 Git，发布到 Releases）
 ├── CHANGELOG.md             # 版本更新日志
 ├── README.md
 ├── Dockerfile
@@ -373,7 +380,7 @@ server {
     listen 443 ssl;
     server_name blog.example.com;
 
-    # OTA 需要上传完整 jar（当前约 63MB）
+    # OTA 需要上传完整 jar（当前约 74MB）
     client_max_body_size 105m;
 
     location / {
@@ -437,7 +444,7 @@ server {
 - systemd / Docker 模式必须保证服务管理器会自动重启；否则替换后站点会保持离线。
 - 更新失败后，`updates/backups/` 保留旧包；可手动覆盖回去再启动。
 - 更新只改 jar，不动 `data/`、`uploads/`、`config/`；JPA 为 `update` 模式，回滚代码不会破坏已有数据，但新版本已写入的内容会保留。
-- 每次更新会在 `updates/` 留一份 `updater.jar`（当前约 63MB）和 `app.log`，可定期清理；`backups/` 默认只保留最近 5 份。
+- 每次更新会在 `updates/` 留一份 `updater.jar`（当前约 74MB）和 `app.log`，可定期清理；`backups/` 默认只保留最近 5 份。
 
 **命令行备用方案**
 
@@ -460,11 +467,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.3.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.4.0.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.3.0 blog.jar release-notes/1.3.0.md
+  bash scripts/release-github.sh v1.4.0 blog.jar release-notes/1.4.0.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。
@@ -551,6 +558,6 @@ GH_REPO=1823774778/blogYking \
 - 没有 OAuth 第三方登录、全文检索引擎、定时发布。这些可以在此基础上继续加。
 - OTA 的自动回滚只在 `standalone` 下执行；systemd / Docker 依赖外部进程管理器重启，回滚需手动覆盖 `updates/backups/`。
 - Docker 容器内更新只对当前容器生效，`docker compose up --build` 重建容器后会回到镜像内版本。
-- OTA 上传上限 100MB；当前 fat jar 约 63MB，若引入大依赖需要同步调大 `spring.servlet.multipart.max-file-size` 与 Nginx 请求体。
+- OTA 上传上限 100MB；当前 fat jar 约 74MB，若引入大依赖需要同步调大 `spring.servlet.multipart.max-file-size` 与 Nginx 请求体。
 - GitHub Release 读取默认只显示最近 12 个发布；未认证 API 每小时 60 次，共享 IP 可能限流，建议配置只读 `GITHUB_TOKEN`。
 - Release 更新内容是 GitHub 上填写的文本，不包含代码签名；下载 jar 后务必核对 Release 附带的 `blog.jar.sha256`，或在本机重新构建。

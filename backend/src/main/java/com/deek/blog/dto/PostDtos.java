@@ -12,7 +12,9 @@ public class PostDtos {
     public record PostView(Long id, String title, String summary, String cover, String tags, String status,
                            long views, long likes, long favorites, long comments, boolean top,
                            LocalDateTime createdAt, LocalDateTime updatedAt,
-                           Long authorId, String authorName, String authorAvatar) {
+                           Long authorId, String authorName, String authorAvatar,
+                           String reviewNote, LocalDateTime reviewedAt, String reviewedBy,
+                           String commentSummary, LocalDateTime commentSummaryAt) {
     }
 
     public record PostDetail(PostView post, String content, boolean liked, boolean favorited) {

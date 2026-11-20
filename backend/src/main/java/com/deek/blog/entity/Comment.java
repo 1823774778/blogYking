@@ -36,6 +36,10 @@ public class Comment {
     @Column(length = 512)
     private String avatar;
 
+    /** VISIBLE / PENDING / HIDDEN */
+    @Column(nullable = false, length = 16, columnDefinition = "varchar(16) default 'VISIBLE'")
+    private String status = "VISIBLE";
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
@@ -93,6 +97,14 @@ public class Comment {
 
     public void setAvatar(String avatar) {
         this.avatar = avatar;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 
     public LocalDateTime getCreatedAt() {

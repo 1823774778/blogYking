@@ -11,8 +11,24 @@ const routes = [
   { path: '/forgot-password', component: () => import('./views/ForgotPassword.vue'), meta: { title: '找回密码' } },
   { path: '/reset-password', component: () => import('./views/ResetPassword.vue'), meta: { title: '重置密码' } },
   { path: '/profile', component: () => import('./views/Profile.vue'), meta: { title: '个人中心', auth: true } },
-  { path: '/admin', component: () => import('./views/Admin.vue'), meta: { title: '后台', auth: true, admin: true } },
-  { path: '/admin/editor/:id?', component: () => import('./views/AdminEditor.vue'), meta: { title: '写文章', auth: true, admin: true } },
+  {
+    path: '/admin',
+    component: () => import('./layouts/AdminLayout.vue'),
+    meta: { title: '后台', auth: true, admin: true },
+    children: [
+      { path: '', name: 'admin-dashboard', component: () => import('./views/Admin.vue'), meta: { title: '仪表盘' } },
+      { path: 'profile', name: 'admin-profile', component: () => import('./views/admin/AdminProfile.vue'), meta: { title: '个人信息' } },
+      { path: 'users', name: 'admin-users', component: () => import('./views/admin/AdminUsers.vue'), meta: { title: '用户管理' } },
+      { path: 'posts', name: 'admin-posts', component: () => import('./views/admin/AdminPosts.vue'), meta: { title: '文章管理' } },
+      { path: 'posts/new', name: 'admin-post-new', component: () => import('./views/AdminEditor.vue'), meta: { title: '新建文章' } },
+      { path: 'posts/:id/edit', name: 'admin-post-edit', component: () => import('./views/AdminEditor.vue'), meta: { title: '编辑文章' } },
+      { path: 'comments', name: 'admin-comments', component: () => import('./views/admin/AdminComments.vue'), meta: { title: '评论管理' } },
+      { path: 'site-info', name: 'admin-site-info', component: () => import('./views/admin/AdminSiteInfo.vue'), meta: { title: '站点信息' } },
+      { path: 'storage', name: 'admin-storage', component: () => import('./views/admin/AdminStorage.vue'), meta: { title: '存储管理' } },
+      { path: 'settings', name: 'admin-settings', component: () => import('./views/admin/AdminSettings.vue'), meta: { title: '站点设置' } }
+    ]
+  },
+  { path: '/admin/editor/:id?', redirect: (to) => (to.params.id ? `/admin/posts/${to.params.id}/edit` : '/admin/posts/new') },
   { path: '/:pathMatch(.*)*', component: () => import('./views/NotFound.vue'), meta: { title: '找不到页面' } }
 ]
 
@@ -28,10 +44,12 @@ router.beforeEach((to) => {
   if (state.setupRequired === true && to.path !== '/setup') {
     return { path: '/setup' }
   }
-  if (to.meta.auth && !state.token) {
+  const authRequired = to.matched.some((record) => record.meta.auth)
+  const adminRequired = to.matched.some((record) => record.meta.admin)
+  if (authRequired && !state.token) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  if (to.meta.admin && state.user?.role !== 'ADMIN') {
+  if (adminRequired && state.user?.role !== 'ADMIN') {
     return { path: '/' }
   }
 })

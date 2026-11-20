@@ -142,6 +142,14 @@ watch(
         </div>
       </div>
 
+      <div v-if="detail.post.commentSummary" class="ff-comment-summary">
+        <div class="ff-comment-summary-head">
+          <span class="ff-comment-summary-kicker">AI 评论总结</span>
+          <span class="meta">{{ detail.post.commentSummaryAt ? formatDate(detail.post.commentSummaryAt) : '' }}</span>
+        </div>
+        <p>{{ detail.post.commentSummary }}</p>
+      </div>
+
       <div class="ff-comments-card">
         <CommentSection :post-id="detail.post.id" />
       </div>

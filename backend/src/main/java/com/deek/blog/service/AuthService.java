@@ -36,17 +36,20 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final MailService mailService;
+    private final RegistrationCodeService registrationCodeService;
     private final String siteUrl;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UserRepository userRepository, ResetTokenRepository resetTokenRepository,
                        PasswordEncoder passwordEncoder, JwtUtil jwtUtil, MailService mailService,
+                       RegistrationCodeService registrationCodeService,
                        @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
         this.userRepository = userRepository;
         this.resetTokenRepository = resetTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.mailService = mailService;
+        this.registrationCodeService = registrationCodeService;
         this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
     }
 
@@ -54,6 +57,9 @@ public class AuthService {
     public AuthResp register(RegisterReq req) {
         if (userRepository.countByRole("ADMIN") == 0) {
             throw new BizException("站点尚未初始化，请先完成初始化设置管理员账号");
+        }
+        if (!registrationCodeService.registrationOpen()) {
+            throw new BizException(HttpStatus.FORBIDDEN, "站点暂未开放注册");
         }
         String username = trim(req.username());
         String email = trim(req.email()).toLowerCase();
@@ -69,6 +75,9 @@ public class AuthService {
         }
         if (userRepository.existsByEmail(email)) {
             throw new BizException("邮箱已被注册");
+        }
+        if (registrationCodeService.verifyRequired()) {
+            registrationCodeService.verify(email, req.emailCode());
         }
         User user = new User();
         user.setUsername(username);
@@ -191,7 +200,8 @@ public class AuthService {
 
     public static UserView toView(User user) {
         return new UserView(user.getId(), user.getUsername(), user.getEmail(), user.getNickname(),
-                user.getAvatar(), user.getBio(), user.getRole(), user.isEnabled(), user.getCreatedAt());
+                user.getAvatar(), user.getBio(), user.getRole(), user.isEnabled(), user.getMutedUntil(),
+                user.getMuteReason(), user.isMuted(), user.getCreatedAt());
     }
 
     private void checkPassword(String password) {

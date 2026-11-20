@@ -15,6 +15,19 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     long countByStatus(String status);
 
+    @Query("""
+            select p from Post p
+            where (:status is null or p.status = :status)
+              and (:keyword is null
+                   or lower(p.title) like lower(concat('%', :keyword, '%'))
+                   or lower(coalesce(p.summary, '')) like lower(concat('%', :keyword, '%'))
+                   or lower(coalesce(p.tags, '')) like lower(concat('%', :keyword, '%'))
+                   or lower(coalesce(p.authorName, '')) like lower(concat('%', :keyword, '%')))
+            """)
+    Page<Post> adminSearch(@Param("status") String status,
+                           @Param("keyword") String keyword,
+                           Pageable pageable);
+
     @Query("select coalesce(sum(p.views), 0) from Post p")
     Long totalViews();
 

@@ -33,9 +33,22 @@ public class Post {
     @Column(length = 256)
     private String tags;
 
-    /** DRAFT / PUBLISHED */
+    /** DRAFT / PENDING / PUBLISHED / REJECTED */
     @Column(nullable = false, length = 16)
     private String status = "DRAFT";
+
+    @Column(length = 512)
+    private String reviewNote;
+
+    private LocalDateTime reviewedAt;
+
+    @Column(length = 64)
+    private String reviewedBy;
+
+    @Column(columnDefinition = "TEXT")
+    private String commentSummary;
+
+    private LocalDateTime commentSummaryAt;
 
     @Column(nullable = false)
     private boolean top = false;
@@ -121,6 +134,46 @@ public class Post {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getReviewNote() {
+        return reviewNote;
+    }
+
+    public void setReviewNote(String reviewNote) {
+        this.reviewNote = reviewNote;
+    }
+
+    public LocalDateTime getReviewedAt() {
+        return reviewedAt;
+    }
+
+    public void setReviewedAt(LocalDateTime reviewedAt) {
+        this.reviewedAt = reviewedAt;
+    }
+
+    public String getReviewedBy() {
+        return reviewedBy;
+    }
+
+    public void setReviewedBy(String reviewedBy) {
+        this.reviewedBy = reviewedBy;
+    }
+
+    public String getCommentSummary() {
+        return commentSummary;
+    }
+
+    public void setCommentSummary(String commentSummary) {
+        this.commentSummary = commentSummary;
+    }
+
+    public LocalDateTime getCommentSummaryAt() {
+        return commentSummaryAt;
+    }
+
+    public void setCommentSummaryAt(LocalDateTime commentSummaryAt) {
+        this.commentSummaryAt = commentSummaryAt;
     }
 
     public boolean isTop() {

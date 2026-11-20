@@ -44,7 +44,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint((req, res, ex) -> writeJson(res, 401, "请先登录"))
                         .accessDeniedHandler((req, res, ex) -> writeJson(res, 403, "没有权限执行该操作")))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register", "/api/auth/login",
+                        .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/email-code",
                                 "/api/auth/forgot-password", "/api/auth/reset-password",
                                 "/api/meta/**", "/api/system/**", "/api/setup/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/comments/**").permitAll()

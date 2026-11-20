@@ -41,16 +41,26 @@ public class MysqlSchemaMigration implements ApplicationRunner {
                 "SELECT data_type FROM information_schema.columns "
                         + "WHERE table_schema = DATABASE() AND table_name = 'posts' AND column_name = 'content'",
                 String.class);
-        if (types.isEmpty()) {
-            return; // 表还没建，交给 JPA 创建
-        }
-        String type = types.get(0);
-        if ("longtext".equalsIgnoreCase(type)) {
-            return;
+        if (!types.isEmpty()) {
+            String type = types.get(0);
+            if (!"longtext".equalsIgnoreCase(type)) {
+                jdbcTemplate.execute("ALTER TABLE posts MODIFY COLUMN content LONGTEXT");
+                log.info("MySQL 旧库兼容：posts.content 已从 {} 升级为 LONGTEXT", type);
+            }
         }
 
-        jdbcTemplate.execute("ALTER TABLE posts MODIFY COLUMN content LONGTEXT");
-        log.info("MySQL 旧库兼容：posts.content 已从 {} 升级为 LONGTEXT", type);
+        // 旧评论表新增 status 字段后，历史行可能是空字符串；这些评论应当继续显示。
+        List<String> commentStatusColumns = jdbcTemplate.queryForList(
+                "SELECT data_type FROM information_schema.columns "
+                        + "WHERE table_schema = DATABASE() AND table_name = 'comments' AND column_name = 'status'",
+                String.class);
+        if (!commentStatusColumns.isEmpty()) {
+            int updated = jdbcTemplate.update(
+                    "UPDATE comments SET status = 'VISIBLE' WHERE status IS NULL OR status = ''");
+            if (updated > 0) {
+                log.info("MySQL 旧库兼容：{} 条历史评论状态补为 VISIBLE", updated);
+            }
+        }
     }
 
     private boolean isMysql(String product) {

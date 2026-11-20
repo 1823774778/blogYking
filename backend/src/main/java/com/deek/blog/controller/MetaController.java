@@ -20,6 +20,6 @@ public class MetaController {
 
     @GetMapping("/site")
     public ApiResponse<Map<String, String>> site() {
-        return ApiResponse.ok(siteConfigService.get());
+        return ApiResponse.ok(siteConfigService.publicConfig());
     }
 }

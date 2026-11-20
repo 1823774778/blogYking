@@ -4,7 +4,10 @@ import java.time.LocalDateTime;
 
 public class AuthDtos {
 
-    public record RegisterReq(String username, String email, String password, String nickname) {
+    public record RegisterReq(String username, String email, String password, String nickname, String emailCode) {
+    }
+
+    public record EmailCodeReq(String email) {
     }
 
     public record LoginReq(String account, String password) {
@@ -20,7 +23,8 @@ public class AuthDtos {
     }
 
     public record UserView(Long id, String username, String email, String nickname, String avatar,
-                            String bio, String role, boolean enabled, LocalDateTime createdAt) {
+                            String bio, String role, boolean enabled, LocalDateTime mutedUntil,
+                            String muteReason, boolean muted, LocalDateTime createdAt) {
     }
 
     public record AuthResp(String token, UserView user) {

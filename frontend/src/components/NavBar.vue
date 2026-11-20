@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { state, applyTheme, clearAuth, toast } from '../state'
 import { initialOf } from '../utils'
@@ -8,6 +8,16 @@ const route = useRoute()
 const router = useRouter()
 const menuOpen = ref(false)
 const menuRef = ref(null)
+const logoFailed = ref(false)
+const showSiteLogo = computed(() => Boolean(state.site.logo) && !logoFailed.value)
+
+watch(() => state.site.logo, () => {
+  logoFailed.value = false
+})
+
+function onLogoError() {
+  logoFailed.value = true
+}
 
 function toggleTheme() {
   applyTheme(state.theme === 'dark' ? 'light' : 'dark')
@@ -34,8 +44,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
   <header class="nav">
     <div class="shell nav-inner">
       <router-link to="/" class="logo">
-        <span class="ff-logo-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" fill="none">
+        <span class="ff-logo-mark" :class="{ 'has-image': showSiteLogo }" aria-hidden="true">
+          <img v-if="showSiteLogo" :src="state.site.logo" alt="" @error="onLogoError" />
+          <svg v-else viewBox="0 0 32 32" fill="none">
             <ellipse cx="10.5" cy="11" rx="6.2" ry="9" transform="rotate(-38 10.5 11)" fill="currentColor" opacity=".28" />
             <ellipse cx="21.5" cy="11" rx="6.2" ry="9" transform="rotate(38 21.5 11)" fill="currentColor" opacity=".28" />
             <ellipse cx="10.5" cy="20" rx="4.8" ry="7" transform="rotate(-52 10.5 20)" fill="currentColor" opacity=".16" />
@@ -60,17 +71,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
             <path d="M12 11v6M12 7.5v.5" />
           </svg>
           关于
-        </router-link>
-        <router-link
-          v-if="state.user?.role === 'ADMIN'"
-          to="/admin"
-          :class="{ active: route.path.startsWith('/admin') }"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <path d="M3 9h18M8 13h3M8 16h6" />
-          </svg>
-          后台
         </router-link>
       </nav>
 
@@ -97,14 +97,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
               <template v-else>{{ initialOf(state.user.nickname || state.user.username) }}</template>
             </span>
           </button>
-          <div v-if="menuOpen" class="user-menu">
-            <div class="user-menu-head">
-              <strong>{{ state.user.nickname || state.user.username }}</strong>
-              <span>{{ state.user.email }}</span>
-            </div>
-            <router-link to="/profile" @click="menuOpen = false">个人中心</router-link>
+          <div v-if="menuOpen" class="user-menu user-menu-compact">
             <router-link v-if="state.user.role === 'ADMIN'" to="/admin" @click="menuOpen = false">后台管理</router-link>
-            <router-link v-if="state.user.role === 'ADMIN'" to="/admin/editor" @click="menuOpen = false">写文章</router-link>
             <button type="button" @click="logout">退出登录</button>
           </div>
         </div>

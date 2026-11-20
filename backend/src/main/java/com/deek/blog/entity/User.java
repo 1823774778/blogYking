@@ -42,6 +42,12 @@ public class User {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /** 禁言截止时间；为空或已过期表示可以正常评论 */
+    private LocalDateTime mutedUntil;
+
+    @Column(length = 512)
+    private String muteReason;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
@@ -115,6 +121,26 @@ public class User {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public LocalDateTime getMutedUntil() {
+        return mutedUntil;
+    }
+
+    public void setMutedUntil(LocalDateTime mutedUntil) {
+        this.mutedUntil = mutedUntil;
+    }
+
+    public String getMuteReason() {
+        return muteReason;
+    }
+
+    public void setMuteReason(String muteReason) {
+        this.muteReason = muteReason;
+    }
+
+    public boolean isMuted() {
+        return mutedUntil != null && mutedUntil.isAfter(LocalDateTime.now());
     }
 
     public LocalDateTime getCreatedAt() {
