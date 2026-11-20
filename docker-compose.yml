@@ -1,7 +1,7 @@
 services:
   blog:
     build: .
-    image: deek-blog:1.0.0
+    image: deek-blog:1.3.0
     container_name: blog
     restart: unless-stopped
     ports:
@@ -20,7 +20,7 @@ services:
       MAIL_SSL: "true"
       MAIL_USERNAME: ""
       MAIL_PASSWORD: ""
-      APP_VERSION: "1.0.0"
+      APP_VERSION: "1.3.0"
     volumes:
       # H2 数据库与上传图片持久化到宿主机
       - ./data:/app/data

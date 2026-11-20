@@ -11,7 +11,7 @@
 **首次启动**
 - 控制台打印初始化横幅：管理员入口、当前数据库、配置文件路径
 - Web 端 `/setup` 向导：管理员账号 + 可选 MySQL + 可选 Redis
-- MySQL / Redis 连接测试，测试不通过不会写入配置
+- MySQL 连接测试：库不存在时自动创建，已有库按 `ddl-auto=update` 更新表结构；Redis 连接测试同样不通过不写配置
 - 配置写入外部 `config/application.yml`（权限 600），重启后生效
 - 管理员当场创建并自动登录；H2 + 不用 Redis 时无需重启
 
@@ -129,7 +129,7 @@ java -jar blog.jar
 打开 <http://localhost:8080>，会自动跳到 `/setup`：
 
 1. **管理员账号**：用户名（3-20 位字母/数字/下划线）、邮箱、昵称（可选）、密码（至少 6 位）。
-2. **数据库**：先用内置 H2 体验，或选 MySQL 并填写地址、端口、库名、用户名、密码，点「测试连接」。
+2. **数据库**：先用内置 H2 体验，或选 MySQL 并填写地址、端口、库名、用户名、密码，点「测试连接」。库不存在会自动创建；已有库保留数据并更新表结构。
 3. **Redis（可选）**：需要多实例共享浏览量去重时再填，同样支持测试连接。
 4. **完成**：管理员立即创建并自动登录；如果启用了 MySQL 或 Redis，按页面提示重启服务让新配置生效。
 
@@ -183,7 +183,9 @@ H2 + 不用 Redis 时不需要重启，提交后直接进入首页。
 
 选 MySQL 时：
 
-- 需要提前建好空库，字符集建议 `utf8mb4`；表结构由 JPA `ddl-auto=update` 自动创建。
+- 不需要提前建库：连接后如果库不存在，会用同一账号自动创建 `utf8mb4` 库；账号需具备 `CREATE` 权限。
+- 库已存在时不会清空数据，JPA 以 `ddl-auto=update` 自动补齐/更新表结构。
+- 旧版 MySQL 库的 `posts.content` 会在启动时自动升级为 `LONGTEXT`，已有文章内容保留。
 - 向导会先验证连通性，连不上不会写配置，也不会创建管理员。
 - 如果目标库是空的：重启后会用向导里的管理员账号（bcrypt 哈希）自动重建管理员，并写入演示文章。
 - 如果目标库已有数据：沿用库里的账号，向导里填的账号不会覆盖已有用户。
@@ -203,7 +205,7 @@ Redis 只用于浏览量去重，不存文章/用户数据，可以随时关掉�
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/blog?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://127.0.0.1:3306/blog?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false&createDatabaseIfNotExist=true
     username: blog
     password: '******'
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -282,7 +284,7 @@ java -jar blog.jar
 
 ### 手动切换 MySQL（不用向导）
 
-先建库（utf8mb4），然后用 `mysql` profile 启动：
+可直接用 `mysql` profile 启动；目标库不存在时，MySQL 驱动会用 `DB_USER` 自动创建（需 `CREATE` 权限）：
 
 ```bash
 java -jar blog.jar --spring.profiles.active=mysql \
@@ -290,7 +292,7 @@ java -jar blog.jar --spring.profiles.active=mysql \
   --DB_USER=root --DB_PASSWORD=yourpass
 ```
 
-表结构由 JPA `ddl-auto=update` 自动创建，MySQL 驱动已内置。第一次连空库时，如果不想再走向导，可以先把 `config/application.yml` 里的 `app.bootstrap.*` 带上（由一次 H2 初始化生成），启动后会自动建管理员。
+表结构由 JPA `ddl-auto=update` 自动创建/更新，MySQL 驱动已内置。第一次连空库时，如果不想再走向导，可以先把 `config/application.yml` 里的 `app.bootstrap.*` 带上（由一次 H2 初始化生成），启动后会自动建管理员。
 
 ## 构建
 
@@ -458,11 +460,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.2.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.3.0.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.2.0 blog.jar release-notes/1.2.0.md
+  bash scripts/release-github.sh v1.3.0 blog.jar release-notes/1.3.0.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。

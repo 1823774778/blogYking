@@ -268,8 +268,8 @@ onMounted(loadStatus)
               <span v-if="mysqlMsg" class="conn-msg" :class="{ ok: mysqlMsgOk, bad: !mysqlMsgOk }">{{ mysqlMsg }}</span>
             </div>
             <div class="setup-note">
-              数据库需提前创建（建议 utf8mb4）；表结构会自动初始化。
-              从 H2 切到 MySQL 时，<strong>已有数据不会自动迁移</strong>，重启后会按上面的管理员账号新建库表。
+              数据库不存在时会用当前账号自动创建（utf8mb4）；已有数据库不会清空数据，重启后按 update 策略自动更新表结构。
+              从 H2 切到 MySQL 时，<strong>已有数据不会自动迁移</strong>；如果目标库已有账号，重启后请使用原账号登录。
             </div>
           </div>
         </div>

@@ -32,7 +32,10 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -45,6 +48,7 @@ public class SetupService {
 
     private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,20}$");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[\\w.+-]+@[\\w-]+(\\.[\\w-]+)+$");
+    private static final Pattern DATABASE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -137,19 +141,86 @@ public class SetupService {
             throw new BizException("请完整填写 MySQL 地址、数据库名和用户名");
         }
         int port = portOf(req.port(), 3306);
-        String url = mysqlUrl(req.host().trim(), port, req.database().trim());
+        String database = databaseOf(req.database());
+        String url = mysqlUrl(req.host().trim(), port, database);
+        try (Connection connection = openMysql(url, req)) {
+            return mysqlResult(connection, database, false);
+        } catch (SQLException e) {
+            if (!isUnknownDatabase(e)) {
+                throw new BizException("MySQL 连接失败：" + mysqlError(e));
+            }
+            createDatabase(req, req.host().trim(), port, database);
+            try (Connection connection = openMysql(url, req)) {
+                return mysqlResult(connection, database, true);
+            } catch (SQLException retryError) {
+                throw new BizException("MySQL 数据库创建后连接失败：" + mysqlError(retryError));
+            }
+        }
+    }
+
+    private ConnResp mysqlResult(Connection connection, String database, boolean created) throws SQLException {
+        if (!connection.isValid(3)) {
+            throw new BizException("MySQL 连接已建立但不可用");
+        }
+        int tableCount = tableCount(connection, database);
+        String state = created
+                ? "数据库 " + database + " 不存在，已自动创建"
+                : "数据库 " + database + " 已存在";
+        if (tableCount > 0) {
+            state += "，检测到 " + tableCount + " 张表；重启后会自动更新表结构，已有数据保留";
+        } else if (tableCount == 0) {
+            state += "，当前没有业务表；重启后会自动建表并写入初始化数据";
+        } else {
+            state += "；重启后会自动建表或更新表结构";
+        }
+        return new ConnResp("MySQL 连接成功：" + state);
+    }
+
+    private void createDatabase(MysqlReq req, String host, int port, String database) {
+        String serverUrl = mysqlServerUrl(host, port);
+        String quoted = "`" + database.replace("`", "``") + "`";
+        try (Connection connection = openMysql(serverUrl, req);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE DATABASE IF NOT EXISTS " + quoted
+                    + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        } catch (SQLException e) {
+            throw new BizException("MySQL 数据库 " + database + " 自动创建失败：" + mysqlCreateError(e, database));
+        }
+    }
+
+    private int tableCount(Connection connection, String database) {
+        String sql = "SELECT COUNT(*) FROM information_schema.tables "
+                + "WHERE table_schema = ? AND table_type = 'BASE TABLE'";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, database);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getInt(1) : -1;
+            }
+        } catch (SQLException ignored) {
+            // 统计失败不应让连接测试失败；只返回未知状态
+            return -1;
+        }
+    }
+
+    private Connection openMysql(String url, MysqlReq req) throws SQLException {
         Properties props = new Properties();
         props.setProperty("user", req.username().trim());
         props.setProperty("password", req.password() == null ? "" : req.password());
         props.setProperty("connectTimeout", "5000");
-        try (Connection connection = DriverManager.getConnection(url, props)) {
-            if (!connection.isValid(3)) {
-                throw new BizException("MySQL 连接已建立但不可用");
+        props.setProperty("socketTimeout", "10000");
+        return DriverManager.getConnection(url, props);
+    }
+
+    private boolean isUnknownDatabase(SQLException error) {
+        SQLException current = error;
+        while (current != null) {
+            String message = current.getMessage() == null ? "" : current.getMessage().toLowerCase();
+            if (current.getErrorCode() == 1049 || message.contains("unknown database")) {
+                return true;
             }
-        } catch (SQLException e) {
-            throw new BizException("MySQL 连接失败：" + mysqlError(e));
+            current = current.getNextException();
         }
-        return new ConnResp("MySQL 连接成功");
+        return false;
     }
 
     public ConnResp testRedis(RedisReq req) {
@@ -199,13 +270,14 @@ public class SetupService {
             if (blank(mysql.host()) || blank(mysql.database()) || blank(mysql.username())) {
                 throw new BizException("启用 MySQL 时，地址、数据库名、用户名必须填写");
             }
+            String database = databaseOf(mysql.database());
             Map<String, Object> datasource = new LinkedHashMap<>();
-            datasource.put("url", mysqlUrl(mysql.host().trim(), portOf(mysql.port(), 3306), mysql.database().trim()));
+            datasource.put("url", mysqlUrl(mysql.host().trim(), portOf(mysql.port(), 3306), database, true));
             datasource.put("username", mysql.username().trim());
             datasource.put("password", mysql.password() == null ? "" : mysql.password());
             datasource.put("driver-class-name", "com.mysql.cj.jdbc.Driver");
             spring.put("datasource", datasource);
-            spring.put("jpa", Map.of("hibernate", Map.of("ddl-auto", "update")));
+            spring.put("jpa", Map.of("hibernate", Map.of("ddl-auto", "update"), "open-in-view", false));
         }
 
         boolean useRedis = req.redis() != null && req.redis().enabled();
@@ -246,6 +318,7 @@ public class SetupService {
         String yaml = """
                 # 由首次启动初始化向导生成（%s）
                 # 修改后需重启服务生效；删除本文件会回到内置默认配置（H2 + 未启用 Redis），请确认 data/ 里的 H2 库仍可登录
+                # MySQL：库不存在时由驱动自动创建（需 CREATE 权限）；已有库按 ddl-auto=update 更新表结构，不清空数据
                 # 注意：本文件包含数据库/Redis 密码与管理员密码哈希，请限制为 600 权限
                 """.formatted(siteUrl) + new Yaml(options).dump(root);
 
@@ -323,9 +396,40 @@ public class SetupService {
     }
 
     private String mysqlUrl(String host, int port, String database) {
+        return mysqlUrl(host, port, database, false);
+    }
+
+    private String mysqlUrl(String host, int port, String database, boolean autoCreate) {
         return "jdbc:mysql://" + host + ":" + port + "/" + database
                 + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+                + "&allowPublicKeyRetrieval=true&useSSL=false"
+                + (autoCreate ? "&createDatabaseIfNotExist=true" : "");
+    }
+
+    private String mysqlServerUrl(String host, int port) {
+        return "jdbc:mysql://" + host + ":" + port + "/"
+                + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
                 + "&allowPublicKeyRetrieval=true&useSSL=false";
+    }
+
+    private String databaseOf(String value) {
+        String database = value == null ? "" : value.trim();
+        if (!DATABASE_PATTERN.matcher(database).matches()) {
+            throw new BizException("数据库名需为 1-64 位字母、数字、下划线或连字符");
+        }
+        return database;
+    }
+
+    private String mysqlCreateError(SQLException e, String database) {
+        String message = e.getMessage() == null ? "未知错误" : e.getMessage();
+        String lower = message.toLowerCase();
+        if (lower.contains("access denied")) {
+            return "当前账号没有创建数据库的权限，请手动创建 " + database + " 或授予该账号 CREATE 权限";
+        }
+        if (lower.contains("timeout") || lower.contains("timed out")) {
+            return "连接超时，请检查网络和防火墙";
+        }
+        return message.lines().findFirst().orElse(message);
     }
 
     private int portOf(Integer value, int fallback) {
