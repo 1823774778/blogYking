@@ -23,7 +23,7 @@ public class PostDtos {
     public record PageResp<T>(List<T> records, long total, int page, int size) {
     }
 
-    public record TagView(String name, long count) {
+    public record TagView(String name, long count, String color, String description) {
     }
 
     public record StatsResp(long posts, long users, long comments, long totalViews) {

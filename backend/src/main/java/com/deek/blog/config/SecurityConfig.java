@@ -47,7 +47,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/email-code",
                                 "/api/auth/forgot-password", "/api/auth/reset-password",
                                 "/api/meta/**", "/api/system/**", "/api/setup/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/comments/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/comments/**",
+                                "/api/notifications/**", "/api/tags/**").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/**").authenticated()
                         // 其余 GET 请求属于静态资源或前端 history 路由，交还给 SPA 处理

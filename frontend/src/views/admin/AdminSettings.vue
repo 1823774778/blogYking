@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import http from '../../api'
 import { toast } from '../../state'
@@ -28,6 +28,59 @@ const ota = ref(null)
 const health = ref(null)
 const restarting = ref(false)
 const restartMessage = ref('')
+const promptOpen = ref(false)
+const promptFeature = ref('article')
+const promptSaving = ref(false)
+const featureSaving = ref('')
+const defaultPrompts = ref({})
+const promptDraft = reactive({
+  aiArticleGeneratePrompt: '',
+  aiArticleReviewPrompt: '',
+  aiCommentReviewPrompt: '',
+  aiCommentSummaryPrompt: '',
+  aiSummaryPrompt: ''
+})
+
+const aiFeatures = [
+  {
+    key: 'article',
+    enabledKey: 'aiArticleEnabled',
+    title: 'AI 文章',
+    desc: '生成草稿、审核文章'
+  },
+  {
+    key: 'comment',
+    enabledKey: 'aiCommentEnabled',
+    title: 'AI 评论',
+    desc: '审核评论、总结评论区'
+  },
+  {
+    key: 'summary',
+    enabledKey: 'aiSummaryEnabled',
+    title: 'AI 摘要',
+    desc: '编辑器内生成文章摘要'
+  }
+]
+
+const promptFields = computed(() => ({
+  article: [
+    { key: 'aiArticleGeneratePrompt', label: 'AI 生成文章提示词' },
+    { key: 'aiArticleReviewPrompt', label: 'AI 审核文章提示词' }
+  ],
+  comment: [
+    { key: 'aiCommentReviewPrompt', label: 'AI 审核评论提示词' },
+    { key: 'aiCommentSummaryPrompt', label: 'AI 总结评论提示词' }
+  ],
+  summary: [
+    { key: 'aiSummaryPrompt', label: 'AI 摘要提示词' }
+  ]
+}[promptFeature.value] || []))
+
+const promptFeatureTitle = computed(() => ({
+  article: 'AI 文章提示词',
+  comment: 'AI 评论提示词',
+  summary: 'AI 摘要提示词'
+}[promptFeature.value] || 'AI 提示词'))
 
 function boolValue(value) {
   return String(value).toLowerCase() === 'true'
@@ -35,9 +88,6 @@ function boolValue(value) {
 
 function setBool(key, event) {
   config.value[key] = event.target.checked ? 'true' : 'false'
-  if (key === 'registrationEnabled' && event.target.checked) {
-    config.value.registrationVerifyEmail = 'true'
-  }
 }
 
 async function loadConfig() {
@@ -151,15 +201,76 @@ function applyModel(id) {
 async function saveRegistration() {
   savingRegistration.value = true
   try {
-    if (boolValue(config.value.registrationEnabled)) {
-      config.value.registrationVerifyEmail = 'true'
-    }
     await persistConfig()
     toast('注册设置已保存')
   } catch (e) {
     toast(e.message, 'error')
   } finally {
     savingRegistration.value = false
+  }
+}
+
+async function toggleAiFeature(feature, event) {
+  const key = feature.enabledKey
+  const previous = config.value[key]
+  const next = event.target.checked ? 'true' : 'false'
+  config.value[key] = next
+  featureSaving.value = key
+  try {
+    await persistConfig()
+    toast(`${feature.title}已${next === 'true' ? '开启' : '关闭'}`)
+  } catch (e) {
+    config.value[key] = previous
+    toast(e.message, 'error')
+  } finally {
+    featureSaving.value = ''
+  }
+}
+
+async function loadDefaultPrompts() {
+  if (Object.keys(defaultPrompts.value).length) return
+  try {
+    defaultPrompts.value = (await http.get('/admin/ai/default-prompts')).data || {}
+  } catch (e) {
+    toast(e.message, 'error')
+  }
+}
+
+function openPrompt(feature) {
+  promptFeature.value = feature
+  for (const field of promptFields.value) {
+    promptDraft[field.key] = config.value[field.key] || ''
+  }
+  promptOpen.value = true
+  loadDefaultPrompts()
+}
+
+function resetPrompt() {
+  for (const field of promptFields.value) {
+    promptDraft[field.key] = defaultPrompts.value[field.key] || ''
+  }
+  toast('已恢复默认提示词，点击保存后生效')
+}
+
+async function savePrompt() {
+  for (const field of promptFields.value) {
+    if (!String(promptDraft[field.key] || '').trim()) {
+      toast(`请填写${field.label}`, 'error')
+      return
+    }
+  }
+  promptSaving.value = true
+  try {
+    for (const field of promptFields.value) {
+      config.value[field.key] = String(promptDraft[field.key]).trim()
+    }
+    await persistConfig()
+    promptOpen.value = false
+    toast('提示词已保存，后续 AI 操作立即生效')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    promptSaving.value = false
   }
 }
 
@@ -298,46 +409,63 @@ onMounted(async () => {
         <OtaPanel />
       </div>
 
-      <div v-else-if="activeTab === 'ai'" class="adm-settings-grid">
-        <section class="adm-card">
-          <div class="adm-card-head">
-            <div><span class="adm-card-kicker">AI</span><h2>AI 设置</h2></div>
-            <span class="adm-status" :class="boolValue(config.aiEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.aiEnabled) ? '已启用' : '未启用' }}</span>
-          </div>
-          <dl class="adm-facts">
-            <div><dt>服务商</dt><dd>{{ config.aiProvider || '—' }}</dd></div>
-            <div><dt>模型</dt><dd>{{ config.aiModel || '—' }}</dd></div>
-            <div><dt>Base URL</dt><dd class="adm-break">{{ config.aiBaseUrl || '—' }}</dd></div>
-            <div><dt>密钥</dt><dd>{{ config.aiApiKeySet === 'true' ? '已设置' : '未设置' }}</dd></div>
-            <div><dt>测试状态</dt><dd>{{ aiStatus?.message || (aiStatus?.enabled ? '已启用' : '未启用') }}</dd></div>
-          </dl>
-          <div class="adm-form-actions">
-            <button class="btn" type="button" @click="aiOpen = true">配置 AI</button>
-            <button class="btn btn-ghost" type="button" :disabled="testingAi" @click="testAi">{{ testingAi ? '测试中…' : '测试连接' }}</button>
-            <span class="adm-note">模型名称旁可一键从 API 获取可用模型。</span>
-          </div>
-          <p v-if="aiTestResult" class="adm-test-result">{{ aiTestResult }}</p>
-        </section>
-        <aside class="adm-side-stack">
+      <div v-else-if="activeTab === 'ai'">
+        <div class="adm-settings-grid">
           <section class="adm-card">
-            <div class="adm-card-head"><div><span class="adm-card-kicker">STATUS</span><h2>当前 AI 状态</h2></div></div>
+            <div class="adm-card-head">
+              <div><span class="adm-card-kicker">AI</span><h2>AI 设置</h2></div>
+              <span class="adm-status" :class="boolValue(config.aiEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.aiEnabled) ? '已启用' : '未启用' }}</span>
+            </div>
             <dl class="adm-facts">
-              <div><dt>启用</dt><dd>{{ aiStatus?.enabled ? '是' : '否' }}</dd></div>
-              <div><dt>服务商</dt><dd>{{ aiStatus?.provider || '—' }}</dd></div>
-              <div><dt>模型</dt><dd>{{ aiStatus?.model || '—' }}</dd></div>
-              <div><dt>密钥</dt><dd>{{ aiStatus?.apiKeySet ? '已设置' : '未设置' }}</dd></div>
-              <div><dt>Base URL</dt><dd class="adm-break">{{ aiStatus?.baseUrl || '—' }}</dd></div>
+              <div><dt>服务商</dt><dd>{{ config.aiProvider || '—' }}</dd></div>
+              <div><dt>模型</dt><dd>{{ config.aiModel || '—' }}</dd></div>
+              <div><dt>Base URL</dt><dd class="adm-break">{{ config.aiBaseUrl || '—' }}</dd></div>
+              <div><dt>密钥</dt><dd>{{ config.aiApiKeySet === 'true' ? '已设置' : '未设置' }}</dd></div>
+              <div><dt>测试状态</dt><dd>{{ aiStatus?.message || (aiStatus?.enabled ? '已启用' : '未启用') }}</dd></div>
             </dl>
+            <div class="adm-form-actions">
+              <button class="btn" type="button" @click="aiOpen = true">配置 AI</button>
+              <button class="btn btn-ghost" type="button" :disabled="testingAi" @click="testAi">{{ testingAi ? '测试中…' : '测试连接' }}</button>
+              <span class="adm-note">模型名称旁可一键从 API 获取可用模型。</span>
+            </div>
+            <p v-if="aiTestResult" class="adm-test-result">{{ aiTestResult }}</p>
           </section>
-          <section class="adm-card">
-            <div class="adm-card-head"><div><span class="adm-card-kicker">CAPABILITY</span><h2>已接入能力</h2></div></div>
-            <ul class="adm-hint-list">
-              <li><b>AI 文章</b><span>生成草稿、审核文章</span></li>
-              <li><b>AI 评论</b><span>审核评论、总结评论区</span></li>
-              <li><b>AI 摘要</b><span>编辑器内生成文章摘要</span></li>
-            </ul>
-          </section>
-        </aside>
+          <aside class="adm-side-stack">
+            <section class="adm-card">
+              <div class="adm-card-head"><div><span class="adm-card-kicker">STATUS</span><h2>当前 AI 状态</h2></div></div>
+              <dl class="adm-facts">
+                <div><dt>启用</dt><dd>{{ aiStatus?.enabled ? '是' : '否' }}</dd></div>
+                <div><dt>服务商</dt><dd>{{ aiStatus?.provider || '—' }}</dd></div>
+                <div><dt>模型</dt><dd>{{ aiStatus?.model || '—' }}</dd></div>
+                <div><dt>密钥</dt><dd>{{ aiStatus?.apiKeySet ? '已设置' : '未设置' }}</dd></div>
+                <div><dt>Base URL</dt><dd class="adm-break">{{ aiStatus?.baseUrl || '—' }}</dd></div>
+              </dl>
+            </section>
+          </aside>
+        </div>
+        <section class="adm-card adm-ai-cap-card">
+          <div class="adm-card-head"><div><span class="adm-card-kicker">CAPABILITY</span><h2>AI 功能开关</h2></div></div>
+          <div class="adm-ai-feature-list">
+            <div v-for="feature in aiFeatures" :key="feature.key" class="adm-ai-feature" :class="{ off: !boolValue(config[feature.enabledKey]) }">
+              <div class="adm-ai-feature-copy">
+                <b>{{ feature.title }}</b>
+                <span>{{ feature.desc }}</span>
+              </div>
+              <label class="adm-switch-label compact">
+                <span class="sr-only">{{ feature.title }}开关</span>
+                <input
+                  type="checkbox"
+                  :checked="boolValue(config[feature.enabledKey])"
+                  :disabled="featureSaving === feature.enabledKey"
+                  @change="toggleAiFeature(feature, $event)"
+                />
+                <i class="adm-switch" aria-hidden="true"></i>
+              </label>
+              <button class="btn-text" type="button" @click="openPrompt(feature.key)">配置提示词</button>
+            </div>
+          </div>
+          <p class="adm-note">开关和提示词都保存在数据库，由后端读取；关闭后对应 AI 操作会直接拒绝。</p>
+        </section>
       </div>
 
       <div v-else-if="activeTab === 'registration'" class="adm-settings-grid">
@@ -358,10 +486,10 @@ onMounted(async () => {
             <div class="field span-2">
               <label class="adm-switch-label">
                 <span>注册必须验证邮箱</span>
-                <input type="checkbox" :checked="boolValue(config.registrationVerifyEmail) || boolValue(config.registrationEnabled)" disabled />
-                <i class="adm-switch is-disabled" aria-hidden="true"></i>
+                <input type="checkbox" :checked="boolValue(config.registrationVerifyEmail)" @change="setBool('registrationVerifyEmail', $event)" />
+                <i class="adm-switch" aria-hidden="true"></i>
               </label>
-              <p class="adm-note">开放注册后强制开启：提交注册前必须获取并填写邮箱验证码。请先配置可用的 SMTP。</p>
+              <p class="adm-note">开启后，注册前必须获取并填写邮箱验证码；需要可用的 SMTP 服务。该开关独立保存，关闭后注册仅需用户名、邮箱和密码。</p>
             </div>
           </div>
           <div class="adm-form-actions">
@@ -539,6 +667,29 @@ onMounted(async () => {
         <div class="adm-modal-actions">
           <button class="btn btn-ghost" type="button" @click="aiOpen = false">取消</button>
           <button class="btn" type="button" :disabled="savingAi" @click="saveAi">{{ savingAi ? '保存中…' : '保存 AI 设置' }}</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="promptOpen" class="adm-modal-wrap" @click.self="promptOpen = false">
+      <div class="adm-modal is-wide">
+        <div class="adm-modal-head">
+          <div>
+            <span class="adm-card-kicker">AI PROMPT</span>
+            <h2>{{ promptFeatureTitle }}</h2>
+            <p class="meta">提示词保存到数据库，后续对应 AI 操作会直接读取。可恢复系统默认后重新修改。</p>
+          </div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="promptOpen = false">×</button>
+        </div>
+        <div class="field" v-for="field in promptFields" :key="field.key">
+          <label :for="field.key">{{ field.label }}</label>
+          <textarea :id="field.key" v-model="promptDraft[field.key]" maxlength="4000" style="min-height: 120px"></textarea>
+        </div>
+        <div class="adm-modal-actions split">
+          <button class="btn btn-ghost" type="button" @click="resetPrompt">恢复默认提示词</button>
+          <div>
+            <button class="btn btn-ghost" type="button" @click="promptOpen = false">取消</button>
+            <button class="btn" type="button" :disabled="promptSaving" @click="savePrompt">{{ promptSaving ? '保存中…' : '保存提示词' }}</button>
+          </div>
         </div>
       </div>
     </div>

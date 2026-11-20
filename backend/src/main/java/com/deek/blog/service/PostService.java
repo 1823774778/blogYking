@@ -52,6 +52,7 @@ public class PostService {
     private final PostFavoriteRepository favoriteRepository;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
+    private final TagService tagService;
     private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
 
     @Value("${app.redis.enabled:false}")
@@ -62,12 +63,14 @@ public class PostService {
 
     public PostService(PostRepository postRepository, PostLikeRepository likeRepository,
                        PostFavoriteRepository favoriteRepository, CommentRepository commentRepository,
-                       UserRepository userRepository, ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
+                       UserRepository userRepository, TagService tagService,
+                       ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
         this.postRepository = postRepository;
         this.likeRepository = likeRepository;
         this.favoriteRepository = favoriteRepository;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
+        this.tagService = tagService;
         this.redisTemplateProvider = redisTemplateProvider;
     }
 
@@ -89,20 +92,7 @@ public class PostService {
     }
 
     public List<TagView> tags() {
-        Map<String, Long> counts = new HashMap<>();
-        for (String row : postRepository.allTags()) {
-            for (String tag : row.split(",")) {
-                String t = tag.trim();
-                if (!t.isEmpty()) {
-                    counts.merge(t, 1L, Long::sum);
-                }
-            }
-        }
-        return counts.entrySet().stream()
-                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
-                .limit(24)
-                .map(e -> new TagView(e.getKey(), e.getValue()))
-                .toList();
+        return tagService.publicTags();
     }
 
     public StatsResp stats() {
@@ -362,6 +352,7 @@ public class PostService {
         post.setSummary(summary.isEmpty() ? autoSummary(content) : summary);
         post.setCover(req.cover() == null ? null : req.cover().trim());
         post.setTags(normalizeTags(req.tags()));
+        tagService.ensureTags(post.getTags());
         String status = req.status() == null ? "PUBLISHED" : req.status().toUpperCase();
         if (!List.of("PUBLISHED", "DRAFT", "PENDING", "REJECTED").contains(status)) {
             throw new BizException("文章状态只能是 DRAFT、PENDING、PUBLISHED 或 REJECTED");

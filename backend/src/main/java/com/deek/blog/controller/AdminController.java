@@ -64,6 +64,9 @@ public class AdminController {
     public record MailTestReq(String to) {
     }
 
+    public record AiPromptReq(String prompt) {
+    }
+
     private final PostService postService;
     private final CommentService commentService;
     private final AuthService authService;
@@ -155,11 +158,13 @@ public class AdminController {
     }
 
     @PostMapping("/posts/{id}/ai-comment-summary")
-    public ApiResponse<PostView> summarizePostComments(@PathVariable Long id) {
+    public ApiResponse<PostView> summarizePostComments(@PathVariable Long id,
+                                                        @RequestBody(required = false) AiPromptReq req) {
         PostDetail detail = postService.adminDetail(id);
         List<String> comments = commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(id, "VISIBLE")
                 .stream().map(com.deek.blog.entity.Comment::getContent).limit(80).toList();
-        String summary = aiService.summarizeComments(detail.post().title(), comments);
+        String summary = aiService.summarizeComments(detail.post().title(), comments,
+                req == null ? null : req.prompt());
         return ApiResponse.ok(postService.saveCommentSummary(id, summary));
     }
 

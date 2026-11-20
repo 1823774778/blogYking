@@ -15,9 +15,11 @@ import java.time.LocalDateTime;
 public class DemoDataService {
 
     private final PostRepository postRepository;
+    private final TagService tagService;
 
-    public DemoDataService(PostRepository postRepository) {
+    public DemoDataService(PostRepository postRepository, TagService tagService) {
         this.postRepository = postRepository;
+        this.tagService = tagService;
     }
 
     @Transactional
@@ -163,5 +165,6 @@ public class DemoDataService {
         post.setUpdatedAt(now);
         post.setViews(postRepository.count() * 7 + 12);
         postRepository.save(post);
+        tagService.ensureTags(post.getTags());
     }
 }

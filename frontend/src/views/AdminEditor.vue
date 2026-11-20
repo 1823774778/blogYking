@@ -30,7 +30,18 @@ const aiGenLoading = ref(false)
 const aiReviewOpen = ref(false)
 const aiReviewLoading = ref(false)
 const aiReview = ref(null)
-const aiGen = reactive({ topic: '', outline: '', tone: 'natural', length: 'medium' })
+const aiGen = reactive({ topic: '', outline: '', tone: 'natural', length: 'medium', prompt: '' })
+const aiReviewPromptOpen = ref(false)
+const aiReviewPrompt = ref('')
+const summaryPromptOpen = ref(false)
+const summaryPrompt = ref('')
+const aiConfig = reactive({
+  articleEnabled: true,
+  summaryEnabled: true,
+  articleGeneratePrompt: '',
+  articleReviewPrompt: '',
+  summaryPrompt: ''
+})
 
 const isEdit = computed(() => Boolean(route.params.id))
 const charCount = computed(() => form.content.replace(/\s/g, '').length)
@@ -99,18 +110,53 @@ async function save(status) {
   }
 }
 
+async function loadAiConfig() {
+  try {
+    const cfg = (await http.get('/admin/config')).data || {}
+    aiConfig.articleEnabled = String(cfg.aiArticleEnabled ?? 'true') === 'true'
+    aiConfig.summaryEnabled = String(cfg.aiSummaryEnabled ?? 'true') === 'true'
+    aiConfig.articleGeneratePrompt = cfg.aiArticleGeneratePrompt || ''
+    aiConfig.articleReviewPrompt = cfg.aiArticleReviewPrompt || ''
+    aiConfig.summaryPrompt = cfg.aiSummaryPrompt || ''
+    aiGen.prompt = aiConfig.articleGeneratePrompt
+    aiReviewPrompt.value = aiConfig.articleReviewPrompt
+    summaryPrompt.value = aiConfig.summaryPrompt
+  } catch {
+    /* 配置读取失败时由后端功能开关兜底 */
+  }
+}
+
+function openSummaryPrompt() {
+  if (!aiConfig.summaryEnabled) {
+    toast('AI 摘要功能未开启，请先在站点设置中打开', 'error')
+    return
+  }
+  if (!form.content.trim()) {
+    toast('先写正文，再生成摘要', 'error')
+    return
+  }
+  summaryPrompt.value = summaryPrompt.value || aiConfig.summaryPrompt
+  summaryPromptOpen.value = true
+}
+
 async function generateSummary() {
   if (!form.content.trim()) {
     toast('先写正文，再生成摘要', 'error')
+    return
+  }
+  if (!summaryPrompt.value.trim()) {
+    toast('请填写 AI 摘要提示词', 'error')
     return
   }
   generating.value = true
   try {
     const res = await http.post('/admin/ai/summarize', {
       title: form.title,
-      content: form.content
+      content: form.content,
+      prompt: summaryPrompt.value.trim()
     }, { timeout: 60000 })
     form.summary = res.data.summary
+    summaryPromptOpen.value = false
     toast('AI 摘要已生成，可继续修改')
   } catch (e) {
     toast(e.message, 'error')
@@ -120,8 +166,16 @@ async function generateSummary() {
 }
 
 async function generateArticle() {
+  if (!aiConfig.articleEnabled) {
+    toast('AI 文章功能未开启，请先在站点设置中打开', 'error')
+    return
+  }
   if (!aiGen.topic.trim()) {
     toast('请先填写文章主题', 'error')
+    return
+  }
+  if (!aiGen.prompt.trim()) {
+    toast('请填写 AI 生成文章提示词', 'error')
     return
   }
   aiGenLoading.value = true
@@ -130,7 +184,8 @@ async function generateArticle() {
       topic: aiGen.topic.trim(),
       outline: aiGen.outline.trim(),
       tone: aiGen.tone,
-      length: aiGen.length
+      length: aiGen.length,
+      prompt: aiGen.prompt.trim()
     }, { timeout: 120000 })
     const data = res.data || {}
     if (data.title) form.title = data.title
@@ -146,9 +201,22 @@ async function generateArticle() {
   }
 }
 
-async function reviewArticle() {
+function openReviewPrompt() {
+  if (!aiConfig.articleEnabled) {
+    toast('AI 文章功能未开启，请先在站点设置中打开', 'error')
+    return
+  }
   if (!form.content.trim()) {
     toast('正文为空，无法审核', 'error')
+    return
+  }
+  aiReviewPrompt.value = aiReviewPrompt.value || aiConfig.articleReviewPrompt
+  aiReviewPromptOpen.value = true
+}
+
+async function reviewArticle() {
+  if (!aiReviewPrompt.value.trim()) {
+    toast('请填写 AI 审核文章提示词', 'error')
     return
   }
   aiReviewLoading.value = true
@@ -156,8 +224,10 @@ async function reviewArticle() {
   try {
     aiReview.value = (await http.post('/admin/ai/review-article', {
       title: form.title,
-      content: form.content
+      content: form.content,
+      prompt: aiReviewPrompt.value.trim()
     }, { timeout: 90000 })).data
+    aiReviewPromptOpen.value = false
     aiReviewOpen.value = true
   } catch (e) {
     toast(e.message, 'error')
@@ -188,7 +258,10 @@ async function onCover(event) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadAiConfig()
+})
 </script>
 
 <template>
@@ -198,8 +271,8 @@ onMounted(load)
       <div class="adm-editor-actions">
         <span class="adm-status" :class="`is-${String(form.status).toLowerCase()}`">{{ statusText }}</span>
         <span class="meta">{{ charCount }} 字</span>
-        <button class="btn btn-ghost btn-sm" type="button" :disabled="aiGenLoading || saving" @click="aiGenOpen = true">AI 生成文章</button>
-        <button class="btn btn-ghost btn-sm" type="button" :disabled="aiReviewLoading || saving" @click="reviewArticle">{{ aiReviewLoading ? '审核中…' : 'AI 审核文章' }}</button>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="aiGenLoading || saving || !aiConfig.articleEnabled" @click="aiGenOpen = true">AI 生成文章</button>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="aiReviewLoading || saving || !aiConfig.articleEnabled" @click="openReviewPrompt">{{ aiReviewLoading ? '审核中…' : 'AI 审核文章' }}</button>
         <button class="btn btn-ghost btn-sm" type="button" :disabled="saving" @click="save('DRAFT')">存为草稿</button>
         <button class="btn btn-ghost btn-sm" type="button" :disabled="saving" @click="save('PENDING')">提交审核</button>
         <button class="btn btn-sm" type="button" :disabled="saving" @click="save('PUBLISHED')">{{ saving ? '保存中…' : '保存并发布' }}</button>
@@ -225,8 +298,8 @@ onMounted(load)
           <label for="summary">摘要</label>
           <textarea id="summary" v-model="form.summary" maxlength="200" style="min-height: 92px" placeholder="留空则自动截取正文开头"></textarea>
           <div class="adm-summary-action">
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="generating" @click="generateSummary">{{ generating ? '生成中…' : 'AI 生成摘要' }}</button>
-            <span class="meta">需在站点设置中启用 AI</span>
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="generating || !aiConfig.summaryEnabled" @click="openSummaryPrompt">{{ generating ? '生成中…' : 'AI 生成摘要' }}</button>
+            <span class="meta">{{ aiConfig.summaryEnabled ? '点击后可编辑本次提示词' : 'AI 摘要已在站点设置中关闭' }}</span>
           </div>
         </div>
 
@@ -290,6 +363,11 @@ onMounted(load)
             <label for="aiOutline">提纲 / 补充要求（可选）</label>
             <textarea id="aiOutline" v-model="aiGen.outline" style="min-height: 110px" placeholder="想覆盖的小标题、代码示例、语气或需要避免的内容"></textarea>
           </div>
+          <div class="field span-2">
+            <label for="aiGenPrompt">生成提示词</label>
+            <textarea id="aiGenPrompt" v-model="aiGen.prompt" maxlength="4000" style="min-height: 96px" placeholder="描述写作角色、文章结构、语气和必须遵守的规则"></textarea>
+            <p class="adm-note">默认读取站点设置中的 AI 文章提示词，本次修改只影响这次生成。</p>
+          </div>
           <div class="field">
             <label for="aiTone">写作风格</label>
             <select id="aiTone" v-model="aiGen.tone">
@@ -311,6 +389,40 @@ onMounted(load)
         <div class="adm-modal-actions">
           <button class="btn btn-ghost" type="button" :disabled="aiGenLoading" @click="aiGenOpen = false">取消</button>
           <button class="btn" type="button" :disabled="aiGenLoading" @click="generateArticle">{{ aiGenLoading ? '生成中…' : '开始生成' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="summaryPromptOpen" class="adm-modal-wrap" @click.self="summaryPromptOpen = false">
+      <div class="adm-modal is-wide">
+        <div class="adm-modal-head">
+          <div><span class="adm-card-kicker">AI SUMMARY</span><h2>AI 生成摘要</h2><p class="meta">默认读取站点设置中的 AI 摘要提示词，本次修改只影响这次生成。</p></div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="summaryPromptOpen = false">×</button>
+        </div>
+        <div class="field">
+          <label for="summaryPrompt">提示词</label>
+          <textarea id="summaryPrompt" v-model="summaryPrompt" maxlength="4000" style="min-height: 150px"></textarea>
+        </div>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="generating" @click="summaryPromptOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="generating" @click="generateSummary">{{ generating ? '生成中…' : '生成摘要' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="aiReviewPromptOpen = false">
+      <div class="adm-modal is-wide">
+        <div class="adm-modal-head">
+          <div><span class="adm-card-kicker">AI REVIEW</span><h2>AI 审核文章</h2><p class="meta">默认读取站点设置中的审核提示词，本次修改只影响这次审核。</p></div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiReviewPromptOpen = false">×</button>
+        </div>
+        <div class="field">
+          <label for="articleReviewPrompt">审核提示词</label>
+          <textarea id="articleReviewPrompt" v-model="aiReviewPrompt" maxlength="4000" style="min-height: 150px"></textarea>
+        </div>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="aiReviewLoading" @click="aiReviewPromptOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="aiReviewLoading" @click="reviewArticle">{{ aiReviewLoading ? '审核中…' : '开始审核' }}</button>
         </div>
       </div>
     </div>

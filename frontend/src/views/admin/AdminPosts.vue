@@ -18,6 +18,10 @@ const aiReviewOpen = ref(false)
 const aiReviewLoadingId = ref(null)
 const aiReviewTarget = ref(null)
 const aiReview = ref(null)
+const aiReviewPromptOpen = ref(false)
+const aiReviewPrompt = ref('')
+const aiReviewPromptDefault = ref('')
+const articleAiEnabled = ref(true)
 
 const statusMap = { published: 'PUBLISHED', draft: 'DRAFT', pending: 'PENDING', rejected: 'REJECTED' }
 
@@ -95,8 +99,34 @@ async function submitReview(status) {
   }
 }
 
+async function loadAiConfig() {
+  try {
+    const cfg = (await http.get('/admin/config')).data || {}
+    articleAiEnabled.value = String(cfg.aiArticleEnabled ?? 'true') === 'true'
+    aiReviewPromptDefault.value = cfg.aiArticleReviewPrompt || ''
+    aiReviewPrompt.value = aiReviewPromptDefault.value
+  } catch {
+    /* 开关由后端兜底 */
+  }
+}
+
+function openAiReview(post) {
+  if (aiReviewLoadingId.value) return
+  if (!articleAiEnabled.value) {
+    toast('AI 文章功能未开启，请先在站点设置中打开', 'error')
+    return
+  }
+  aiReviewTarget.value = post
+  aiReviewPrompt.value = aiReviewPrompt.value || aiReviewPromptDefault.value
+  aiReviewPromptOpen.value = true
+}
+
 async function reviewWithAi(post) {
   if (aiReviewLoadingId.value) return
+  if (!aiReviewPrompt.value.trim()) {
+    toast('请填写 AI 审核提示词', 'error')
+    return
+  }
   aiReviewLoadingId.value = post.id
   aiReviewTarget.value = post
   aiReview.value = null
@@ -104,8 +134,10 @@ async function reviewWithAi(post) {
     const detail = (await http.get(`/admin/posts/${post.id}`)).data
     aiReview.value = (await http.post('/admin/ai/review-article', {
       title: post.title,
-      content: detail.content || ''
+      content: detail.content || '',
+      prompt: aiReviewPrompt.value.trim()
     }, { timeout: 90000 })).data
+    aiReviewPromptOpen.value = false
     aiReviewOpen.value = true
   } catch (e) {
     toast(e.message, 'error')
@@ -142,6 +174,7 @@ watch(activeTab, () => load(1))
 onMounted(() => {
   load(1)
   loadStats()
+  loadAiConfig()
 })
 </script>
 
@@ -213,7 +246,7 @@ onMounted(() => {
                 <div class="adm-row-actions wrap">
                   <router-link class="btn-text" :to="`/admin/posts/${post.id}/edit`">编辑</router-link>
                   <a class="btn-text" :href="`/post/${post.id}`" target="_blank" rel="noopener">预览</a>
-                  <button class="btn-text" type="button" :disabled="aiReviewLoadingId === post.id" @click="reviewWithAi(post)">{{ aiReviewLoadingId === post.id ? '审核中…' : 'AI 审核' }}</button>
+                  <button class="btn-text" type="button" :disabled="aiReviewLoadingId === post.id || !articleAiEnabled" @click="openAiReview(post)">{{ aiReviewLoadingId === post.id ? '审核中…' : 'AI 审核' }}</button>
                   <button v-if="post.status !== 'PUBLISHED'" class="btn-text" type="button" @click="openReview(post)">{{ post.status === 'PENDING' ? '审核' : '发布' }}</button>
                   <button v-else class="btn-text" type="button" @click="unpublish(post)">下架</button>
                   <button class="btn-text danger" type="button" @click="removePost(post)">删除</button>
@@ -254,6 +287,23 @@ onMounted(() => {
             <button class="btn btn-ghost" type="button" :disabled="reviewing" @click="submitReview('DRAFT')">存为草稿</button>
             <button class="btn" type="button" :disabled="reviewing" @click="submitReview('PUBLISHED')">{{ reviewing ? '提交中…' : '通过并发布' }}</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="aiReviewPromptOpen = false">
+      <div class="adm-modal is-wide">
+        <div class="adm-modal-head">
+          <div><span class="adm-card-kicker">AI REVIEW</span><h2>AI 审核文章</h2><p class="meta">审核《{{ aiReviewTarget?.title }}》。提示词默认读取站点设置，本次修改只影响这次审核。</p></div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiReviewPromptOpen = false">×</button>
+        </div>
+        <div class="field">
+          <label for="postReviewPrompt">审核提示词</label>
+          <textarea id="postReviewPrompt" v-model="aiReviewPrompt" maxlength="4000" style="min-height: 150px"></textarea>
+        </div>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="Boolean(aiReviewLoadingId)" @click="aiReviewPromptOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="Boolean(aiReviewLoadingId)" @click="reviewWithAi(aiReviewTarget)">{{ aiReviewLoadingId ? '审核中…' : '开始审核' }}</button>
         </div>
       </div>
     </div>

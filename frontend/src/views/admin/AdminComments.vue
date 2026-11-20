@@ -20,6 +20,12 @@ const summaryOpen = ref(false)
 const summaryLoading = ref(false)
 const summaryTarget = ref(null)
 const summaryText = ref('')
+const aiReviewPromptOpen = ref(false)
+const aiReviewPrompt = ref('')
+const summaryPromptOpen = ref(false)
+const summaryPrompt = ref('')
+const aiCommentEnabled = ref(true)
+const defaultPrompts = reactive({ review: '', summary: '' })
 
 const statusMap = { pending: 'PENDING', visible: 'VISIBLE', hidden: 'HIDDEN' }
 
@@ -81,15 +87,44 @@ async function moderate(comment, status) {
   }
 }
 
+async function loadAiConfig() {
+  try {
+    const cfg = (await http.get('/admin/config')).data || {}
+    aiCommentEnabled.value = String(cfg.aiCommentEnabled ?? 'true') === 'true'
+    defaultPrompts.review = cfg.aiCommentReviewPrompt || ''
+    defaultPrompts.summary = cfg.aiCommentSummaryPrompt || ''
+    aiReviewPrompt.value = defaultPrompts.review
+    summaryPrompt.value = defaultPrompts.summary
+  } catch {
+    /* 开关由后端兜底 */
+  }
+}
+
+function openAiReview(comment) {
+  if (!aiCommentEnabled.value) {
+    toast('AI 评论功能未开启，请先在站点设置中打开', 'error')
+    return
+  }
+  aiReviewTarget.value = comment
+  aiReviewPrompt.value = aiReviewPrompt.value || defaultPrompts.review
+  aiReviewPromptOpen.value = true
+}
+
 async function reviewWithAi(comment) {
+  if (!aiReviewPrompt.value.trim()) {
+    toast('请填写 AI 审核评论提示词', 'error')
+    return
+  }
   aiReviewLoading.value = true
   aiReviewTarget.value = comment
   aiReview.value = null
   try {
     aiReview.value = (await http.post('/admin/ai/review-comment', {
       postTitle: comment.postTitle || '',
-      content: comment.content
+      content: comment.content,
+      prompt: aiReviewPrompt.value.trim()
     }, { timeout: 60000 })).data
+    aiReviewPromptOpen.value = false
     aiReviewOpen.value = true
   } catch (e) {
     toast(e.message, 'error')
@@ -111,16 +146,34 @@ async function applyAiReview() {
   aiReviewOpen.value = false
 }
 
+function openSummary(comment) {
+  if (!comment.postId) return
+  if (!aiCommentEnabled.value) {
+    toast('AI 评论功能未开启，请先在站点设置中打开', 'error')
+    return
+  }
+  summaryTarget.value = comment
+  summaryPrompt.value = summaryPrompt.value || defaultPrompts.summary
+  summaryPromptOpen.value = true
+}
+
 async function summarizePost(comment) {
   if (!comment.postId) return
+  if (!summaryPrompt.value.trim()) {
+    toast('请填写 AI 评论总结提示词', 'error')
+    return
+  }
   summaryLoading.value = true
   const key = `summary-${comment.postId}`
   actingId.value = key
   summaryTarget.value = comment
   summaryText.value = ''
   try {
-    const res = await http.post(`/admin/posts/${comment.postId}/ai-comment-summary`, null, { timeout: 90000 })
+    const res = await http.post(`/admin/posts/${comment.postId}/ai-comment-summary`, {
+      prompt: summaryPrompt.value.trim()
+    }, { timeout: 90000 })
     summaryText.value = res.data.commentSummary || ''
+    summaryPromptOpen.value = false
     summaryOpen.value = true
     toast('评论总结已生成并保存到文章')
   } catch (e) {
@@ -147,6 +200,7 @@ watch(activeTab, () => load(1))
 onMounted(() => {
   load(1)
   loadStats()
+  loadAiConfig()
 })
 </script>
 
@@ -218,8 +272,8 @@ onMounted(() => {
                   <button v-if="comment.status !== 'VISIBLE'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'VISIBLE')">通过</button>
                   <button v-if="comment.status === 'VISIBLE'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'HIDDEN')">隐藏</button>
                   <button v-if="comment.status === 'PENDING'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'HIDDEN')">拒绝</button>
-                  <button class="btn-text" type="button" :disabled="aiReviewLoading" @click="reviewWithAi(comment)">AI 审核</button>
-                  <button v-if="comment.postId" class="btn-text" type="button" :disabled="summaryLoading" @click="summarizePost(comment)">AI 总结评论</button>
+                  <button class="btn-text" type="button" :disabled="aiReviewLoading || !aiCommentEnabled" @click="openAiReview(comment)">AI 审核</button>
+                  <button v-if="comment.postId" class="btn-text" type="button" :disabled="summaryLoading || !aiCommentEnabled" @click="openSummary(comment)">AI 总结评论</button>
                   <button class="btn-text danger" type="button" @click="removeComment(comment)">删除</button>
                 </div>
               </td>
@@ -237,6 +291,40 @@ onMounted(() => {
         <button type="button" :disabled="comments.page * comments.size >= comments.total" @click="load(comments.page + 1)">下一页</button>
       </div>
     </section>
+
+    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="aiReviewPromptOpen = false">
+      <div class="adm-modal is-wide">
+        <div class="adm-modal-head">
+          <div><span class="adm-card-kicker">AI COMMENT</span><h2>AI 审核评论</h2><p class="meta">提示词默认读取站点设置，本次修改只影响这次审核。</p></div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiReviewPromptOpen = false">×</button>
+        </div>
+        <div class="field">
+          <label for="commentReviewPrompt">审核提示词</label>
+          <textarea id="commentReviewPrompt" v-model="aiReviewPrompt" maxlength="4000" style="min-height: 150px"></textarea>
+        </div>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="aiReviewLoading" @click="aiReviewPromptOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="aiReviewLoading" @click="reviewWithAi(aiReviewTarget)">{{ aiReviewLoading ? '审核中…' : '开始审核' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="summaryPromptOpen" class="adm-modal-wrap" @click.self="summaryPromptOpen = false">
+      <div class="adm-modal is-wide">
+        <div class="adm-modal-head">
+          <div><span class="adm-card-kicker">AI COMMENT</span><h2>AI 总结评论</h2><p class="meta">提示词默认读取站点设置。生成结果会保存到《{{ summaryTarget?.postTitle }}》并展示在文章评论区上方。</p></div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="summaryPromptOpen = false">×</button>
+        </div>
+        <div class="field">
+          <label for="commentSummaryPrompt">总结提示词</label>
+          <textarea id="commentSummaryPrompt" v-model="summaryPrompt" maxlength="4000" style="min-height: 150px"></textarea>
+        </div>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="summaryLoading" @click="summaryPromptOpen = false">取消</button>
+          <button class="btn" type="button" :disabled="summaryLoading" @click="summarizePost(summaryTarget)">{{ summaryLoading ? '生成中…' : '生成并保存' }}</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="aiReviewOpen" class="adm-modal-wrap" @click.self="aiReviewOpen = false">
       <div class="adm-modal">

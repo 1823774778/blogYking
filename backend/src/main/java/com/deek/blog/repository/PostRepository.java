@@ -34,6 +34,9 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Query("select p.tags from Post p where p.status = 'PUBLISHED' and p.tags is not null and p.tags <> ''")
     List<String> allTags();
 
+    @Query("select p.tags from Post p where p.tags is not null and p.tags <> ''")
+    List<String> allTagsAll();
+
     @Query("""
             select p from Post p
             where p.status = 'PUBLISHED'

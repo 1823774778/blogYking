@@ -23,7 +23,9 @@ const routes = [
       { path: 'posts/new', name: 'admin-post-new', component: () => import('./views/AdminEditor.vue'), meta: { title: '新建文章' } },
       { path: 'posts/:id/edit', name: 'admin-post-edit', component: () => import('./views/AdminEditor.vue'), meta: { title: '编辑文章' } },
       { path: 'comments', name: 'admin-comments', component: () => import('./views/admin/AdminComments.vue'), meta: { title: '评论管理' } },
+      { path: 'tags', name: 'admin-tags', component: () => import('./views/admin/AdminTags.vue'), meta: { title: '标签管理' } },
       { path: 'site-info', name: 'admin-site-info', component: () => import('./views/admin/AdminSiteInfo.vue'), meta: { title: '站点信息' } },
+      { path: 'notifications', name: 'admin-notifications', component: () => import('./views/admin/AdminNotifications.vue'), meta: { title: '通知设置' } },
       { path: 'storage', name: 'admin-storage', component: () => import('./views/admin/AdminStorage.vue'), meta: { title: '存储管理' } },
       { path: 'settings', name: 'admin-settings', component: () => import('./views/admin/AdminSettings.vue'), meta: { title: '站点设置' } }
     ]

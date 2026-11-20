@@ -25,7 +25,9 @@ const sections = [
   { key: 'users', label: '用户管理', to: '/admin/users', icon: 'users' },
   { key: 'posts', label: '文章管理', to: '/admin/posts', icon: 'posts' },
   { key: 'comments', label: '评论管理', to: '/admin/comments', icon: 'comments' },
+  { key: 'tags', label: '标签管理', to: '/admin/tags', icon: 'tags' },
   { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site' },
+  { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications' },
   { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage' },
   { key: 'settings', label: '站点设置', to: '/admin/settings', icon: 'settings' }
 ]
@@ -64,6 +66,14 @@ const sectionTabs = {
     { key: 'music', label: '站点音乐' },
     { key: 'footer', label: '页脚与联系' }
   ],
+  tags: [
+    { key: 'all', label: '标签目录' }
+  ],
+  notifications: [
+    { key: 'all', label: '全部通知' },
+    { key: 'published', label: '已发布' },
+    { key: 'draft', label: '未发布' }
+  ],
   storage: [
     { key: 'local', label: '本地存储' },
     { key: 'online', label: '线上存储' }
@@ -83,7 +93,9 @@ const currentSection = computed(() => {
   if (path.startsWith('/admin/users')) return sections.find((s) => s.key === 'users')
   if (path.startsWith('/admin/posts')) return sections.find((s) => s.key === 'posts')
   if (path.startsWith('/admin/comments')) return sections.find((s) => s.key === 'comments')
+  if (path.startsWith('/admin/tags')) return sections.find((s) => s.key === 'tags')
   if (path.startsWith('/admin/site-info')) return sections.find((s) => s.key === 'site-info')
+  if (path.startsWith('/admin/notifications')) return sections.find((s) => s.key === 'notifications')
   if (path.startsWith('/admin/storage')) return sections.find((s) => s.key === 'storage')
   if (path.startsWith('/admin/settings')) return sections.find((s) => s.key === 'settings')
   return sections[0]
@@ -255,9 +267,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <circle cx="12" cy="12" r="9" />
               <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
             </svg>
+            <svg v-else-if="section.icon === 'tags'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
+              <path d="M20 13 13 20a2 2 0 0 1-2.8 0L4 13.8V4h9.8L20 10.2a2 2 0 0 1 0 2.8Z" />
+              <circle cx="8.5" cy="8.5" r="1.4" />
+            </svg>
             <svg v-else-if="section.icon === 'storage'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
               <ellipse cx="12" cy="6" rx="8" ry="3" />
               <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+            </svg>
+            <svg v-else-if="section.icon === 'notifications'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+              <path d="M10 21h4" />
             </svg>
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
               <circle cx="12" cy="12" r="3" />

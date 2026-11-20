@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import http from '../api'
 import { state, applyTheme, clearAuth, toast } from '../state'
-import { initialOf } from '../utils'
+import { formatDateTime, initialOf } from '../utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,6 +11,22 @@ const menuOpen = ref(false)
 const menuRef = ref(null)
 const logoFailed = ref(false)
 const showSiteLogo = computed(() => Boolean(state.site.logo) && !logoFailed.value)
+const notifOpen = ref(false)
+const notifRef = ref(null)
+const notifications = ref([])
+const notifLoading = ref(false)
+const unreadCount = ref(0)
+const searchOpen = ref(false)
+const searchRef = ref(null)
+const searchInput = ref(null)
+const searchQuery = ref('')
+const searchResults = ref([])
+const searchLoading = ref(false)
+let searchTimer = null
+let searchSeq = 0
+let notifTimer = null
+
+const seenNoticeId = () => Number(localStorage.getItem('blog_notice_seen') || 0)
 
 watch(() => state.site.logo, () => {
   logoFailed.value = false
@@ -30,14 +47,118 @@ function logout() {
   router.push('/')
 }
 
+async function loadNotifications() {
+  notifLoading.value = true
+  try {
+    notifications.value = (await http.get('/notifications', { params: { limit: 8 } })).data || []
+    const seen = seenNoticeId()
+    unreadCount.value = notifications.value.filter((n) => n.id > seen).length
+  } catch {
+    /* 通知失败不影响导航 */
+  } finally {
+    notifLoading.value = false
+  }
+}
+
+function markNotificationsSeen() {
+  const latest = notifications.value.reduce((max, n) => Math.max(max, n.id), 0)
+  if (latest) localStorage.setItem('blog_notice_seen', String(latest))
+  unreadCount.value = 0
+}
+
+function toggleNotifications() {
+  notifOpen.value = !notifOpen.value
+  searchOpen.value = false
+  if (notifOpen.value) {
+    menuOpen.value = false
+    loadNotifications()
+  } else {
+    markNotificationsSeen()
+  }
+}
+
+function toggleSearch() {
+  searchOpen.value = !searchOpen.value
+  notifOpen.value = false
+  menuOpen.value = false
+  if (searchOpen.value) {
+    nextTick(() => searchInput.value?.focus())
+  } else {
+    searchQuery.value = ''
+    searchResults.value = []
+  }
+}
+
+function closeSearch() {
+  searchOpen.value = false
+  searchQuery.value = ''
+  searchResults.value = []
+}
+
+async function runSearch(query) {
+  const seq = ++searchSeq
+  searchLoading.value = true
+  try {
+    const res = await http.get('/posts', { params: { keyword: query, size: 6, page: 1 } })
+    if (seq !== searchSeq || !searchOpen.value) return
+    searchResults.value = res.data.records || []
+  } catch {
+    if (seq === searchSeq) searchResults.value = []
+  } finally {
+    if (seq === searchSeq) searchLoading.value = false
+  }
+}
+
+watch(searchQuery, (value) => {
+  clearTimeout(searchTimer)
+  const q = value.trim()
+  if (!q) {
+    searchResults.value = []
+    searchLoading.value = false
+    return
+  }
+  searchTimer = setTimeout(() => runSearch(q), 260)
+})
+
+function submitSearch() {
+  const q = searchQuery.value.trim()
+  if (!q) return
+  if (searchResults.value.length) {
+    goSearchResult(searchResults.value[0])
+    return
+  }
+  router.push({ path: '/', query: { keyword: q } })
+  closeSearch()
+}
+
+function goSearchResult(post) {
+  router.push(`/post/${post.id}`)
+  closeSearch()
+}
+
 function onDocumentClick(e) {
   if (menuRef.value && !menuRef.value.contains(e.target)) {
     menuOpen.value = false
   }
+  if (notifRef.value && !notifRef.value.contains(e.target)) {
+    if (notifOpen.value) markNotificationsSeen()
+    notifOpen.value = false
+  }
+  if (searchRef.value && !searchRef.value.contains(e.target)) {
+    searchOpen.value = false
+  }
 }
 
-onMounted(() => document.addEventListener('click', onDocumentClick))
-onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+  loadNotifications()
+  notifTimer = setInterval(loadNotifications, 60000)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocumentClick)
+  clearTimeout(searchTimer)
+  clearInterval(notifTimer)
+})
 </script>
 
 <template>
@@ -75,6 +196,73 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       </nav>
 
       <div class="nav-right">
+        <div ref="searchRef" class="nav-search-wrap" :class="{ open: searchOpen }">
+          <div class="nav-search-field" :class="{ visible: searchOpen }">
+            <input
+              ref="searchInput"
+              v-model="searchQuery"
+              type="search"
+              placeholder="搜索文章、摘要或标签…"
+              aria-label="站内搜索"
+              @keyup.enter="submitSearch"
+              @keyup.esc="closeSearch"
+            />
+            <button v-if="searchQuery" class="nav-search-clear" type="button" aria-label="清空搜索" @click="searchQuery = ''">×</button>
+          </div>
+          <button class="icon-btn nav-search-toggle" type="button" :title="searchOpen ? '收起搜索' : '搜索'" @click.stop="toggleSearch">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-4-4" />
+            </svg>
+          </button>
+          <div v-if="searchOpen && searchQuery.trim()" class="nav-search-drop" @click.stop>
+            <div v-if="searchLoading" class="nav-drop-empty">正在搜索…</div>
+            <button
+              v-for="post in searchResults"
+              v-else
+              :key="post.id"
+              class="nav-search-item"
+              type="button"
+              @click="goSearchResult(post)"
+            >
+              <strong>{{ post.title }}</strong>
+              <span>{{ post.summary || '暂无摘要' }}</span>
+              <em v-if="post.tags">{{ post.tags }}</em>
+            </button>
+            <div v-if="!searchLoading && !searchResults.length" class="nav-drop-empty">没有找到相关内容</div>
+            <button v-if="searchResults.length" class="nav-search-all" type="button" @click="submitSearch">查看全部搜索结果 →</button>
+          </div>
+        </div>
+
+        <div ref="notifRef" class="notif-wrap">
+          <button class="icon-btn notif-toggle" type="button" :title="notifOpen ? '收起通知' : '通知'" @click.stop="toggleNotifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+              <path d="M10 21h4" />
+            </svg>
+            <span v-if="unreadCount" class="notif-dot">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+          </button>
+          <div v-if="notifOpen" class="notif-menu" @click.stop>
+            <div class="notif-head">
+              <strong>通知</strong>
+              <button type="button" class="btn-text" @click="loadNotifications">刷新</button>
+            </div>
+            <div v-if="notifLoading" class="nav-drop-empty">正在读取通知…</div>
+            <div v-else-if="!notifications.length" class="nav-drop-empty">暂时没有新通知</div>
+            <div v-else class="notif-list">
+              <article v-for="item in notifications" :key="item.id" class="notif-item" :class="`is-${String(item.type).toLowerCase()}`">
+                <div class="notif-item-head">
+                  <span class="notif-type">{{ item.type === 'UPDATE' ? '更新' : item.type === 'SYSTEM' ? '系统' : '通知' }}</span>
+                  <span v-if="item.pinned" class="notif-pin">置顶</span>
+                  <time>{{ formatDateTime(item.createdAt) }}</time>
+                </div>
+                <strong>{{ item.title }}</strong>
+                <p>{{ item.content }}</p>
+              </article>
+            </div>
+          </div>
+        </div>
+
         <button
           class="icon-btn"
           type="button"

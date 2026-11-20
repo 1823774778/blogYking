@@ -16,7 +16,7 @@ const posts = ref([])
 const total = ref(0)
 const page = ref(1)
 const size = 9
-const keyword = ref('')
+const keyword = ref(route.query.keyword ? String(route.query.keyword) : '')
 const activeTag = ref(route.query.tag ? String(route.query.tag) : '')
 const sort = ref('latest')
 const loading = ref(false)
@@ -65,9 +65,10 @@ async function loadSide() {
 
 function search() {
   page.value = 1
-  if (activeTag.value) {
-    router.replace({ path: '/', query: { tag: activeTag.value } })
-  }
+  const query = {}
+  if (activeTag.value) query.tag = activeTag.value
+  if (keyword.value.trim()) query.keyword = keyword.value.trim()
+  router.replace({ path: '/', query })
   load()
 }
 
@@ -102,6 +103,18 @@ function changePage(p) {
   load()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
+
+watch(
+  () => route.query.keyword,
+  (value) => {
+    const next = value ? String(value) : ''
+    if (next !== keyword.value) {
+      keyword.value = next
+      page.value = 1
+      load()
+    }
+  }
+)
 
 watch(
   () => route.query.tag,

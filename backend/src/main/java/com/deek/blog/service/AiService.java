@@ -42,6 +42,9 @@ public class AiService {
         data.put("baseUrl", config.getOrDefault("aiBaseUrl", ""));
         data.put("model", config.getOrDefault("aiModel", ""));
         data.put("apiKeySet", !config.getOrDefault("aiApiKey", "").isBlank());
+        data.put("articleEnabled", Boolean.parseBoolean(config.getOrDefault("aiArticleEnabled", "true")));
+        data.put("commentEnabled", Boolean.parseBoolean(config.getOrDefault("aiCommentEnabled", "true")));
+        data.put("summaryEnabled", Boolean.parseBoolean(config.getOrDefault("aiSummaryEnabled", "true")));
         return data;
     }
 
@@ -78,7 +81,13 @@ public class AiService {
     }
 
     public String summarize(String title, String content) {
+        return summarize(title, content, null);
+    }
+
+    public String summarize(String title, String content, String customPrompt) {
         Map<String, String> config = requireConfig();
+        requireFeature(config, "aiSummaryEnabled", "AI 摘要");
+        String prompt = resolvePrompt(config, "aiSummaryPrompt", customPrompt);
         String model = config.getOrDefault("aiModel", "").trim();
         if (model.isBlank()) {
             throw new BizException("请先填写 AI 模型名称");
@@ -94,8 +103,7 @@ public class AiService {
         body.put("temperature", 0.3);
         body.put("max_tokens", 240);
         body.put("messages", List.of(
-                Map.of("role", "system", "content",
-                        "你是中文博客编辑。根据标题和正文写一段 60-120 字的中文摘要，只输出摘要正文，不要加引号或前后缀。"),
+                Map.of("role", "system", "content", prompt),
                 Map.of("role", "user", "content",
                         "标题：" + (title == null ? "" : title) + "\n\n正文：\n" + source)
         ));
@@ -150,10 +158,18 @@ public class AiService {
 
     /** 使用 AI 生成一篇可继续编辑的文章草稿。 */
     public Map<String, Object> generateArticle(String topic, String outline, String tone, String length) {
+        return generateArticle(topic, outline, tone, length, null);
+    }
+
+    public Map<String, Object> generateArticle(String topic, String outline, String tone, String length,
+                                                String customPrompt) {
         String t = topic == null ? "" : topic.trim();
         if (t.isBlank()) {
             throw new BizException("请先填写文章主题");
         }
+        Map<String, String> config = requireConfig();
+        requireFeature(config, "aiArticleEnabled", "AI 文章");
+        String systemPrompt = resolvePrompt(config, "aiArticleGeneratePrompt", customPrompt);
         String lengthHint = switch (length == null ? "" : length) {
             case "short" -> "600-900 字";
             case "long" -> "2000-3000 字";
@@ -180,7 +196,7 @@ public class AiService {
                 }
                 """.formatted(t, toneHint, lengthHint, outline == null ? "无" : outline.trim());
         String raw = chat(List.of(
-                Map.of("role", "system", "content", "你是中文博客作者，擅长写结构清晰、可读性强的技术或生活文章。"),
+                Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", prompt)
         ), 3000, 0.65);
         JsonNode json = parseJsonObject(raw);
@@ -211,8 +227,15 @@ public class AiService {
 
     /** 审核文章：返回评分、结论、问题与修改建议。 */
     public Map<String, Object> reviewArticle(String title, String content) {
+        return reviewArticle(title, content, null);
+    }
+
+    public Map<String, Object> reviewArticle(String title, String content, String customPrompt) {
         String source = content == null ? "" : content;
         if (source.length() > 12000) source = source.substring(0, 12000);
+        Map<String, String> config = requireConfig();
+        requireFeature(config, "aiArticleEnabled", "AI 文章");
+        String systemPrompt = resolvePrompt(config, "aiArticleReviewPrompt", customPrompt);
         String prompt = """
                 请审核下面这篇中文博客文章，重点检查：标题与正文是否一致、结构是否清晰、事实/代码风险、
                 表达是否啰嗦、是否有敏感或不适合公开发布的内容。输出严格 JSON，不要代码围栏：
@@ -229,7 +252,7 @@ public class AiService {
                 %s
                 """.formatted(title == null ? "" : title, source);
         String raw = chat(List.of(
-                Map.of("role", "system", "content", "你是严格但友善的中文博客编辑，审核意见要具体、可执行。"),
+                Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", prompt)
         ), 900, 0.2);
         JsonNode json = parseJsonObject(raw);
@@ -247,8 +270,15 @@ public class AiService {
 
     /** 审核评论：给出通过、人工复核或拒绝建议。 */
     public Map<String, Object> reviewComment(String postTitle, String content) {
+        return reviewComment(postTitle, content, null);
+    }
+
+    public Map<String, Object> reviewComment(String postTitle, String content, String customPrompt) {
         String text = content == null ? "" : content.trim();
         if (text.isBlank()) throw new BizException("评论内容为空");
+        Map<String, String> config = requireConfig();
+        requireFeature(config, "aiCommentEnabled", "AI 评论");
+        String systemPrompt = resolvePrompt(config, "aiCommentReviewPrompt", customPrompt);
         String prompt = """
                 请审核下面这条博客评论，判断是否适合公开展示。输出严格 JSON，不要代码围栏：
                 {
@@ -261,7 +291,7 @@ public class AiService {
                 评论：%s
                 """.formatted(postTitle == null ? "" : postTitle, text);
         String raw = chat(List.of(
-                Map.of("role", "system", "content", "你是中文博客评论审核员，只处理广告、攻击、隐私泄露、违法和明显离题内容，不因观点不同而拒绝。"),
+                Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", prompt)
         ), 400, 0.1);
         JsonNode json = parseJsonObject(raw);
@@ -275,9 +305,16 @@ public class AiService {
 
     /** 汇总一篇文章下的评论。 */
     public String summarizeComments(String postTitle, List<String> comments) {
+        return summarizeComments(postTitle, comments, null);
+    }
+
+    public String summarizeComments(String postTitle, List<String> comments, String customPrompt) {
         if (comments == null || comments.isEmpty()) {
             throw new BizException("这篇文章还没有可总结的评论");
         }
+        Map<String, String> config = requireConfig();
+        requireFeature(config, "aiCommentEnabled", "AI 评论");
+        String systemPrompt = resolvePrompt(config, "aiCommentSummaryPrompt", customPrompt);
         String joined = String.join("\n---\n", comments);
         if (joined.length() > 10000) joined = joined.substring(0, 10000);
         String prompt = """
@@ -288,7 +325,7 @@ public class AiService {
                 %s
                 """.formatted(postTitle == null ? "" : postTitle, joined);
         String raw = chat(List.of(
-                Map.of("role", "system", "content", "你是中文社区编辑，总结要克制、客观、不臆造评论中没有的信息。"),
+                Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", prompt)
         ), 500, 0.25);
         return raw.trim();
@@ -361,6 +398,34 @@ public class AiService {
         } catch (Exception e) {
             throw new BizException("AI 返回内容不是有效 JSON");
         }
+    }
+
+    public Map<String, String> defaultPrompts() {
+        Map<String, String> defaults = siteConfigService.defaults();
+        Map<String, String> prompts = new LinkedHashMap<>();
+        defaults.forEach((key, value) -> {
+            if (key.startsWith("ai") && key.endsWith("Prompt")) {
+                prompts.put(key, value);
+            }
+        });
+        return prompts;
+    }
+
+    private void requireFeature(Map<String, String> config, String key, String label) {
+        if (!Boolean.parseBoolean(config.getOrDefault(key, "true"))) {
+            throw new BizException(label + "功能未开启，请先在站点设置的 AI 能力中打开");
+        }
+    }
+
+    private String resolvePrompt(Map<String, String> config, String key, String customPrompt) {
+        String prompt = customPrompt == null ? "" : customPrompt.trim();
+        if (prompt.isBlank()) {
+            prompt = config.getOrDefault(key, "").trim();
+        }
+        if (prompt.isBlank()) {
+            throw new BizException("请先填写提示词");
+        }
+        return prompt.length() > 4000 ? prompt.substring(0, 4000) : prompt;
     }
 
     private Map<String, String> requireConfig() {
