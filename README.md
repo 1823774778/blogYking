@@ -1,6 +1,6 @@
 # 墨记 · 前后端分离个人博客
 
-一个可以直接 `java -jar` 跑起来的个人博客：Java 17+ / Spring Boot 4 + Vue 3，前端构建产物打进后端 jar，单文件部署。视觉采用 [Firefly](https://github.com/CuteLeaf/Firefly) 风格的薄荷绿主题：悬浮圆角导航、横幅壁纸、三栏首页、圆角半透明卡片。
+一个可以直接 `java -jar` 跑起来的个人博客：Java 17+ / Spring Boot 4 + Vue 3，前端构建产物打进后端 jar，单文件部署。视觉采用类似 Halo 的简约默认主题：留白、细边框、清晰文章流与单一墨绿强调色；支持浅色、深色与跟随系统三种外观。
 
 首次启动不再内置默认账号：打开站点会进入**初始化向导**，由你自己设置管理员账号，并按需填写 MySQL、Redis 连接信息。
 
@@ -45,29 +45,24 @@
 - 在线更新：从 GitHub Release 下载 `blog.jar`，校验启动类、配置与 SHA-256 后写入待更新区
 - 本地上传保留为弹窗，可与在线更新并行使用
 - 运行状态：`/api/system/health`（数据库产品名、Redis 状态）
-- SMTP 页只保留配置入口；弹窗内左侧编辑三套 HTML 邮件模板、右侧实时预览，测试邮件也在弹窗内发送
+- SMTP 页直接提供三套 HTML 邮件模板编辑与右侧实时预览；发信配置与测试邮件收进右上角「配置邮箱」弹窗
 - 仪表盘互动通知：点赞、收藏、评论、版本更新自动汇总，支持未读计数与全部已读
 - 存储管理：本地文件按类型分类保存，列表显示上传人 / 文件类型并支持搜索；线上支持 S3 兼容、WebDAV 与 OpenList，切换线上后不显示本地文件
 
 **主题**
-- Firefly 风格：薄荷绿主色、悬浮玻璃导航、大幅横幅壁纸
-- 三栏首页：左侧个人资料卡 / 中间文章流 / 右侧热门、统计、站点信息
-- 圆角半透明卡片、图片右置文章卡、标签胶囊；文章详情为 hero 大图 + 白色正文卡
-- 移动端底部浮动 dock，桌面与移动端均支持亮 / 暗主题
+- 默认主题：类似 Halo 的简约内容站，留白充足、细边框卡片、单列文章流 + 右侧信息栏
+- 顶部导航与后台统一为单一墨绿强调色，不使用横幅壁纸或玻璃拟态
+- 外观菜单提供「浅色 / 深色 / 系统」三种选项，系统选项会跟随操作系统自动切换
+- 文章详情为简洁标题区 + 白色正文卡；移动端保留底部 dock
 
 ## 主题说明
 
-视觉机制参考 [CuteLeaf/Firefly](https://github.com/CuteLeaf/Firefly)（MIT），但**没有引入 Astro 构建链**：这里是把它的设计语言在现有 Vue 3 组件里原生实现，后端接口与数据库结构完全不变。
-
-- 主题覆盖层：`frontend/src/firefly.css`，在 `main.js` 中于 `style.css` 之后引入，统一控制主题变量、导航、横幅、三栏、卡片、详情页与移动端 dock。
-- 主要改造组件：`views/Home.vue`、`views/PostDetail.vue`、`views/About.vue`、`components/PostCard.vue`、`components/NavBar.vue`、`App.vue`。
-- 原创插画素材：`frontend/src/assets/firefly-hero.webp`、`avatar-firefly.webp`、`cover-desk.webp`、`cover-key.webp`、`cover-night.webp`。均为 AI 生成的原创图，不包含 Firefly 仓库内的素材。
-- 换图：直接替换以上同名文件（建议 WebP，横幅约 1920×900），或改 `firefly.css` 中 `.ff-hero` 的 `background-image`。
-- 改主色：调整 `firefly.css` 顶部的 `--ff-primary`、`--ff-primary-deep` 与 `--accent`；深色模式在 `[data-theme="dark"]` 块中单独覆盖。
+- 主题覆盖层：`frontend/src/theme.css`，在 `main.js` 中于 `style.css` 之后引入，统一控制颜色、导航、首页、文章卡片、详情页与移动端布局。
+- 主要页面组件：`views/Home.vue`、`views/PostDetail.vue`、`views/About.vue`、`components/PostCard.vue`、`components/NavBar.vue`、`components/ThemeMenu.vue`、`App.vue`。
+- 首页排序固定为：站点简介与搜索 → 最新 / 热门筛选 → 文章流 → 右侧「关于、标签、热门文章、站点统计」。
+- 改主色：调整 `theme.css` 顶部的 `--accent`、`--accent-ink` 与 `--accent-soft`；深色模式在 `[data-theme="dark"]` 块中单独覆盖。
 - 文章封面兜底：未设置封面时按标签匹配 `cover-key`（Java / Spring / 安全）、`cover-night`（生活 / 思考 / 夜）、`cover-desk`（写作 / 随笔 / 建站）。
-- 移动端资料卡、文章卡、详情卡与底部 dock 的断点在 920px / 640px，可在 `firefly.css` 末尾的媒体查询中调整。
-
-主题作者署名已显示在首页右侧「站点信息」中，可在后台站点配置或直接改 `Home.vue` 中对应文案。
+- 响应式断点在 1180px / 920px / 760px，可在 `theme.css` 末尾的媒体查询中调整。
 
 ## 技术栈
 
@@ -112,7 +107,7 @@ personal-blog/
     ├── package.json
     ├── vite.config.js
     └── src/
-        ├── firefly.css      # Firefly 风格主题覆盖层（在 style.css 之后引入）
+        ├── theme.css        # 默认简约主题与外观变量（在 style.css 之后引入）
         ├── assets/          # 横幅、头像、文章封面等原创 WebP 素材
         └── views/           # 页面、组件、样式（含 views/Setup.vue）
 ```
@@ -483,11 +478,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.8.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.9.0.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.8.0 blog.jar release-notes/1.8.0.md
+  bash scripts/release-github.sh v1.9.0 blog.jar release-notes/1.9.0.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。

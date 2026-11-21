@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
 import './style.css'
-import './firefly.css'
+import './theme.css'
 import './admin.css'
 import './tailwind.css'
 

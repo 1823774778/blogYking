@@ -12,8 +12,8 @@ const otaApplying = ref(false)
 const releases = ref(null)
 const releasesLoading = ref(false)
 const cacheClearing = ref(false)
-const latestExpanded = ref(false)
-const expandedRelease = ref('')
+const latestExpanded = ref(true)
+const historyOpen = ref(false)
 const downloadJob = ref(null)
 const downloadStarting = ref(false)
 const config = ref({})
@@ -45,7 +45,7 @@ const pendingIsRollback = computed(() => {
 const primaryLabel = computed(() => {
   if (otaApplying.value) return '正在安装…'
   if (downloadStarting.value) return '开始下载…'
-  if (jobRunning.value) return `下载 ${downloadPercent.value}%`
+  if (jobRunning.value) return ''
   if (ota.value?.pending) return `安装 v${ota.value.pending.version}`
   if (releasesLoading.value && !releases.value) return '检查中…'
   if (releases.value?.updateAvailable) return '下载安装'
@@ -107,10 +107,6 @@ function refreshAll() {
 
 function toggleLatestContent() {
   latestExpanded.value = !latestExpanded.value
-}
-
-function toggleRelease(tag) {
-  expandedRelease.value = expandedRelease.value === tag ? '' : tag
 }
 
 async function primaryAction() {
@@ -410,10 +406,6 @@ function openProxy() {
   proxyOpen.value = true
 }
 
-function useDefaultProxy() {
-  proxyInput.value = 'https://ghfast.top/'
-}
-
 function normalizeProxyInput(raw) {
   const trimmed = String(raw || '').trim()
   if (!trimmed) return ''
@@ -520,15 +512,20 @@ onBeforeUnmount(() => {
           代理前缀
           <i v-if="proxyConfigured" class="ota-proxy-dot" aria-hidden="true"></i>
         </button>
+        <button class="btn btn-ghost btn-sm" type="button" @click="historyOpen = true">
+          历史版本
+          <span v-if="releases?.history?.length" class="ota-history-count">{{ releases.history.length }}</span>
+        </button>
         <button
           class="btn ota-primary-action"
-          :class="{ 'is-downloading': jobRunning, 'is-idle': !releases?.updateAvailable && !ota?.pending }"
+          :class="{ 'is-downloading': jobRunning || downloadStarting, 'is-idle': !releases?.updateAvailable && !ota?.pending }"
           type="button"
           :disabled="primaryDisabled"
+          :aria-label="jobRunning ? `正在下载 ${downloadPercent}%` : (downloadStarting ? '正在准备下载' : primaryLabel)"
           @click="primaryAction"
         >
-          <span v-if="jobRunning" class="ota-btn-progress" :style="{ width: `${downloadPercent}%` }" aria-hidden="true"></span>
-          <span class="ota-btn-label">{{ primaryLabel }}</span>
+          <span v-if="jobRunning || downloadStarting" class="ota-btn-progress" :style="{ width: `${downloadPercent}%` }" aria-hidden="true"></span>
+          <span v-if="!jobRunning && !downloadStarting" class="ota-btn-label">{{ primaryLabel }}</span>
         </button>
       </div>
     </div>
@@ -585,37 +582,40 @@ onBeforeUnmount(() => {
 
     <div v-if="otaApplying" class="ota-restarting"><span class="ota-spinner"></span><div><strong>正在安装并重启服务</strong><span>页面会自动重连并核对新版本，通常需要 10–40 秒。</span></div></div>
 
-    <section v-if="ota?.lastUpdate?.status" class="panel ota-last-panel">
-      <div class="section-title">上次更新</div>
-      <div class="ota-last" :class="String(ota.lastUpdate.status).toLowerCase()">
-        <span class="badge" :class="ota.lastUpdate.status === 'SUCCESS' ? 'on' : 'warn'">{{ ota.lastUpdate.status === 'SUCCESS' ? '成功' : ota.lastUpdate.status === 'ROLLED_BACK' ? '已回滚' : ota.lastUpdate.status }}</span>
-        <div>{{ ota.lastUpdate.message || '—' }}</div>
-        <div class="meta">{{ ota.lastUpdate.updatedAt || '' }}</div>
-      </div>
-    </section>
-
-    <section class="panel ota-release-history">
-      <div class="ota-release-history-head">
-        <span class="section-title">历史版本</span>
-        <span class="meta" v-if="releases">{{ releases.history?.length || 0 }} 个更早的发布</span>
-        <span class="meta" v-if="releases?.cached">缓存于 {{ formatDateTime(releases.fetchedAt) }}</span>
-      </div>
-      <div v-for="release in releases?.history || []" :key="release.tag" class="ota-release-row">
-        <button class="ota-release-row-head" type="button" :aria-expanded="expandedRelease === release.tag" @click="toggleRelease(release.tag)">
-          <span class="ota-release-row-title"><b>v{{ release.version }}</b><span>{{ release.name }}</span><span v-if="release.prerelease" class="badge warn">预发布</span></span>
-          <span class="ota-release-row-date">{{ formatDateTime(release.publishedAt) }}</span>
-          <span class="ota-release-chevron">{{ expandedRelease === release.tag ? '收起' : '更新内容' }}</span>
-        </button>
-        <div v-if="expandedRelease === release.tag" class="ota-release-expanded">
-          <div v-if="release.body" class="ota-release-body"><MarkdownBody :content="release.body" /></div>
-          <p v-else class="meta">这个版本没有填写更新内容。</p>
-          <div class="ota-release-row-actions">
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="jobRunning || otaApplying || !release.jarAsset" @click="openRollback(release)">回档到此版本</button>
+    <div v-if="historyOpen" class="adm-modal-wrap" @click.self="historyOpen = false">
+      <div class="adm-modal ota-history-modal">
+        <div class="adm-modal-head">
+          <div>
+            <span class="adm-card-kicker">RELEASE HISTORY</span>
+            <h2>历史版本</h2>
+            <p class="meta">
+              {{ releases?.history?.length || 0 }} 个更早的发布
+              <span v-if="releases?.cached"> · 缓存于 {{ formatDateTime(releases.fetchedAt) }}</span>
+            </p>
           </div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="historyOpen = false">×</button>
+        </div>
+        <div v-if="releases?.history?.length" class="ota-history-list">
+          <details v-for="release in releases.history" :key="release.tag" class="ota-history-item">
+            <summary>
+              <span class="ota-history-version">v{{ release.version }}</span>
+              <span class="ota-history-name">{{ release.name }}</span>
+              <span v-if="release.prerelease" class="badge warn">预发布</span>
+              <time>{{ formatDateTime(release.publishedAt) }}</time>
+            </summary>
+            <div class="ota-history-body">
+              <div v-if="release.body" class="ota-release-body"><MarkdownBody :content="release.body" /></div>
+              <p v-else class="meta">这个版本没有填写更新内容。</p>
+              <button class="btn btn-ghost btn-sm" type="button" :disabled="jobRunning || otaApplying || !release.jarAsset" @click="openRollback(release)">回档到此版本</button>
+            </div>
+          </details>
+        </div>
+        <p v-else class="meta ota-release-history-empty">暂无更早的历史发布。</p>
+        <div class="adm-modal-actions">
+          <button class="btn btn-ghost" type="button" @click="historyOpen = false">关闭</button>
         </div>
       </div>
-      <p v-if="!releases?.history?.length" class="meta ota-release-history-empty">暂无更早的历史发布。</p>
-    </section>
+    </div>
 
     <div v-if="localOpen" class="adm-modal-wrap" @click.self="!localUploading && (localOpen = false)">
       <div class="adm-modal ota-local-modal">
@@ -675,12 +675,8 @@ onBeforeUnmount(() => {
         </div>
         <div class="field">
           <label for="otaProxyPrefix">代理域名或前缀</label>
-          <input id="otaProxyPrefix" v-model="proxyInput" type="text" maxlength="500" placeholder="https://ghfast.top/" autocomplete="off" />
-          <p class="meta">留空为直连；输入域名会自动补全为 https://，并补齐末尾斜杠。默认代理前缀：<code>https://ghfast.top/</code></p>
-        </div>
-        <div class="ota-proxy-presets">
-          <button class="btn-text" type="button" @click="useDefaultProxy">填入默认 ghfast</button>
-          <button class="btn-text" type="button" @click="proxyInput = ''">切换为直连</button>
+          <input id="otaProxyPrefix" v-model="proxyInput" type="text" maxlength="500" placeholder="可选，例如 https://your-proxy.example/" autocomplete="off" />
+          <p class="meta">留空即直连；填写后会加速 GitHub Release 下载。输入域名会自动补全 https:// 与末尾斜杠。</p>
         </div>
         <div class="adm-modal-actions">
           <button class="btn btn-ghost" type="button" @click="proxyOpen = false">取消</button>

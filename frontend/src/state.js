@@ -8,7 +8,11 @@ function readUser() {
   }
 }
 
-const savedTheme = localStorage.getItem('blog_theme') || 'light'
+const savedThemeRaw = localStorage.getItem('blog_theme')
+const savedTheme = ['light', 'dark', 'system'].includes(savedThemeRaw) ? savedThemeRaw : 'system'
+const systemTheme = typeof window !== 'undefined' && window.matchMedia
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null
 
 export const state = reactive({
   token: localStorage.getItem('blog_token') || '',
@@ -30,7 +34,8 @@ export const state = reactive({
     musicTitle: '',
     commentReview: 'false'
   },
-  theme: savedTheme,
+  theme: savedTheme === 'system' ? (systemTheme?.matches ? 'dark' : 'light') : savedTheme,
+  themePreference: savedTheme,
   setupRequired: null,
   toasts: []
 })
@@ -57,10 +62,28 @@ export function clearAuth() {
   localStorage.removeItem('blog_user')
 }
 
-export function applyTheme(theme) {
-  state.theme = theme
-  document.documentElement.setAttribute('data-theme', theme)
-  localStorage.setItem('blog_theme', theme)
+export function resolvedTheme(preference) {
+  if (preference === 'system') return systemTheme?.matches ? 'dark' : 'light'
+  return preference === 'dark' ? 'dark' : 'light'
+}
+
+export function applyTheme(preference) {
+  const next = ['light', 'dark', 'system'].includes(preference) ? preference : 'system'
+  state.themePreference = next
+  state.theme = resolvedTheme(next)
+  document.documentElement.setAttribute('data-theme', state.theme)
+  document.documentElement.setAttribute('data-theme-preference', next)
+  localStorage.setItem('blog_theme', next)
+}
+
+if (systemTheme) {
+  const syncSystemTheme = () => {
+    if (state.themePreference !== 'system') return
+    state.theme = resolvedTheme('system')
+    document.documentElement.setAttribute('data-theme', state.theme)
+  }
+  if (systemTheme.addEventListener) systemTheme.addEventListener('change', syncSystemTheme)
+  else systemTheme.addListener?.(syncSystemTheme)
 }
 
 let toastTimer = null

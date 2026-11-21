@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import http from '../../api'
 import { toast } from '../../state'
-import { formatDateTime } from '../../utils'
 import OtaPanel from '../../components/admin/OtaPanel.vue'
 
 const route = useRoute()
@@ -17,6 +16,7 @@ const testingMail = ref(false)
 const testingAi = ref(false)
 const mailTo = ref('')
 const smtpDraft = ref({})
+const smtpDraftReady = ref(false)
 const mailTemplateDefaults = ref({})
 const templateKind = ref('registration')
 const htmlEditor = ref(null)
@@ -180,7 +180,7 @@ async function loadMailTemplateDefaults() {
   }
 }
 
-async function openSmtp() {
+async function buildSmtpDraft() {
   await loadMailTemplateDefaults()
   const draft = {}
   for (const key of smtpKeys) {
@@ -191,6 +191,16 @@ async function openSmtp() {
     if (!draft[item.htmlKey]) draft[item.htmlKey] = mailTemplateDefaults.value[item.htmlKey] || ''
   }
   smtpDraft.value = draft
+  smtpDraftReady.value = true
+}
+
+async function ensureSmtpDraft() {
+  if (!smtpDraftReady.value) await buildSmtpDraft()
+  return smtpDraft.value
+}
+
+async function openSmtp() {
+  await ensureSmtpDraft()
   templateKind.value = 'registration'
   mailTo.value = ''
   smtpOpen.value = true
@@ -240,6 +250,19 @@ async function persistSmtpDraft() {
   const res = await http.put('/admin/config', smtpPayload())
   config.value = { ...config.value, ...res.data }
   return res.data
+}
+
+async function saveSmtpTemplates() {
+  savingSmtp.value = true
+  try {
+    await ensureSmtpDraft()
+    await persistSmtpDraft()
+    toast('邮件模板已保存并生效')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    savingSmtp.value = false
+  }
 }
 
 async function saveSmtp() {
@@ -498,6 +521,7 @@ function formatBytes(bytes) {
 
 onMounted(async () => {
   await Promise.all([loadConfig(), loadAiStatus(), loadRuntime(), loadMailTemplateDefaults()])
+  await ensureSmtpDraft()
 })
 </script>
 
@@ -507,39 +531,82 @@ onMounted(async () => {
 
     <template v-else>
       <div v-if="activeTab === 'smtp'" class="smtp-stage">
-        <section class="adm-card smtp-hero-card">
-          <div class="smtp-hero-art" aria-hidden="true">
-            <div class="smtp-orbit orbit-one"></div>
-            <div class="smtp-orbit orbit-two"></div>
-            <div class="smtp-envelope">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="3" y="5" width="18" height="14" rx="2.5" />
-                <path d="m4 7 8 6 8-6" />
-              </svg>
-            </div>
-            <span class="smtp-signal">SMTP</span>
+        <header class="smtp-page-head">
+          <div class="smtp-page-title">
+            <span class="adm-card-kicker">MAIL STUDIO</span>
+            <h1>邮件</h1>
+            <p>编辑验证码与找回密码邮件，右侧同步预览最终收件效果。发信连接通过右上角单独配置。</p>
           </div>
-          <div class="smtp-hero-copy">
-            <span class="adm-card-kicker">MAIL DELIVERY</span>
-            <h2>邮件发送</h2>
-            <p>连接配置、HTML 邮件模板与测试邮件，都收进一个配置入口。页面不再展示主机、账号等敏感细节。</p>
-            <div class="smtp-hero-tags flex flex-wrap gap-2">
-              <span>可视化编辑</span>
-              <span>实时预览</span>
-              <span>保存后生效</span>
-            </div>
-          </div>
-          <div class="smtp-hero-action">
+          <div class="smtp-page-actions">
             <span class="adm-status" :class="boolValue(config.smtpEnabled) ? 'is-published' : 'is-draft'">
-              {{ boolValue(config.smtpEnabled) ? '邮件服务已启用' : '邮件服务未启用' }}
+              {{ boolValue(config.smtpEnabled) ? 'SMTP 已启用' : 'SMTP 未启用' }}
             </span>
             <button class="btn" type="button" @click="openSmtp">配置邮箱</button>
           </div>
-        </section>
-        <div class="smtp-caption">
-          <span>邮件用于注册验证与密码找回</span>
-          <span class="smtp-caption-line"></span>
-          <span>所有修改只有点击“保存设置”后才会生效</span>
+        </header>
+
+        <div class="mail-studio smtp-page-studio">
+          <section class="mail-edit-pane">
+            <div class="mail-pane-head">
+              <div>
+                <span class="adm-card-kicker">EDITOR</span>
+                <h3>邮件模板</h3>
+              </div>
+              <button class="btn-text" type="button" @click="resetCurrentTemplate">恢复默认</button>
+            </div>
+            <div class="mail-template-tabs" role="tablist" aria-label="邮件模板类型">
+              <button
+                v-for="item in mailTemplateKinds"
+                :key="item.key"
+                type="button"
+                :class="{ on: templateKind === item.key }"
+                @click="templateKind = item.key"
+              >{{ item.label }}</button>
+            </div>
+            <div class="field">
+              <label :for="`page-subject-${templateKind}`">邮件主题</label>
+              <input :id="`page-subject-${templateKind}`" v-model="smtpDraft[currentTemplate.subjectKey]" type="text" placeholder="邮件主题" />
+            </div>
+            <div class="mail-editor-toolbar">
+              <span>插入变量</span>
+              <button v-for="name in templatePlaceholders" :key="name" type="button" @click="insertPlaceholder(name)">{{ name }}</button>
+            </div>
+            <div class="field mail-html-field">
+              <label :for="`page-html-${templateKind}`">HTML 源码</label>
+              <textarea
+                :id="`page-html-${templateKind}`"
+                ref="htmlEditor"
+                v-model="smtpDraft[currentTemplate.htmlKey]"
+                spellcheck="false"
+                placeholder="在这里编辑 HTML 邮件模板"
+              ></textarea>
+            </div>
+          </section>
+
+          <section class="mail-preview-pane">
+            <div class="mail-pane-head">
+              <div>
+                <span class="adm-card-kicker">LIVE PREVIEW</span>
+                <h3>实时预览</h3>
+              </div>
+              <span class="mail-preview-badge">示例数据</span>
+            </div>
+            <div class="mail-preview-subject">
+              <span>主题</span>
+              <strong>{{ previewSubject || '未填写主题' }}</strong>
+            </div>
+            <div class="mail-preview-frame">
+              <iframe :srcdoc="previewHtml" title="邮件模板预览" sandbox=""></iframe>
+            </div>
+            <p class="mail-preview-note">预览使用示例变量；实际发送时会替换为站点名、验证码或重置链接。</p>
+          </section>
+        </div>
+
+        <div class="smtp-page-save">
+          <span class="meta">修改先保存在页面草稿中，点击保存后才会生效。</span>
+          <button class="btn" type="button" :disabled="savingSmtp" @click="saveSmtpTemplates">
+            {{ savingSmtp ? '保存中…' : '保存邮件模板' }}
+          </button>
         </div>
       </div>
 
@@ -686,23 +753,14 @@ onMounted(async () => {
         </section>
         <aside class="adm-side-stack">
           <section class="adm-card">
-            <div class="adm-card-head"><div><span class="adm-card-kicker">VERSION</span><h2>版本与进程</h2></div></div>
+            <div class="adm-card-head"><div><span class="adm-card-kicker">SYSTEM</span><h2>运行信息</h2></div></div>
             <dl class="adm-facts">
               <div><dt>版本</dt><dd>{{ version?.version || '—' }} <button class="btn-text" type="button" @click="copyVersion">复制</button></dd></div>
-              <div><dt>构建</dt><dd>{{ ota?.jarPath || '—' }}</dd></div>
+              <div><dt>构建</dt><dd class="adm-break">{{ ota?.jarPath || '—' }}</dd></div>
               <div><dt>Java</dt><dd>{{ version?.java || '—' }}</dd></div>
               <div><dt>系统</dt><dd>{{ version?.os || '—' }}</dd></div>
             </dl>
             <button class="btn btn-ghost btn-sm" type="button" @click="loadRuntime">重新读取</button>
-          </section>
-          <section class="adm-card">
-            <div class="adm-card-head"><div><span class="adm-card-kicker">LAST</span><h2>上次更新</h2></div></div>
-            <div v-if="ota?.lastUpdate?.status" class="adm-last-update">
-              <span class="adm-status" :class="ota.lastUpdate.status === 'SUCCESS' ? 'is-published' : 'is-pending'">{{ ota.lastUpdate.status }}</span>
-              <p>{{ ota.lastUpdate.message || '—' }}</p>
-              <span class="meta">{{ ota.lastUpdate.updatedAt ? formatDateTime(ota.lastUpdate.updatedAt) : '' }}</span>
-            </div>
-            <p v-else class="adm-note">还没有执行过更新。</p>
           </section>
         </aside>
       </div>
@@ -712,9 +770,9 @@ onMounted(async () => {
       <div class="adm-modal mail-modal">
         <div class="adm-modal-head">
           <div>
-            <span class="adm-card-kicker">MAIL STUDIO</span>
+            <span class="adm-card-kicker">SMTP SETTINGS</span>
             <h2>配置邮箱发送</h2>
-            <p class="meta">左侧编辑发信参数与 HTML 模板，右侧实时预览。敏感密钥不会回显，留空表示沿用旧值。</p>
+            <p class="meta">只维护发信连接与测试邮件；HTML 模板和实时预览已移到 SMTP 页面。敏感密钥不会回显，留空表示沿用旧值。</p>
           </div>
           <button class="adm-drawer-close" type="button" aria-label="关闭" @click="smtpOpen = false">×</button>
         </div>
@@ -751,63 +809,6 @@ onMounted(async () => {
               <label class="mail-check"><input type="checkbox" :checked="boolValue(smtpDraft.smtpStarttls)" @change="setDraftBool('smtpStarttls', $event)" /><span>STARTTLS</span></label>
             </div>
           </div>
-        </div>
-
-        <div class="mail-studio">
-          <section class="mail-edit-pane">
-            <div class="mail-pane-head">
-              <div>
-                <span class="adm-card-kicker">EDITOR</span>
-                <h3>邮件模板</h3>
-              </div>
-              <button class="btn-text" type="button" @click="resetCurrentTemplate">恢复默认</button>
-            </div>
-            <div class="mail-template-tabs" role="tablist" aria-label="邮件模板类型">
-              <button
-                v-for="item in mailTemplateKinds"
-                :key="item.key"
-                type="button"
-                :class="{ on: templateKind === item.key }"
-                @click="templateKind = item.key"
-              >{{ item.label }}</button>
-            </div>
-            <div class="field">
-              <label :for="`subject-${templateKind}`">邮件主题</label>
-              <input :id="`subject-${templateKind}`" v-model="smtpDraft[currentTemplate.subjectKey]" type="text" placeholder="邮件主题" />
-            </div>
-            <div class="mail-editor-toolbar">
-              <span>插入变量</span>
-              <button v-for="name in templatePlaceholders" :key="name" type="button" @click="insertPlaceholder(name)">{{ name }}</button>
-            </div>
-            <div class="field mail-html-field">
-              <label :for="`html-${templateKind}`">HTML 源码</label>
-              <textarea
-                :id="`html-${templateKind}`"
-                ref="htmlEditor"
-                v-model="smtpDraft[currentTemplate.htmlKey]"
-                spellcheck="false"
-                placeholder="在这里编辑 HTML 邮件模板"
-              ></textarea>
-            </div>
-          </section>
-
-          <section class="mail-preview-pane">
-            <div class="mail-pane-head">
-              <div>
-                <span class="adm-card-kicker">LIVE PREVIEW</span>
-                <h3>实时预览</h3>
-              </div>
-              <span class="mail-preview-badge">示例数据</span>
-            </div>
-            <div class="mail-preview-subject">
-              <span>主题</span>
-              <strong>{{ previewSubject || '未填写主题' }}</strong>
-            </div>
-            <div class="mail-preview-frame">
-              <iframe :srcdoc="previewHtml" title="邮件模板预览" sandbox=""></iframe>
-            </div>
-            <p class="mail-preview-note">预览使用示例变量；实际发送时会替换为站点名、验证码或重置链接。</p>
-          </section>
         </div>
 
         <div class="mail-modal-foot">
