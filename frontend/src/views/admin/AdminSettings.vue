@@ -68,7 +68,7 @@ const mailTemplateKinds = [
 
 const smtpKeys = [
   'smtpEnabled', 'smtpHost', 'smtpPort', 'smtpUsername', 'smtpPassword',
-  'smtpFrom', 'smtpSsl', 'smtpStarttls',
+  'smtpSenderName', 'smtpSsl', 'smtpStarttls',
   'mailTemplateRegistrationSubject', 'mailTemplateRegistrationHtml',
   'mailTemplateResetSubject', 'mailTemplateResetHtml',
   'mailTemplateTestSubject', 'mailTemplateTestHtml'
@@ -614,62 +614,118 @@ onMounted(async () => {
         <OtaPanel />
       </div>
 
-      <div v-else-if="activeTab === 'ai'">
-        <div class="adm-settings-grid">
-          <section class="adm-card">
-            <div class="adm-card-head">
-              <div><span class="adm-card-kicker">AI</span><h2>AI 设置</h2></div>
-              <span class="adm-status" :class="boolValue(config.aiEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.aiEnabled) ? '已启用' : '未启用' }}</span>
-            </div>
-            <dl class="adm-facts">
-              <div><dt>服务商</dt><dd>{{ config.aiProvider || '—' }}</dd></div>
-              <div><dt>模型</dt><dd>{{ config.aiModel || '—' }}</dd></div>
-              <div><dt>Base URL</dt><dd class="adm-break">{{ config.aiBaseUrl || '—' }}</dd></div>
-              <div><dt>密钥</dt><dd>{{ config.aiApiKeySet === 'true' ? '已设置' : '未设置' }}</dd></div>
-              <div><dt>测试状态</dt><dd>{{ aiStatus?.message || (aiStatus?.enabled ? '已启用' : '未启用') }}</dd></div>
-            </dl>
-            <div class="adm-form-actions">
-              <button class="btn" type="button" @click="aiOpen = true">配置 AI</button>
-              <button class="btn btn-ghost" type="button" :disabled="testingAi" @click="testAi">{{ testingAi ? '测试中…' : '测试连接' }}</button>
-              <span class="adm-note">模型名称旁可一键从 API 获取可用模型。</span>
-            </div>
-            <p v-if="aiTestResult" class="adm-test-result">{{ aiTestResult }}</p>
-          </section>
-          <aside class="adm-side-stack">
-            <section class="adm-card">
-              <div class="adm-card-head"><div><span class="adm-card-kicker">STATUS</span><h2>当前 AI 状态</h2></div></div>
-              <dl class="adm-facts">
-                <div><dt>启用</dt><dd>{{ aiStatus?.enabled ? '是' : '否' }}</dd></div>
-                <div><dt>服务商</dt><dd>{{ aiStatus?.provider || '—' }}</dd></div>
-                <div><dt>模型</dt><dd>{{ aiStatus?.model || '—' }}</dd></div>
-                <div><dt>密钥</dt><dd>{{ aiStatus?.apiKeySet ? '已设置' : '未设置' }}</dd></div>
-                <div><dt>Base URL</dt><dd class="adm-break">{{ aiStatus?.baseUrl || '—' }}</dd></div>
-              </dl>
-            </section>
-          </aside>
-        </div>
-        <section class="adm-card adm-ai-cap-card">
-          <div class="adm-card-head"><div><span class="adm-card-kicker">CAPABILITY</span><h2>AI 功能开关</h2></div></div>
-          <div class="adm-ai-feature-list">
-            <div v-for="feature in aiFeatures" :key="feature.key" class="adm-ai-feature" :class="{ off: !boolValue(config[feature.enabledKey]) }">
-              <div class="adm-ai-feature-copy">
-                <b>{{ feature.title }}</b>
-                <span>{{ feature.desc }}</span>
-              </div>
-              <label class="adm-switch-label compact">
-                <span class="sr-only">{{ feature.title }}开关</span>
-                <input
-                  type="checkbox"
-                  :checked="boolValue(config[feature.enabledKey])"
-                  :disabled="featureSaving === feature.enabledKey"
-                  @change="toggleAiFeature(feature, $event)"
-                />
-                <i class="adm-switch" aria-hidden="true"></i>
-              </label>
-              <button class="btn-text" type="button" @click="openPrompt(feature.key)">配置提示词</button>
+      <div v-else-if="activeTab === 'ai'" class="ai-studio">
+        <section class="ai-hero">
+          <div class="ai-hero-main">
+            <span class="ai-orb" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6 2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+                <circle cx="12" cy="12" r="3.2" />
+              </svg>
+            </span>
+            <div class="ai-hero-copy">
+              <span class="adm-card-kicker">AI WORKSPACE</span>
+              <h1>AI 设置</h1>
+              <p>连接一个 OpenAI 兼容服务，并在写作、审稿、评论与摘要环节按需启用。</p>
             </div>
           </div>
-          <p class="adm-note">开关和提示词都保存在数据库，由后端读取；关闭后对应 AI 操作会直接拒绝。</p>
+          <div class="ai-hero-side">
+            <span class="adm-status" :class="boolValue(config.aiEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.aiEnabled) ? 'AI 已启用' : 'AI 未启用' }}</span>
+            <div class="ai-hero-actions">
+              <button class="btn btn-ghost" type="button" :disabled="testingAi" @click="testAi">{{ testingAi ? '测试中…' : '测试连接' }}</button>
+              <button class="btn" type="button" @click="aiOpen = true">配置 AI</button>
+            </div>
+          </div>
+          <div v-if="aiTestResult" class="ai-test-banner">
+            <span class="ai-test-dot" aria-hidden="true"></span>
+            <span>{{ aiTestResult }}</span>
+          </div>
+        </section>
+
+        <div class="ai-overview-grid">
+          <section class="adm-card ai-connection-card">
+            <div class="adm-card-head">
+              <div><span class="adm-card-kicker">CONNECTION</span><h2>模型连接</h2></div>
+              <span class="ai-mini-chip">{{ config.aiProvider || '未配置' }}</span>
+            </div>
+            <div class="ai-model-line">
+              <span class="ai-model-mark" aria-hidden="true">AI</span>
+              <div>
+                <strong>{{ config.aiModel || '尚未选择模型' }}</strong>
+                <small>{{ config.aiBaseUrl || '尚未填写 Base URL' }}</small>
+              </div>
+            </div>
+            <div class="ai-metric-grid">
+              <div><span>服务商</span><b>{{ config.aiProvider || '—' }}</b></div>
+              <div><span>模型</span><b>{{ config.aiModel || '—' }}</b></div>
+              <div><span>API Key</span><b :class="{ 'is-on': config.aiApiKeySet === 'true' }">{{ config.aiApiKeySet === 'true' ? '已设置' : '未设置' }}</b></div>
+              <div><span>接口状态</span><b :class="{ 'is-on': aiStatus?.apiKeySet }">{{ aiStatus?.message || '等待测试' }}</b></div>
+            </div>
+            <p class="ai-card-note">Base URL 填到版本号为止，不要带 <code>/chat/completions</code>；系统会自动补全。</p>
+          </section>
+
+          <section class="adm-card ai-status-card">
+            <div class="adm-card-head">
+              <div><span class="adm-card-kicker">STATUS</span><h2>运行状态</h2></div>
+              <span class="ai-live-label" :class="{ on: aiStatus?.enabled }"><i></i>{{ aiStatus?.enabled ? '可用' : '未启用' }}</span>
+            </div>
+            <div class="ai-status-list">
+              <div class="ai-status-row">
+                <span class="ai-status-icon" :class="{ on: aiStatus?.enabled }" aria-hidden="true"></span>
+                <div><b>AI 服务</b><small>{{ aiStatus?.enabled ? '请求可以正常发起' : '启用后才能调用模型' }}</small></div>
+                <strong>{{ aiStatus?.enabled ? '已启用' : '未启用' }}</strong>
+              </div>
+              <div class="ai-status-row">
+                <span class="ai-status-icon" :class="{ on: aiStatus?.apiKeySet }" aria-hidden="true"></span>
+                <div><b>访问密钥</b><small>{{ aiStatus?.apiKeySet ? '密钥已在服务端保存' : '需要填写 API Key' }}</small></div>
+                <strong>{{ aiStatus?.apiKeySet ? '已设置' : '未设置' }}</strong>
+              </div>
+              <div class="ai-status-row">
+                <span class="ai-status-icon" :class="{ on: aiStatus?.model }" aria-hidden="true"></span>
+                <div><b>模型</b><small>{{ aiStatus?.provider || 'OpenAI 兼容接口' }}</small></div>
+                <strong>{{ aiStatus?.model || '—' }}</strong>
+              </div>
+            </div>
+            <div class="ai-status-foot">
+              <span>连接测试会向服务端发起一次最小请求，不会生成文章。</span>
+              <button class="btn-text" type="button" :disabled="testingAi" @click="testAi">{{ testingAi ? '测试中…' : '再测一次 →' }}</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="adm-card ai-capability-panel">
+          <div class="adm-card-head">
+            <div><span class="adm-card-kicker">CAPABILITY</span><h2>能力与提示词</h2><p class="ai-card-sub">按需开启能力，并为每种能力维护独立提示词。</p></div>
+            <span class="ai-capability-count">{{ aiFeatures.filter((f) => boolValue(config[f.enabledKey])).length }} / {{ aiFeatures.length }} 已开启</span>
+          </div>
+          <div class="ai-feature-grid">
+            <article v-for="feature in aiFeatures" :key="feature.key" class="ai-feature-card" :class="{ off: !boolValue(config[feature.enabledKey]) }">
+              <div class="ai-feature-top">
+                <span class="ai-feature-icon" aria-hidden="true">
+                  <svg v-if="feature.key === 'article'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3h10l4 4v14H5V3Z"/><path d="M15 3v4h4M8 12h8M8 16h6"/></svg>
+                  <svg v-else-if="feature.key === 'comment'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M8 9h8M8 12h5"/></svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+                </span>
+                <span class="ai-feature-state">{{ boolValue(config[feature.enabledKey]) ? '已开启' : '已关闭' }}</span>
+              </div>
+              <b>{{ feature.title }}</b>
+              <p>{{ feature.desc }}</p>
+              <div class="ai-feature-foot">
+                <label class="ai-inline-switch">
+                  <span>{{ boolValue(config[feature.enabledKey]) ? '启用中' : '已停用' }}</span>
+                  <input
+                    type="checkbox"
+                    :checked="boolValue(config[feature.enabledKey])"
+                    :disabled="featureSaving === feature.enabledKey"
+                    @change="toggleAiFeature(feature, $event)"
+                  />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <button class="btn-text ai-prompt-btn" type="button" @click="openPrompt(feature.key)">提示词 →</button>
+              </div>
+            </article>
+          </div>
+          <p class="adm-note">开关与提示词保存在数据库；关闭某项能力后，对应的 AI 操作会直接拒绝。</p>
         </section>
       </div>
 
@@ -768,47 +824,111 @@ onMounted(async () => {
 
     <div v-if="smtpOpen" class="adm-modal-wrap mail-modal-wrap" @click.self="smtpOpen = false">
       <div class="adm-modal mail-modal">
-        <div class="adm-modal-head">
-          <div>
-            <span class="adm-card-kicker">SMTP SETTINGS</span>
-            <h2>配置邮箱发送</h2>
-            <p class="meta">只维护发信连接与测试邮件；HTML 模板和实时预览已移到 SMTP 页面。敏感密钥不会回显，留空表示沿用旧值。</p>
+        <div class="mail-modal-head">
+          <div class="mail-modal-heading">
+            <span class="mail-modal-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m3.5 7 8.5 6 8.5-6" />
+              </svg>
+            </span>
+            <div>
+              <span class="adm-card-kicker">SMTP CONNECTION</span>
+              <h2>配置邮箱发送</h2>
+              <p>登录账号即发件地址；发件人名称只用于收件箱里的称呼展示。</p>
+            </div>
           </div>
+          <span class="adm-status" :class="boolValue(smtpDraft.smtpEnabled) ? 'is-published' : 'is-draft'">
+            {{ boolValue(smtpDraft.smtpEnabled) ? '已启用' : '未启用' }}
+          </span>
           <button class="adm-drawer-close" type="button" aria-label="关闭" @click="smtpOpen = false">×</button>
         </div>
 
-        <div class="mail-config-grid">
-          <label class="mail-check mail-check-lead">
-            <input type="checkbox" :checked="boolValue(smtpDraft.smtpEnabled)" @change="setDraftBool('smtpEnabled', $event)" />
-            <span>启用 SMTP 邮件</span>
-          </label>
-          <div class="field">
-            <label for="smtpHost">SMTP 主机</label>
-            <input id="smtpHost" v-model="smtpDraft.smtpHost" type="text" placeholder="smtp.example.com" />
-          </div>
-          <div class="field">
-            <label for="smtpPort">端口</label>
-            <input id="smtpPort" v-model="smtpDraft.smtpPort" type="number" placeholder="465" />
-          </div>
-          <div class="field">
-            <label for="smtpUsername">登录账号</label>
-            <input id="smtpUsername" v-model="smtpDraft.smtpUsername" type="text" placeholder="you@example.com" />
-          </div>
-          <div class="field">
-            <label for="smtpPassword">授权码 / 密码</label>
-            <input id="smtpPassword" v-model="smtpDraft.smtpPassword" type="password" :placeholder="config.smtpPasswordSet === 'true' ? '已设置，留空保持不变' : '请输入 SMTP 密码或授权码'" autocomplete="new-password" />
-          </div>
-          <div class="field">
-            <label for="smtpFrom">发件人地址</label>
-            <input id="smtpFrom" v-model="smtpDraft.smtpFrom" type="email" placeholder="留空则使用登录账号" />
-          </div>
-          <div class="field">
-            <label>加密方式</label>
-            <div class="mail-check-row">
-              <label class="mail-check"><input type="checkbox" :checked="boolValue(smtpDraft.smtpSsl)" @change="setDraftBool('smtpSsl', $event)" /><span>SSL</span></label>
-              <label class="mail-check"><input type="checkbox" :checked="boolValue(smtpDraft.smtpStarttls)" @change="setDraftBool('smtpStarttls', $event)" /><span>STARTTLS</span></label>
+        <div class="smtp-config-layout">
+          <section class="smtp-config-panel">
+            <div class="smtp-panel-head">
+              <span class="smtp-step">01</span>
+              <div>
+                <h3>发信服务器</h3>
+                <p>填写邮箱服务商提供的 SMTP 地址与登录凭据。</p>
+              </div>
+              <label class="adm-switch-label compact" title="启用 SMTP 邮件">
+                <span class="sr-only">启用 SMTP 邮件</span>
+                <input type="checkbox" :checked="boolValue(smtpDraft.smtpEnabled)" @change="setDraftBool('smtpEnabled', $event)" />
+                <i class="adm-switch" aria-hidden="true"></i>
+              </label>
             </div>
-          </div>
+            <div class="smtp-form-grid">
+              <div class="field smtp-host-field">
+                <label for="smtpHost">SMTP 主机</label>
+                <input id="smtpHost" v-model="smtpDraft.smtpHost" type="text" placeholder="smtp.example.com" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="smtpPort">端口</label>
+                <input id="smtpPort" v-model="smtpDraft.smtpPort" type="number" placeholder="465" />
+              </div>
+              <div class="field span-2">
+                <label for="smtpUsername">登录账号（发件地址）</label>
+                <input id="smtpUsername" v-model="smtpDraft.smtpUsername" type="email" placeholder="you@example.com" autocomplete="username" />
+                <p class="smtp-field-help">这里填完整邮箱地址；系统会把它直接作为 From 地址。</p>
+              </div>
+              <div class="field span-2">
+                <label for="smtpPassword">授权码 / 密码</label>
+                <input id="smtpPassword" v-model="smtpDraft.smtpPassword" type="password" :placeholder="config.smtpPasswordSet === 'true' ? '已设置，留空保持不变' : '请输入 SMTP 密码或授权码'" autocomplete="new-password" />
+              </div>
+              <div class="field span-2">
+                <label>加密方式</label>
+                <div class="smtp-security-row">
+                  <label class="smtp-security-option" :class="{ on: boolValue(smtpDraft.smtpSsl) }">
+                    <input type="checkbox" :checked="boolValue(smtpDraft.smtpSsl)" @change="setDraftBool('smtpSsl', $event)" />
+                    <span class="smtp-security-check" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-9" /></svg>
+                    </span>
+                    <span><b>SSL</b><small>常用 465 端口</small></span>
+                  </label>
+                  <label class="smtp-security-option" :class="{ on: boolValue(smtpDraft.smtpStarttls) }">
+                    <input type="checkbox" :checked="boolValue(smtpDraft.smtpStarttls)" @change="setDraftBool('smtpStarttls', $event)" />
+                    <span class="smtp-security-check" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-9" /></svg>
+                    </span>
+                    <span><b>STARTTLS</b><small>常用 587 端口</small></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="smtp-config-panel smtp-identity-panel">
+            <div class="smtp-panel-head">
+              <span class="smtp-step">02</span>
+              <div>
+                <h3>发件身份</h3>
+                <p>决定读者在收件箱里看到的名字。</p>
+              </div>
+            </div>
+            <div class="field">
+              <label for="smtpSenderName">发件人名称</label>
+              <input id="smtpSenderName" v-model="smtpDraft.smtpSenderName" type="text" maxlength="60" placeholder="留空则使用站点名" />
+              <p class="smtp-field-help">只影响显示名称，不会修改实际发件邮箱。</p>
+            </div>
+            <div class="smtp-sender-preview">
+              <span>读者将看到</span>
+              <div class="smtp-sender-card">
+                <span class="smtp-sender-avatar">{{ (smtpDraft.smtpSenderName || config.siteName || '墨').slice(0, 1) }}</span>
+                <div>
+                  <b>{{ smtpDraft.smtpSenderName || config.siteName || '站点名称' }}</b>
+                  <small>{{ smtpDraft.smtpUsername || '尚未填写登录账号' }}</small>
+                </div>
+              </div>
+            </div>
+            <p class="smtp-identity-note">登录账号必须是邮箱服务商允许发信的完整地址；部分服务商要求它与登录账号完全一致。</p>
+            <div class="smtp-provider-hints">
+              <span>常用服务商</span>
+              <div><b>QQ 邮箱</b><small>smtp.qq.com · 465 · SSL</small></div>
+              <div><b>163 邮箱</b><small>smtp.163.com · 465 · SSL</small></div>
+              <div><b>Gmail</b><small>smtp.gmail.com · 465 · SSL</small></div>
+            </div>
+          </section>
         </div>
 
         <div class="mail-modal-foot">

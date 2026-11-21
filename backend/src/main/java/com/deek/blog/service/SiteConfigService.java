@@ -24,7 +24,7 @@ public class SiteConfigService {
             "musicEnabled", "musicUrl", "musicTitle", "commentReview",
             "registrationEnabled", "registrationVerifyEmail",
             "smtpEnabled", "smtpHost", "smtpPort", "smtpUsername", "smtpPassword",
-            "smtpFrom", "smtpSsl", "smtpStarttls",
+            "smtpSenderName", "smtpSsl", "smtpStarttls",
             "mailTemplateRegistrationSubject", "mailTemplateRegistrationHtml",
             "mailTemplateResetSubject", "mailTemplateResetHtml",
             "mailTemplateTestSubject", "mailTemplateTestHtml",
@@ -67,14 +67,14 @@ public class SiteConfigService {
         map.put("smtpPort", "465");
         map.put("smtpUsername", "");
         map.put("smtpPassword", "");
-        map.put("smtpFrom", "");
+        map.put("smtpSenderName", "墨记");
         map.put("smtpSsl", "true");
         map.put("smtpStarttls", "false");
-        map.put("mailTemplateRegistrationSubject", "「{{siteName}}」注册验证码：{{code}}");
+        map.put("mailTemplateRegistrationSubject", "{{siteName}} 的注册验证码");
         map.put("mailTemplateRegistrationHtml", "");
-        map.put("mailTemplateResetSubject", "重置你的「{{siteName}}」密码");
+        map.put("mailTemplateResetSubject", "重置 {{siteName}} 账户密码");
         map.put("mailTemplateResetHtml", "");
-        map.put("mailTemplateTestSubject", "「{{siteName}}」邮件配置测试");
+        map.put("mailTemplateTestSubject", "{{siteName}} 邮件配置测试");
         map.put("mailTemplateTestHtml", "");
         map.put("aiEnabled", "false");
         map.put("aiProvider", "OpenAI 兼容");

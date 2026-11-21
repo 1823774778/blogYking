@@ -1,5 +1,6 @@
 package com.deek.blog.service;
 
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,7 +29,6 @@ public class MailService {
     private final int envPort;
     private final String envUsername;
     private final String envPassword;
-    private final String envFrom;
     private final boolean envSsl;
     private final boolean envStarttls;
     private final String siteUrl;
@@ -49,7 +49,6 @@ public class MailService {
         this.envPort = envPort;
         this.envUsername = envUsername == null ? "" : envUsername.trim();
         this.envPassword = envPassword == null ? "" : envPassword;
-        this.envFrom = envUsername == null ? "" : envUsername.trim();
         this.envSsl = envSsl;
         this.envStarttls = envStarttls;
         this.siteUrl = siteUrl == null ? "" : siteUrl.trim();
@@ -117,8 +116,11 @@ public class MailService {
         JavaMailSenderImpl sender = sender(settings);
         MimeMessage message = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-        if (!settings.from().isBlank()) {
-            helper.setFrom(settings.from());
+        if (!settings.username().isBlank()) {
+            String senderName = settings.senderName().isBlank()
+                    ? siteConfigService.get().getOrDefault("siteName", "墨记")
+                    : settings.senderName();
+            helper.setFrom(new InternetAddress(settings.username(), senderName, "UTF-8"));
         }
         helper.setTo(to);
         helper.setSubject(subject);
@@ -143,16 +145,13 @@ public class MailService {
             int port = parseInt(config.getOrDefault("smtpPort", "465"), 465);
             String username = config.getOrDefault("smtpUsername", "").trim();
             String password = config.getOrDefault("smtpPassword", "");
-            String from = config.getOrDefault("smtpFrom", "").trim();
-            if (from.isBlank()) {
-                from = username;
-            }
-            return new MailSettings(true, host, port, username, password, from,
+            String senderName = config.getOrDefault("smtpSenderName", "").trim();
+            return new MailSettings(true, host, port, username, password, senderName,
                     Boolean.parseBoolean(config.getOrDefault("smtpSsl", "true")),
                     Boolean.parseBoolean(config.getOrDefault("smtpStarttls", "false")));
         }
         if (envEnabled && !envHost.isBlank()) {
-            return new MailSettings(true, envHost, envPort, envUsername, envPassword, envFrom,
+            return new MailSettings(true, envHost, envPort, envUsername, envPassword, "",
                     envSsl, envStarttls);
         }
         return new MailSettings(false, "", 465, "", "", "", true, false);
@@ -187,6 +186,6 @@ public class MailService {
     }
 
     private record MailSettings(boolean enabled, String host, int port, String username,
-                                String password, String from, boolean ssl, boolean starttls) {
+                                String password, String senderName, boolean ssl, boolean starttls) {
     }
 }

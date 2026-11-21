@@ -47,10 +47,10 @@ const primaryLabel = computed(() => {
   if (downloadStarting.value) return '开始下载…'
   if (jobRunning.value) return ''
   if (ota.value?.pending) return `安装 v${ota.value.pending.version}`
-  if (releasesLoading.value && !releases.value) return '检查中…'
+  if (releasesLoading.value && !releases.value) return '检查更新中…'
   if (releases.value?.updateAvailable) return '下载安装'
-  if (!releasesLoading.value && !releases.value?.latest) return '读取失败'
-  return '暂无更新'
+  if (!releasesLoading.value && !releases.value?.latest) return '重新检查'
+  return '检查更新'
 })
 const primaryDisabled = computed(() =>
   otaApplying.value || jobRunning.value || downloadStarting.value || (releasesLoading.value && !releases.value)
@@ -525,7 +525,12 @@ onBeforeUnmount(() => {
           @click="primaryAction"
         >
           <span v-if="jobRunning || downloadStarting" class="ota-btn-progress" :style="{ width: `${downloadPercent}%` }" aria-hidden="true"></span>
-          <span v-if="!jobRunning && !downloadStarting" class="ota-btn-label">{{ primaryLabel }}</span>
+          <span v-if="!jobRunning && !downloadStarting" class="ota-btn-label" :class="{ 'is-check': !ota?.pending && !releases?.updateAvailable }">
+            <svg v-if="!ota?.pending && !releases?.updateAvailable" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.3 6.6M20 4v7h-7" />
+            </svg>
+            {{ primaryLabel }}
+          </span>
         </button>
       </div>
     </div>
@@ -536,7 +541,6 @@ onBeforeUnmount(() => {
       <div class="ota-online-head">
         <div>
           <div class="section-title">最新版本</div>
-          <p class="meta">读取 GitHub Release 的版本与更新内容，下载和安装由右上角操作按钮统一发起。</p>
         </div>
         <span v-if="releases?.latest" class="badge" :class="releases.updateAvailable ? 'warn' : 'on'">
           {{ releases.updateAvailable ? `有更新 v${releases.latest.version}` : '暂无更新' }}

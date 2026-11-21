@@ -478,11 +478,11 @@ curl http://127.0.0.1:8080/api/system/version
 bash scripts/build.sh
 curl -s http://127.0.0.1:8080/api/system/version
 
-# 2. 写本版本更新说明（示例：release-notes/1.9.0.md）
+# 2. 写本版本更新说明（示例：release-notes/1.9.1.md）
 # 3. 发布 jar + SHA-256 + 更新说明
 gh auth login
 GH_REPO=1823774778/blogYking \
-  bash scripts/release-github.sh v1.9.0 blog.jar release-notes/1.9.0.md
+  bash scripts/release-github.sh v1.9.1 blog.jar release-notes/1.9.1.md
 ```
 
 `scripts/release-github.sh` 会校验 jar 是否为本项目 Spring Boot 包、计算 SHA-256、创建/更新 Release，并上传 `blog.jar` 与 `blog.jar.sha256`。后续每个版本都按同样流程发布，后台更新页会自动读到新的最新版本和历史记录。
