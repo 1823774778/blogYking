@@ -86,7 +86,7 @@ public class CaptchaService {
             int y1 = random.nextInt(HEIGHT);
             int x2 = random.nextInt(WIDTH);
             int y2 = random.nextInt(HEIGHT);
-            String color = i % 2 == 0 ? "#9bcbb9" : "#c7ddd5";
+            String color = i % 2 == 0 ? "#9dc0e9" : "#d5e3f4";
             noise.append("<path d=\"M").append(x1).append(' ').append(y1)
                     .append(" L").append(x2).append(' ').append(y2)
                     .append("\" stroke=\"").append(color).append("\" stroke-width=\"1\" opacity=\"0.45\"/>");
@@ -95,21 +95,21 @@ public class CaptchaService {
             int x = random.nextInt(WIDTH);
             int y = random.nextInt(HEIGHT);
             noise.append("<circle cx=\"").append(x).append("\" cy=\"").append(y)
-                    .append("\" r=\"1.2\" fill=\"#8cbfae\" opacity=\"0.55\"/>");
+                    .append("\" r=\"1.2\" fill=\"#8db7e6\" opacity=\"0.55\"/>");
         }
         return """
                 <svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">
                   <defs>
                     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0" stop-color="#f4faf7"/>
-                      <stop offset="1" stop-color="#e8f4ee"/>
+                      <stop offset="0" stop-color="#f4f8fd"/>
+                      <stop offset="1" stop-color="#e8f1ff"/>
                     </linearGradient>
                   </defs>
                   <rect width="100%%" height="100%%" rx="10" fill="url(#bg)"/>
                   %s
                   <text x="10" y="31" font-family="monospace" font-size="24" font-weight="700"
-                        letter-spacing="2" fill="#1c5d49" transform="rotate(-2 66 23)">%s</text>
-                  <path d="M8 38 Q66 32 124 39" stroke="#4fc9a0" stroke-width="1.2" opacity="0.45" fill="none"/>
+                        letter-spacing="2" fill="#173f78" transform="rotate(-2 66 23)">%s</text>
+                  <path d="M8 38 Q66 32 124 39" stroke="#4f8fe0" stroke-width="1.2" opacity="0.45" fill="none"/>
                 </svg>
                 """.formatted(WIDTH, HEIGHT, WIDTH, HEIGHT, noise, expression);
     }

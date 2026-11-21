@@ -104,38 +104,38 @@ public class MailTemplateService {
         map.put("mailTemplateTestSubject", "{{siteName}} 邮件配置测试");
         map.put("mailTemplateRegistrationHtml", """
                 <!doctype html>
-                <html><body style="margin:0;padding:0;background:#f5f6f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1b211d;">
+                <html><body style="margin:0;padding:0;background:#f4f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1b211d;">
                   <div style="display:none;max-height:0;overflow:hidden;opacity:0;">你的注册验证码是 {{code}}，{{expireMinutes}} 分钟内有效。</div>
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6f4;padding:36px 16px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f7fb;padding:36px 16px;">
                     <tr><td align="center">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e6e3;border-radius:10px;overflow:hidden;">
-                        <tr><td style="height:4px;background:#2f6a5a;font-size:0;line-height:0;">&nbsp;</td></tr>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #dbe6f3;border-radius:10px;overflow:hidden;">
+                        <tr><td style="height:4px;background:#24589f;font-size:0;line-height:0;">&nbsp;</td></tr>
                         <tr><td style="padding:26px 32px 0;">
                           <table role="presentation" width="100%"><tr>
-                            <td style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:#17201b;">{{siteName}}</td>
-                            <td align="right" style="font-size:10px;letter-spacing:1.6px;color:#8a948e;">SECURE MAIL</td>
+                            <td style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:#10213a;">{{siteName}}</td>
+                            <td align="right" style="font-size:10px;letter-spacing:1.6px;color:#7f91a8;">SECURE MAIL</td>
                           </tr></table>
                         </tr></td>
                         <tr><td style="padding:30px 32px 34px;">
-                          <p style="margin:0 0 10px;font-size:10px;letter-spacing:1.8px;color:#2f6a5a;font-weight:700;">VERIFY YOUR EMAIL</p>
-                          <h1 style="margin:0 0 12px;font-size:25px;line-height:1.35;font-weight:700;letter-spacing:-.5px;color:#17201b;">确认你的注册邮箱</h1>
-                          <p style="margin:0 0 24px;font-size:14px;line-height:1.8;color:#5d6861;">你好，欢迎加入 {{siteName}}。请在注册页面输入下面的验证码，完成邮箱验证。</p>
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f4;border:1px solid #e1e6e2;border-radius:8px;">
+                          <p style="margin:0 0 10px;font-size:10px;letter-spacing:1.8px;color:#24589f;font-weight:700;">VERIFY YOUR EMAIL</p>
+                          <h1 style="margin:0 0 12px;font-size:25px;line-height:1.35;font-weight:700;letter-spacing:-.5px;color:#10213a;">确认你的注册邮箱</h1>
+                          <p style="margin:0 0 24px;font-size:14px;line-height:1.8;color:#465a76;">你好，欢迎加入 {{siteName}}。请在注册页面输入下面的验证码，完成邮箱验证。</p>
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f7fd;border:1px solid #e0e9f4;border-radius:8px;">
                             <tr><td align="center" style="padding:22px 16px 20px;">
-                              <div style="font-size:10px;letter-spacing:1.5px;color:#8a948e;margin-bottom:8px;">验证码</div>
-                              <div style="font-family:'SFMono-Regular',Consolas,monospace;font-size:32px;line-height:1.2;font-weight:700;letter-spacing:9px;color:#17201b;">{{code}}</div>
+                              <div style="font-size:10px;letter-spacing:1.5px;color:#7f91a8;margin-bottom:8px;">验证码</div>
+                              <div style="font-family:'SFMono-Regular',Consolas,monospace;font-size:32px;line-height:1.2;font-weight:700;letter-spacing:9px;color:#10213a;">{{code}}</div>
                             </td></tr>
                           </table>
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px;border-top:1px solid #ecefec;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px;border-top:1px solid #e4edf7;">
                             <tr>
-                              <td style="padding:14px 0 0;font-size:11px;color:#8a948e;">有效期<br><strong style="display:block;margin-top:3px;font-size:12px;color:#39443d;">{{expireMinutes}} 分钟</strong></td>
-                              <td align="right" style="padding:14px 0 0;font-size:11px;color:#8a948e;">收件邮箱<br><strong style="display:block;margin-top:3px;font-size:12px;color:#39443d;">{{email}}</strong></td>
+                              <td style="padding:14px 0 0;font-size:11px;color:#7f91a8;">有效期<br><strong style="display:block;margin-top:3px;font-size:12px;color:#29415f;">{{expireMinutes}} 分钟</strong></td>
+                              <td align="right" style="padding:14px 0 0;font-size:11px;color:#7f91a8;">收件邮箱<br><strong style="display:block;margin-top:3px;font-size:12px;color:#29415f;">{{email}}</strong></td>
                             </tr>
                           </table>
-                          <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#8a948e;">如果不是你本人操作，请忽略这封邮件，验证码会自动失效。</p>
+                          <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#7f91a8;">如果不是你本人操作，请忽略这封邮件，验证码会自动失效。</p>
                         </td></tr>
-                        <tr><td style="padding:18px 32px 22px;border-top:1px solid #ecefec;background:#fafbfa;">
-                          <p style="margin:0;font-size:11px;line-height:1.7;color:#8a948e;">此邮件由 {{siteName}} 自动发送，请勿直接回复。<br>© {{year}} {{siteName}} · <a href="{{siteUrl}}" style="color:#2f6a5a;text-decoration:none;">{{siteUrl}}</a></p>
+                        <tr><td style="padding:18px 32px 22px;border-top:1px solid #e4edf7;background:#f8fbff;">
+                          <p style="margin:0;font-size:11px;line-height:1.7;color:#7f91a8;">此邮件由 {{siteName}} 自动发送，请勿直接回复。<br>© {{year}} {{siteName}} · <a href="{{siteUrl}}" style="color:#24589f;text-decoration:none;">{{siteUrl}}</a></p>
                         </td></tr>
                       </table>
                     </td></tr>
@@ -144,27 +144,27 @@ public class MailTemplateService {
                 """);
         map.put("mailTemplateResetHtml", """
                 <!doctype html>
-                <html><body style="margin:0;padding:0;background:#f5f6f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1b211d;">
+                <html><body style="margin:0;padding:0;background:#f4f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1b211d;">
                   <div style="display:none;max-height:0;overflow:hidden;opacity:0;">重置 {{siteName}} 密码，链接 {{expireMinutes}} 分钟内有效。</div>
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6f4;padding:36px 16px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f7fb;padding:36px 16px;">
                     <tr><td align="center">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e6e3;border-radius:10px;overflow:hidden;">
-                        <tr><td style="height:4px;background:#2f6a5a;font-size:0;line-height:0;">&nbsp;</td></tr>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #dbe6f3;border-radius:10px;overflow:hidden;">
+                        <tr><td style="height:4px;background:#24589f;font-size:0;line-height:0;">&nbsp;</td></tr>
                         <tr><td style="padding:26px 32px 0;">
                           <table role="presentation" width="100%"><tr>
-                            <td style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:#17201b;">{{siteName}}</td>
-                            <td align="right" style="font-size:10px;letter-spacing:1.6px;color:#8a948e;">ACCOUNT SECURITY</td>
+                            <td style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:#10213a;">{{siteName}}</td>
+                            <td align="right" style="font-size:10px;letter-spacing:1.6px;color:#7f91a8;">ACCOUNT SECURITY</td>
                           </tr></table>
                         </td></tr>
                         <tr><td style="padding:30px 32px 34px;">
-                          <p style="margin:0 0 10px;font-size:10px;letter-spacing:1.8px;color:#2f6a5a;font-weight:700;">RESET PASSWORD</p>
-                          <h1 style="margin:0 0 12px;font-size:25px;line-height:1.35;font-weight:700;letter-spacing:-.5px;color:#17201b;">重新设置你的密码</h1>
-                          <p style="margin:0 0 26px;font-size:14px;line-height:1.8;color:#5d6861;">我们收到了「{{siteName}}」账号的密码重置请求。点击下面的按钮继续，链接在 <strong style="color:#1b211d;">{{expireMinutes}} 分钟内有效</strong>。</p>
-                          <a href="{{link}}" style="display:inline-block;padding:13px 24px;border-radius:6px;background:#202823;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;">设置新密码</a>
-                          <p style="margin:26px 0 0;padding-top:18px;border-top:1px solid #ecefec;font-size:11px;line-height:1.8;color:#8a948e;">按钮无法点击时，复制下面的链接到浏览器打开：<br><a href="{{link}}" style="color:#2f6a5a;text-decoration:none;word-break:break-all;">{{link}}</a></p>
+                          <p style="margin:0 0 10px;font-size:10px;letter-spacing:1.8px;color:#24589f;font-weight:700;">RESET PASSWORD</p>
+                          <h1 style="margin:0 0 12px;font-size:25px;line-height:1.35;font-weight:700;letter-spacing:-.5px;color:#10213a;">重新设置你的密码</h1>
+                          <p style="margin:0 0 26px;font-size:14px;line-height:1.8;color:#465a76;">我们收到了「{{siteName}}」账号的密码重置请求。点击下面的按钮继续，链接在 <strong style="color:#1b211d;">{{expireMinutes}} 分钟内有效</strong>。</p>
+                          <a href="{{link}}" style="display:inline-block;padding:13px 24px;border-radius:6px;background:#173f78;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;">设置新密码</a>
+                          <p style="margin:26px 0 0;padding-top:18px;border-top:1px solid #e4edf7;font-size:11px;line-height:1.8;color:#7f91a8;">按钮无法点击时，复制下面的链接到浏览器打开：<br><a href="{{link}}" style="color:#24589f;text-decoration:none;word-break:break-all;">{{link}}</a></p>
                         </td></tr>
-                        <tr><td style="padding:18px 32px 22px;border-top:1px solid #ecefec;background:#fafbfa;">
-                          <p style="margin:0;font-size:11px;line-height:1.7;color:#8a948e;">如果这不是你本人的操作，请忽略本邮件，密码不会被修改。<br>© {{year}} {{siteName}} · <a href="{{siteUrl}}" style="color:#2f6a5a;text-decoration:none;">{{siteUrl}}</a></p>
+                        <tr><td style="padding:18px 32px 22px;border-top:1px solid #e4edf7;background:#f8fbff;">
+                          <p style="margin:0;font-size:11px;line-height:1.7;color:#7f91a8;">如果这不是你本人的操作，请忽略本邮件，密码不会被修改。<br>© {{year}} {{siteName}} · <a href="{{siteUrl}}" style="color:#24589f;text-decoration:none;">{{siteUrl}}</a></p>
                         </td></tr>
                       </table>
                     </td></tr>
@@ -173,27 +173,27 @@ public class MailTemplateService {
                 """);
         map.put("mailTemplateTestHtml", """
                 <!doctype html>
-                <html><body style="margin:0;padding:0;background:#f5f6f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1b211d;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6f4;padding:36px 16px;">
+                <html><body style="margin:0;padding:0;background:#f4f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1b211d;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f7fb;padding:36px 16px;">
                     <tr><td align="center">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e6e3;border-radius:10px;overflow:hidden;">
-                        <tr><td style="height:4px;background:#2f6a5a;font-size:0;line-height:0;">&nbsp;</td></tr>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #dbe6f3;border-radius:10px;overflow:hidden;">
+                        <tr><td style="height:4px;background:#24589f;font-size:0;line-height:0;">&nbsp;</td></tr>
                         <tr><td style="padding:26px 32px 0;">
                           <table role="presentation" width="100%"><tr>
-                            <td style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:#17201b;">{{siteName}}</td>
-                            <td align="right" style="font-size:10px;letter-spacing:1.6px;color:#8a948e;">SMTP TEST</td>
+                            <td style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:#10213a;">{{siteName}}</td>
+                            <td align="right" style="font-size:10px;letter-spacing:1.6px;color:#7f91a8;">SMTP TEST</td>
                           </tr></table>
                         </td></tr>
                         <tr><td style="padding:30px 32px 34px;">
-                          <div style="width:44px;height:44px;border:1px solid #dce5df;border-radius:50%;background:#f2f6f3;color:#2f6a5a;font-size:22px;line-height:44px;text-align:center;">✓</div>
-                          <h1 style="margin:18px 0 12px;font-size:25px;line-height:1.35;font-weight:700;letter-spacing:-.5px;color:#17201b;">邮件配置已经生效</h1>
-                          <p style="margin:0;font-size:14px;line-height:1.8;color:#5d6861;">这是一封来自「{{siteName}}」的测试邮件。收到它，说明 SMTP 连接、发件地址与邮件模板都能正常工作。</p>
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;background:#f4f6f4;border:1px solid #e1e6e2;border-radius:8px;">
-                            <tr><td style="padding:16px 18px;font-size:11px;line-height:1.7;color:#8a948e;">发送时间<br><strong style="display:block;margin-top:3px;font-size:12px;color:#39443d;">{{sentAt}}</strong></td></tr>
+                          <div style="width:44px;height:44px;border:1px solid #d6e4f4;border-radius:50%;background:#eff6ff;color:#24589f;font-size:22px;line-height:44px;text-align:center;">✓</div>
+                          <h1 style="margin:18px 0 12px;font-size:25px;line-height:1.35;font-weight:700;letter-spacing:-.5px;color:#10213a;">邮件配置已经生效</h1>
+                          <p style="margin:0;font-size:14px;line-height:1.8;color:#465a76;">这是一封来自「{{siteName}}」的测试邮件。收到它，说明 SMTP 连接、发件地址与邮件模板都能正常工作。</p>
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;background:#f2f7fd;border:1px solid #e0e9f4;border-radius:8px;">
+                            <tr><td style="padding:16px 18px;font-size:11px;line-height:1.7;color:#7f91a8;">发送时间<br><strong style="display:block;margin-top:3px;font-size:12px;color:#29415f;">{{sentAt}}</strong></td></tr>
                           </table>
                         </td></tr>
-                        <tr><td style="padding:18px 32px 22px;border-top:1px solid #ecefec;background:#fafbfa;">
-                          <p style="margin:0;font-size:11px;line-height:1.7;color:#8a948e;">此邮件由 {{siteName}} 自动发送。<br>© {{year}} {{siteName}} · <a href="{{siteUrl}}" style="color:#2f6a5a;text-decoration:none;">{{siteUrl}}</a></p>
+                        <tr><td style="padding:18px 32px 22px;border-top:1px solid #e4edf7;background:#f8fbff;">
+                          <p style="margin:0;font-size:11px;line-height:1.7;color:#7f91a8;">此邮件由 {{siteName}} 自动发送。<br>© {{year}} {{siteName}} · <a href="{{siteUrl}}" style="color:#24589f;text-decoration:none;">{{siteUrl}}</a></p>
                         </td></tr>
                       </table>
                     </td></tr>
@@ -203,12 +203,14 @@ public class MailTemplateService {
         return map;
     }
 
-    /** 1.9.1 起替换 1.8 的旧模板，只迁移带旧底色的默认模板，避免覆盖完全自定义的内容。 */
+    /** 1.10 起替换旧版默认模板：1.8 米白底与 1.9.1 墨绿底都会迁移到蓝色。 */
     @EventListener(ApplicationReadyEvent.class)
     public void migrateLegacyTemplates() {
         Map<String, String> current = siteConfigService.get();
         String registration = current.getOrDefault("mailTemplateRegistrationHtml", "");
-        if (!registration.contains("#f2f7f4")) {
+        boolean legacy18 = registration.contains("#f2f7f4");
+        boolean legacy19 = registration.contains("#f5f6f4") && registration.contains("#2f6a5a");
+        if (!legacy18 && !legacy19) {
             return;
         }
         Map<String, String> next = new LinkedHashMap<>();
@@ -219,6 +221,8 @@ public class MailTemplateService {
         next.put("mailTemplateResetHtml", DEFAULTS.get("mailTemplateResetHtml"));
         next.put("mailTemplateTestHtml", DEFAULTS.get("mailTemplateTestHtml"));
         siteConfigService.update(next);
-        log.info("已将 1.8 旧邮件模板替换为 1.9 简约模板");
+        log.info(legacy18
+                ? "已将 1.8 旧邮件模板替换为 1.10 蓝色模板"
+                : "已将 1.9.1 墨绿邮件模板替换为 1.10 蓝色模板");
     }
 }

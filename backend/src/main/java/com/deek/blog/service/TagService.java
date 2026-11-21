@@ -8,6 +8,10 @@ import com.deek.blog.entity.Post;
 import com.deek.blog.entity.Tag;
 import com.deek.blog.repository.PostRepository;
 import com.deek.blog.repository.TagRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +28,10 @@ import java.util.regex.Pattern;
 @Service
 public class TagService {
 
+    private static final Logger log = LoggerFactory.getLogger(TagService.class);
     private static final Pattern COLOR = Pattern.compile("^#[0-9a-fA-F]{6}$");
+    private static final String LEGACY_DEFAULT_COLOR = "#2f9d79";
+    private static final String BLUE_DEFAULT_COLOR = "#4f86d8";
 
     private final TagRepository tagRepository;
     private final PostRepository postRepository;
@@ -32,6 +39,21 @@ public class TagService {
     public TagService(TagRepository tagRepository, PostRepository postRepository) {
         this.tagRepository = tagRepository;
         this.postRepository = postRepository;
+    }
+
+    /** 1.10 蓝色主题：只把旧版默认绿色标签迁移为蓝色，保留用户自定义色。 */
+    @Transactional
+    @EventListener(ApplicationReadyEvent.class)
+    public void migrateLegacyAccent() {
+        List<Tag> legacy = tagRepository.findAll().stream()
+                .filter(tag -> LEGACY_DEFAULT_COLOR.equalsIgnoreCase(tag.getColor()))
+                .toList();
+        if (legacy.isEmpty()) {
+            return;
+        }
+        legacy.forEach(tag -> tag.setColor(BLUE_DEFAULT_COLOR));
+        tagRepository.saveAll(legacy);
+        log.info("已将 {} 个旧默认绿色标签迁移为 1.10 蓝色", legacy.size());
     }
 
     public List<TagAdminView> adminList() {
@@ -127,7 +149,7 @@ public class TagService {
                 Tag tag = new Tag();
                 tag.setName(name);
                 tag.setSlug(slugify(name));
-                tag.setColor("#2f9d79");
+                tag.setColor("#4f86d8");
                 tag.setVisible(true);
                 tag.setSortOrder(0);
                 tagRepository.save(tag);
@@ -151,7 +173,7 @@ public class TagService {
         if (description.length() > 512) description = description.substring(0, 512);
         tag.setDescription(description);
         String color = req.color() == null ? "" : req.color().trim();
-        if (color.isBlank()) color = "#2f9d79";
+        if (color.isBlank()) color = "#4f86d8";
         if (!COLOR.matcher(color).matches()) {
             throw new BizException("标签颜色需要使用 #RRGGBB 格式");
         }

@@ -1,69 +1,77 @@
 /* ============================================================
    默认主题 · Halo 式简约
-   以留白、清晰层级与中性色为主，只保留一个墨绿强调色。
+   以冷调留白、清晰层级与中性色为主，用深蓝建立结构、浅蓝点亮交互。
    ============================================================ */
 
 :root {
-  --bg: #f6f7f9;
-  --bg-soft: #eef1f4;
+  --bg: #f4f8fd;
+  --bg-soft: #eaf1fa;
   --paper: #ffffff;
-  --ink: #1f2329;
-  --ink-soft: #4b5159;
-  --muted: #7b828c;
-  --line: #e2e6eb;
-  --line-strong: #cdd3db;
-  --accent: #2f6a5a;
-  --accent-ink: #245447;
-  --accent-soft: rgba(47, 106, 90, 0.08);
-  --good: #2f7a55;
+  --ink: #101c2d;
+  --ink-soft: #40536d;
+  --muted: #7b8ba1;
+  --line: #dce6f2;
+  --line-strong: #bed0e4;
+  --accent: #24589f;
+  --accent-ink: #173f78;
+  --accent-soft: rgba(36, 88, 159, 0.08);
+  --accent-bright: #6fa9ff;
+  --accent-wash: #e8f1ff;
+  --good: #1f7a62;
   --shadow:
-    0 1px 2px rgba(24, 28, 33, 0.04),
-    0 8px 20px -10px rgba(24, 28, 33, 0.12),
-    0 24px 52px -30px rgba(24, 28, 33, 0.14);
+    0 1px 2px rgba(17, 43, 76, 0.04),
+    0 10px 24px -16px rgba(23, 63, 120, 0.16),
+    0 32px 64px -42px rgba(23, 63, 120, 0.2);
   --shadow-soft:
-    0 1px 2px rgba(24, 28, 33, 0.03),
-    0 6px 16px -10px rgba(24, 28, 33, 0.1);
+    0 1px 2px rgba(17, 43, 76, 0.03),
+    0 8px 20px -14px rgba(23, 63, 120, 0.13);
   --ff-card: #ffffff;
   --ff-card-solid: #ffffff;
-  --ff-glass: rgba(246, 247, 249, 0.9);
-  --ff-ring: #e2e6eb;
-  --ff-primary: #2f6a5a;
-  --ff-primary-deep: #265a4d;
-  --ff-primary-ink: #245447;
-  --ff-gradient: #2f6a5a;
-  --radius: 10px;
-  --sans: "Inter", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ff-glass: rgba(244, 248, 253, 0.88);
+  --ff-ring: #dce6f2;
+  --ff-primary: #24589f;
+  --ff-primary-deep: #1b4a89;
+  --ff-primary-ink: #173f78;
+  --ff-gradient: #24589f;
+  --radius: 12px;
+  --radius-lg: 20px;
+  --sans: "Inter", "Segoe UI Variable Display", "HarmonyOS Sans SC", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --serif: var(--sans);
 }
 
 [data-theme="dark"] {
-  --bg: #111418;
-  --bg-soft: #181c21;
-  --paper: #1b1f24;
-  --ink: #e8ebef;
-  --ink-soft: #c6ccd4;
-  --muted: #929aa5;
-  --line: #2b3037;
-  --line-strong: #3b424b;
-  --accent: #74ad9c;
-  --accent-ink: #9cc9ba;
-  --accent-soft: rgba(116, 173, 156, 0.12);
-  --good: #7dca9f;
+  --bg: #071220;
+  --bg-soft: #0b1b2f;
+  --paper: #0e1c2f;
+  --ink: #edf4ff;
+  --ink-soft: #bccbe0;
+  --muted: #8498b1;
+  --line: #1d3048;
+  --line-strong: #2b4261;
+  --accent: #7fb9ff;
+  --accent-ink: #a8d0ff;
+  --accent-soft: rgba(127, 185, 255, 0.12);
+  --accent-bright: #a8d0ff;
+  --accent-wash: #112a46;
+  --good: #6bd6b6;
   --shadow:
-    0 1px 2px rgba(0, 0, 0, 0.18),
-    0 8px 24px -10px rgba(0, 0, 0, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 10px 28px -12px rgba(0, 0, 0, 0.52),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --shadow-soft:
     0 1px 2px rgba(0, 0, 0, 0.18),
-    0 6px 16px -10px rgba(0, 0, 0, 0.45);
-  --ff-card: #1b1f24;
-  --ff-card-solid: #1b1f24;
-  --ff-glass: rgba(17, 20, 24, 0.9);
-  --ff-ring: #2b3037;
-  --ff-primary: #74ad9c;
-  --ff-primary-deep: #8fc0b0;
-  --ff-primary-ink: #b7d9ce;
+    0 8px 20px -12px rgba(0, 0, 0, 0.46);
+  --ff-card: #0e1c2f;
+  --ff-card-solid: #0e1c2f;
+  --ff-glass: rgba(7, 18, 32, 0.9);
+  --ff-ring: #1d3048;
+  --ff-primary: #7fb9ff;
+  --ff-primary-deep: #9ec9ff;
+  --ff-primary-ink: #c3ddff;
+  --ff-gradient: #1e4f91;
+  --radius: 12px;
+  --radius-lg: 20px;
 }
 
 body {

@@ -37,6 +37,10 @@ const downloadPercent = computed(() => {
   if (!jobRunning.value) return 0
   return Math.max(0, Math.min(100, Number(downloadJob.value?.percent) || 0))
 })
+const downloadPercentText = computed(() => formatProgress(downloadPercent.value))
+const downloadProgressStyle = computed(() => ({
+  transform: `scaleX(${Math.max(0, Math.min(1, downloadPercent.value / 100))})`
+}))
 const pendingIsRollback = computed(() => {
   if (!ota.value?.pending) return false
   if (downloadJob.value?.mode === 'ROLLBACK') return true
@@ -472,6 +476,13 @@ function formatBytes(bytes) {
   return `${bytes} B`
 }
 
+function formatProgress(value) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0))
+  if (percent >= 100) return '100%'
+  if (percent >= 10) return `${Math.round(percent)}%`
+  return `${percent.toFixed(1)}%`
+}
+
 function compareVersions(left, right) {
   const a = String(left || '').split(/[^0-9]+/)
   const b = String(right || '').split(/[^0-9]+/)
@@ -521,15 +532,30 @@ onBeforeUnmount(() => {
           :class="{ 'is-downloading': jobRunning || downloadStarting, 'is-idle': !releases?.updateAvailable && !ota?.pending }"
           type="button"
           :disabled="primaryDisabled"
-          :aria-label="jobRunning ? `正在下载 ${downloadPercent}%` : (downloadStarting ? '正在准备下载' : primaryLabel)"
+          :aria-label="jobRunning ? `正在下载 ${downloadPercentText}` : (downloadStarting ? '正在准备下载' : primaryLabel)"
           @click="primaryAction"
         >
-          <span v-if="jobRunning || downloadStarting" class="ota-btn-progress" :style="{ width: `${downloadPercent}%` }" aria-hidden="true"></span>
-          <span v-if="!jobRunning && !downloadStarting" class="ota-btn-label" :class="{ 'is-check': !ota?.pending && !releases?.updateAvailable }">
-            <svg v-if="!ota?.pending && !releases?.updateAvailable" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-              <path d="M20 11a8 8 0 1 0-2.3 6.6M20 4v7h-7" />
-            </svg>
-            {{ primaryLabel }}
+          <span
+            v-if="jobRunning"
+            class="ota-btn-progress"
+            :style="downloadProgressStyle"
+            aria-hidden="true"
+          ></span>
+          <span class="ota-btn-label" :class="{ 'is-check': !ota?.pending && !releases?.updateAvailable && !jobRunning && !downloadStarting }">
+            <span v-if="jobRunning" class="ota-btn-progress-text">
+              <span><i class="ota-btn-spinner" aria-hidden="true"></i>正在下载</span>
+              <b>{{ downloadPercentText }}</b>
+            </span>
+            <span v-else-if="downloadStarting" class="ota-btn-progress-text">
+              <span><i class="ota-btn-spinner" aria-hidden="true"></i>准备下载</span>
+              <b>0%</b>
+            </span>
+            <template v-else>
+              <svg v-if="!ota?.pending && !releases?.updateAvailable" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M20 11a8 8 0 1 0-2.3 6.6M20 4v7h-7" />
+              </svg>
+              {{ primaryLabel }}
+            </template>
           </span>
         </button>
       </div>
@@ -651,7 +677,7 @@ onBeforeUnmount(() => {
 
         <div v-if="localUploading" class="ota-local-progress" role="progressbar" :aria-valuenow="localProgress" aria-valuemin="0" aria-valuemax="100">
           <span :style="{ width: `${localProgress}%` }"></span>
-          <b>{{ localProgress }}%</b>
+          <b>{{ formatProgress(localProgress) }}</b>
         </div>
 
         <p v-if="localError" class="ota-local-error">{{ localError }}</p>

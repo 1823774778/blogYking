@@ -1,76 +1,76 @@
 /* ============================================================
    后台工作台
-   中性工作台：石墨顶栏与侧栏、浅灰内容区、单一墨绿强调色。
+   蓝色工作台：顶栏与侧栏随主题同步，深蓝建立结构、浅蓝标记状态。
    ============================================================ */
 
 :root {
   --adm-chrome: #ffffff;
-  --adm-chrome-2: #fbfcfb;
-  --adm-sidebar: #ffffff;
-  --adm-sidebar-hover: #f3f5f4;
-  --adm-chrome-fg: #1b211d;
-  --adm-chrome-muted: #657069;
-  --adm-chrome-subtle: #8a948e;
-  --adm-chrome-line: #e0e5e2;
-  --adm-chrome-hover: #f3f5f4;
-  --adm-chrome-active-bg: #eef3f0;
-  --adm-chrome-active-fg: #245447;
-  --adm-chrome-shadow: 0 1px 2px rgba(24, 28, 33, 0.04);
-  --adm-bg: #f4f5f7;
+  --adm-chrome-2: #f7fbff;
+  --adm-sidebar: #f7faff;
+  --adm-sidebar-hover: #edf4fe;
+  --adm-chrome-fg: #10213a;
+  --adm-chrome-muted: #576b84;
+  --adm-chrome-subtle: #8193a8;
+  --adm-chrome-line: #dbe6f3;
+  --adm-chrome-hover: #eef4fc;
+  --adm-chrome-active-bg: #e4efff;
+  --adm-chrome-active-fg: #173f78;
+  --adm-chrome-shadow: 0 1px 2px rgba(17, 43, 76, 0.04);
+  --adm-bg: #f2f7fd;
   --adm-card: #ffffff;
   --adm-card-solid: #ffffff;
-  --adm-line: #e2e6eb;
-  --adm-line-strong: #cdd3db;
+  --adm-line: #dce7f4;
+  --adm-line-strong: #becee2;
   --adm-shadow:
-    0 1px 2px rgba(24, 28, 33, 0.04),
-    0 12px 30px -18px rgba(24, 28, 33, 0.16);
+    0 1px 2px rgba(17, 43, 76, 0.03),
+    0 16px 36px -28px rgba(23, 63, 120, 0.2);
   --adm-shadow-soft:
-    0 1px 2px rgba(24, 28, 33, 0.03),
-    0 6px 16px -10px rgba(24, 28, 33, 0.1);
-  --adm-accent: #2f6a5a;
-  --adm-accent-deep: #245447;
-  --adm-action-bg: #2f6a5a;
-  --adm-action-hover: #245447;
+    0 1px 2px rgba(17, 43, 76, 0.03),
+    0 10px 24px -20px rgba(23, 63, 120, 0.16);
+  --adm-accent: #24589f;
+  --adm-accent-deep: #173f78;
+  --adm-action-bg: #173f78;
+  --adm-action-hover: #1f4e91;
   --adm-ink: var(--ink);
   --adm-muted: var(--muted);
-  --adm-amber: #b77a16;
-  --adm-danger: #b34b3d;
+  --adm-amber: #b5791e;
+  --adm-danger: #b44545;
   --adm-sidebar-w: 264px;
   --adm-topbar-h: 72px;
 }
 
 [data-theme="dark"] {
-  --adm-chrome: #181b21;
-  --adm-chrome-2: #15181d;
-  --adm-sidebar: #181b21;
+  --adm-chrome: #0a1729;
+  --adm-chrome-2: #081421;
+  --adm-sidebar: #0a1729;
   --adm-sidebar-hover: rgba(255, 255, 255, 0.055);
-  --adm-chrome-fg: #e8ecef;
-  --adm-chrome-muted: #9aa3ad;
-  --adm-chrome-subtle: #7d8791;
-  --adm-chrome-line: #2b3037;
+  --adm-chrome-fg: #eaf3ff;
+  --adm-chrome-muted: #95a9c2;
+  --adm-chrome-subtle: #758aa4;
+  --adm-chrome-line: #1e3148;
   --adm-chrome-hover: rgba(255, 255, 255, 0.06);
-  --adm-chrome-active-bg: rgba(116, 173, 156, 0.14);
-  --adm-chrome-active-fg: #a8d3c5;
-  --adm-chrome-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
-  --adm-bg: #111418;
-  --adm-card: #1b1f24;
-  --adm-card-solid: #1b1f24;
-  --adm-line: #2b3037;
-  --adm-line-strong: #3b424b;
+  --adm-chrome-active-bg: rgba(127, 185, 255, 0.13);
+  --adm-chrome-active-fg: #b7d7ff;
+  --adm-chrome-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  --adm-bg: #071220;
+  --adm-card: #0e1c2f;
+  --adm-card-solid: #0e1c2f;
+  --adm-line: #1d3048;
+  --adm-line-strong: #2c4363;
   --adm-shadow:
     0 1px 2px rgba(0, 0, 0, 0.2),
-    0 14px 32px -18px rgba(0, 0, 0, 0.55);
+    0 16px 36px -20px rgba(0, 0, 0, 0.58);
   --adm-shadow-soft:
     0 1px 2px rgba(0, 0, 0, 0.18),
-    0 6px 16px -10px rgba(0, 0, 0, 0.45);
-  --adm-accent: #74ad9c;
-  --adm-accent-deep: #8fc0b0;
-  --adm-action-bg: #2f6a5a;
-  --adm-action-hover: #3b7d6b;
+    0 8px 20px -12px rgba(0, 0, 0, 0.48);
+  --adm-accent: #7fb9ff;
+  --adm-accent-deep: #a8d0ff;
+  --adm-action-bg: #1e4f91;
+  --adm-action-hover: #2b66b5;
   --adm-ink: var(--ink);
   --adm-muted: var(--muted);
-  --adm-amber: #e0a057;
-  --adm-danger: #e17d69;
+  --adm-amber: #e0ae68;
+  --adm-danger: #e78686;
 }
 
 /* ---------- 品牌 Logo ---------- */
@@ -134,7 +134,7 @@
   height: 38px;
   flex: 0 0 38px;
   border-radius: 12px;
-  background: #2f6a5a;
+  background: #24589f;
   color: #fff;
   box-shadow: none;
 }
@@ -679,8 +679,8 @@
 }
 
 .adm-role-pill {
-  border-color: rgba(47, 106, 90, 0.26);
-  background: rgba(47, 106, 90, 0.1);
+  border-color: rgba(36, 88, 159, 0.26);
+  background: rgba(36, 88, 159, 0.1);
   color: var(--adm-accent-deep);
 }
 
@@ -713,7 +713,7 @@
   left: 18px;
   right: 18px;
   height: 2px;
-  background: rgba(47, 106, 90, 0.4);
+  background: rgba(36, 88, 159, 0.4);
 }
 
 .adm-stat-card.featured::before {
@@ -870,11 +870,11 @@
 }
 
 .adm-table tbody tr:hover {
-  background: rgba(47, 106, 90, 0.045);
+  background: rgba(36, 88, 159, 0.045);
 }
 
 .adm-table tbody tr.is-self {
-  background: rgba(47, 106, 90, 0.06);
+  background: rgba(36, 88, 159, 0.06);
 }
 
 .adm-table td {
@@ -996,8 +996,8 @@
 .adm-status.is-published,
 .adm-status.is-visible,
 .adm-status.is-admin {
-  border-color: rgba(47, 106, 90, 0.32);
-  background: rgba(47, 106, 90, 0.1);
+  border-color: rgba(36, 88, 159, 0.32);
+  background: rgba(36, 88, 159, 0.1);
   color: var(--adm-accent-deep);
 }
 
@@ -1135,8 +1135,8 @@
 }
 
 .adm-attention-banner.clear {
-  border-color: rgba(47, 106, 90, 0.26);
-  background: rgba(47, 106, 90, 0.08);
+  border-color: rgba(36, 88, 159, 0.26);
+  background: rgba(36, 88, 159, 0.08);
 }
 
 .adm-attention-icon {
@@ -1151,7 +1151,7 @@
 }
 
 .adm-attention-banner.clear .adm-attention-icon {
-  background: rgba(47, 106, 90, 0.16);
+  background: rgba(36, 88, 159, 0.16);
   color: var(--adm-accent-deep);
 }
 
@@ -1263,8 +1263,8 @@
 }
 
 .adm-quick-grid a:hover {
-  border-color: rgba(47, 106, 90, 0.3);
-  background: rgba(47, 106, 90, 0.07);
+  border-color: rgba(36, 88, 159, 0.3);
+  background: rgba(36, 88, 159, 0.07);
   color: var(--adm-accent-deep);
 }
 
@@ -1284,7 +1284,7 @@
   border: 1px solid var(--adm-line);
   border-radius: 15px;
   background:
-    radial-gradient(500px 220px at 0% 0%, rgba(47, 106, 90, 0.12), transparent 66%),
+    radial-gradient(500px 220px at 0% 0%, rgba(36, 88, 159, 0.12), transparent 66%),
     var(--adm-card);
   box-shadow: var(--adm-shadow-soft);
 }
@@ -1296,7 +1296,7 @@
   height: 58px;
   flex: 0 0 58px;
   border-radius: 50%;
-  border: 2px solid rgba(47, 106, 90, 0.28);
+  border: 2px solid rgba(36, 88, 159, 0.28);
   background: var(--accent-soft);
   color: var(--adm-accent-deep);
   font-size: 23px;
@@ -1572,7 +1572,7 @@
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 2px 6px rgba(7, 33, 24, 0.18);
+  box-shadow: 0 2px 6px rgba(9, 30, 58, 0.18);
   transition: transform 0.2s ease;
 }
 
@@ -1651,7 +1651,7 @@
   padding: 15px;
   border: 1px solid var(--adm-line);
   border-radius: 10px;
-  background: rgba(47, 106, 90, 0.06);
+  background: rgba(36, 88, 159, 0.06);
 }
 
 .adm-music-bars {
@@ -1744,7 +1744,7 @@
   margin: 14px 0 0;
   padding: 10px 12px;
   border-left: 2px solid var(--adm-accent-deep);
-  background: rgba(47, 106, 90, 0.08);
+  background: rgba(36, 88, 159, 0.08);
   color: var(--adm-accent-deep);
   font-size: 12px;
   line-height: 1.6;
@@ -2266,13 +2266,13 @@
   max-width: min(520px, calc(100vw - 52px));
   padding: 11px 16px;
   background: #0b3a34;
-  color: #effaf6;
+  color: #eef6ff;
   line-height: 1.6;
   text-align: left;
 }
 .app.is-admin .toast.error {
-  background: #8f2d13;
-  color: #fff3ec;
+  background: #a33b3b;
+  color: #fff2ef;
 }
 
 .adm-mini-state.is-on {
@@ -2382,13 +2382,13 @@
 }
 
 .adm-model-chip:hover {
-  border-color: rgba(47, 106, 90, 0.4);
+  border-color: rgba(36, 88, 159, 0.4);
   color: var(--adm-accent-deep);
 }
 
 .adm-model-chip.on {
-  border-color: rgba(47, 106, 90, 0.55);
-  background: rgba(47, 106, 90, 0.12);
+  border-color: rgba(36, 88, 159, 0.55);
+  background: rgba(36, 88, 159, 0.12);
   color: var(--adm-accent-deep);
 }
 
@@ -2512,7 +2512,7 @@
   padding: 0 6px;
   border: 1px solid var(--adm-line);
   border-radius: 8px;
-  background: rgba(47, 106, 90, 0.09);
+  background: rgba(36, 88, 159, 0.09);
   color: var(--adm-accent-deep);
   font-family: var(--mono);
   font-size: 9px;
@@ -2551,7 +2551,7 @@
   padding: 13px 16px;
   border: 1px solid var(--adm-line);
   border-radius: 10px;
-  background: rgba(47, 106, 90, 0.035);
+  background: rgba(36, 88, 159, 0.035);
 }
 
 .storage-mode-facts span {
@@ -2607,12 +2607,12 @@
 
 .storage-category-folder:hover,
 .storage-category-folder.is-active {
-  border-color: rgba(47, 106, 90, 0.45);
-  background: rgba(47, 106, 90, 0.07);
+  border-color: rgba(36, 88, 159, 0.45);
+  background: rgba(36, 88, 159, 0.07);
 }
 
 .storage-category-folder.is-active {
-  box-shadow: inset 0 0 0 1px rgba(47, 106, 90, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(36, 88, 159, 0.12);
 }
 
 .storage-folder-icon {
@@ -2622,7 +2622,7 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: rgba(47, 106, 90, 0.12);
+  background: rgba(36, 88, 159, 0.12);
   color: var(--adm-accent-deep);
   font-size: 12px;
   font-weight: 700;
@@ -2713,7 +2713,7 @@
   padding: 3px 7px;
   border: 1px solid var(--adm-line);
   border-radius: 999px;
-  background: rgba(47, 106, 90, 0.055);
+  background: rgba(36, 88, 159, 0.055);
   color: var(--adm-accent-deep);
   font-size: 10px;
   white-space: nowrap;
@@ -2787,7 +2787,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--good);
-  box-shadow: 0 0 0 3px rgba(47, 106, 90, 0.12);
+  box-shadow: 0 0 0 3px rgba(36, 88, 159, 0.12);
 }
 
 .ota-primary-action {
@@ -2801,8 +2801,8 @@
   min-width: 166px;
   color: var(--adm-accent);
   background: var(--adm-card-solid);
-  border-color: rgba(47, 106, 90, 0.52);
-  box-shadow: inset 0 0 0 1px rgba(47, 106, 90, 0.08);
+  border-color: rgba(36, 88, 159, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(36, 88, 159, 0.08);
 }
 
 .ota-primary-action.is-downloading:disabled {
@@ -2825,7 +2825,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 0;
-  background: linear-gradient(90deg, rgba(47, 106, 90, 0.24), rgba(47, 106, 90, 0.38));
+  background: linear-gradient(90deg, rgba(36, 88, 159, 0.24), rgba(36, 88, 159, 0.38));
   transition: width 0.35s ease;
 }
 
@@ -2867,7 +2867,7 @@
   padding: 16px;
   border: 1px dashed var(--adm-line-strong);
   border-radius: 12px;
-  background: rgba(47, 106, 90, 0.035);
+  background: rgba(36, 88, 159, 0.035);
 }
 
 .ota-hidden-input {
@@ -2894,15 +2894,15 @@
   height: 38px;
   margin-top: 14px;
   overflow: hidden;
-  border: 1px solid rgba(47, 106, 90, 0.34);
+  border: 1px solid rgba(36, 88, 159, 0.34);
   border-radius: 9px;
-  background: rgba(47, 106, 90, 0.08);
+  background: rgba(36, 88, 159, 0.08);
 }
 
 .ota-local-progress span {
   position: absolute;
   inset: 0 auto 0 0;
-  background: rgba(47, 106, 90, 0.24);
+  background: rgba(36, 88, 159, 0.24);
   transition: width 0.25s ease;
 }
 
@@ -3042,10 +3042,10 @@
 .ff-comment-summary {
   margin: 18px 0 0;
   padding: 18px 20px;
-  border: 1px solid rgba(47, 106, 90, 0.3);
+  border: 1px solid rgba(36, 88, 159, 0.3);
   border-radius: 10px;
   background:
-    linear-gradient(135deg, rgba(47, 106, 90, 0.08), transparent 65%),
+    linear-gradient(135deg, rgba(36, 88, 159, 0.08), transparent 65%),
     var(--paper);
 }
 
@@ -3107,7 +3107,7 @@
 [data-theme="dark"] .adm-role-pill,
 [data-theme="dark"] .adm-search,
 [data-theme="dark"] .adm-quick-grid a {
-  background: rgba(116, 173, 156, 0.055);
+  background: rgba(127, 185, 255, 0.055);
 }
 
 [data-theme="dark"] .adm-status.is-draft,
@@ -3116,7 +3116,7 @@
 }
 
 [data-theme="dark"] .adm-table th {
-  background: rgba(116, 173, 156, 0.06);
+  background: rgba(127, 185, 255, 0.06);
 }
 
 [data-theme="dark"] .adm-model-list,
@@ -3368,7 +3368,7 @@
   padding: 34px 38px;
   overflow: hidden;
   background:
-    radial-gradient(420px 260px at 9% 18%, rgba(47, 106, 90, 0.18), transparent 65%),
+    radial-gradient(420px 260px at 9% 18%, rgba(36, 88, 159, 0.18), transparent 65%),
     var(--adm-card);
 }
 
@@ -3382,7 +3382,7 @@
 
 .smtp-orbit {
   position: absolute;
-  border: 1px solid rgba(47, 106, 90, 0.24);
+  border: 1px solid rgba(36, 88, 159, 0.24);
   border-radius: 50%;
 }
 
@@ -3404,9 +3404,9 @@
   height: 88px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(47, 106, 90, 0.28);
+  border: 1px solid rgba(36, 88, 159, 0.28);
   border-radius: 26px;
-  background: rgba(47, 106, 90, 0.12);
+  background: rgba(36, 88, 159, 0.12);
   color: var(--adm-accent-deep);
   box-shadow: 0 18px 36px rgba(31, 141, 107, 0.14);
 }
@@ -3424,7 +3424,7 @@
   padding: 5px 8px;
   border-radius: 999px;
   background: var(--adm-chrome);
-  color: #a9e5cf;
+  color: #b4d7ff;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 9px;
   letter-spacing: 0.18em;
@@ -3574,7 +3574,7 @@
   padding: 16px 18px 8px;
   border: 1px solid var(--adm-line);
   border-radius: 14px;
-  background: rgba(47, 106, 90, 0.045);
+  background: rgba(36, 88, 159, 0.045);
 }
 
 .mail-config-grid .field {
@@ -3699,8 +3699,8 @@
 }
 
 .mail-editor-toolbar button:hover {
-  border-color: rgba(47, 106, 90, 0.4);
-  background: rgba(47, 106, 90, 0.08);
+  border-color: rgba(36, 88, 159, 0.4);
+  background: rgba(36, 88, 159, 0.08);
 }
 
 .mail-html-field {
@@ -3722,7 +3722,7 @@
 .mail-preview-badge {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(47, 106, 90, 0.1);
+  background: rgba(36, 88, 159, 0.1);
   color: var(--adm-accent-deep);
   font-size: 10px;
 }
@@ -3758,7 +3758,7 @@
   border: 1px solid var(--adm-line);
   border-radius: 12px;
   overflow: hidden;
-  background: #f2f7f4;
+  background: #f1f6fd;
 }
 
 .mail-preview-frame iframe {
@@ -3809,7 +3809,7 @@
 }
 
 [data-theme="dark"] .mail-config-grid {
-  background: rgba(47, 106, 90, 0.055);
+  background: rgba(36, 88, 159, 0.055);
 }
 
 [data-theme="dark"] .mail-preview-frame {
@@ -3905,7 +3905,7 @@
   border: 1px solid var(--adm-line);
   border-radius: 12px;
   background:
-    radial-gradient(170px 80px at 0% 0%, rgba(47, 106, 90, 0.13), transparent 75%),
+    radial-gradient(170px 80px at 0% 0%, rgba(36, 88, 159, 0.13), transparent 75%),
     var(--adm-bg);
 }
 
@@ -3917,7 +3917,7 @@
   flex: 0 0 42px;
   border-radius: 12px;
   background: var(--adm-chrome);
-  color: #b9f0dd;
+  color: #c8e2ff;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 17px;
   font-weight: 700;
@@ -3956,11 +3956,11 @@
 }
 
 .adm-notice-row:hover {
-  background: rgba(47, 106, 90, 0.07);
+  background: rgba(36, 88, 159, 0.07);
 }
 
 .adm-notice-row.unread {
-  background: rgba(47, 106, 90, 0.055);
+  background: rgba(36, 88, 159, 0.055);
 }
 
 .adm-notice-icon {
@@ -3969,7 +3969,7 @@
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: rgba(47, 106, 90, 0.12);
+  background: rgba(36, 88, 159, 0.12);
   color: var(--adm-accent-deep);
 }
 
@@ -4139,7 +4139,7 @@
 }
 
 [data-theme="dark"] .ota-history-count {
-  background: rgba(116, 173, 156, 0.16);
+  background: rgba(127, 185, 255, 0.16);
   color: var(--accent-ink);
 }
 

@@ -89,8 +89,14 @@ if (systemTheme) {
 let toastTimer = null
 
 export function toast(message, type = 'info') {
+  if (state.toasts.some((item) => item.message === message && item.type === type)) {
+    return
+  }
   const id = Date.now() + Math.random()
   state.toasts.push({ id, message, type })
+  if (state.toasts.length > 4) {
+    state.toasts = state.toasts.slice(-4)
+  }
   setTimeout(() => {
     state.toasts = state.toasts.filter((t) => t.id !== id)
   }, 2600)

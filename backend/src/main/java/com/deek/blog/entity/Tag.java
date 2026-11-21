@@ -27,7 +27,7 @@ public class Tag {
     private String description;
 
     @Column(length = 20)
-    private String color = "#2f9d79";
+    private String color = "#4f86d8";
 
     @Column(nullable = false)
     private int sortOrder = 0;

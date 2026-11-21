@@ -13,7 +13,7 @@ const form = reactive({
   name: '',
   slug: '',
   description: '',
-  color: '#2f9d79',
+  color: '#4f86d8',
   sortOrder: 0,
   visible: true
 })
@@ -34,7 +34,7 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  Object.assign(form, { name: '', slug: '', description: '', color: '#2f9d79', sortOrder: 0, visible: true })
+  Object.assign(form, { name: '', slug: '', description: '', color: '#4f86d8', sortOrder: 0, visible: true })
   modalOpen.value = true
 }
 
@@ -44,7 +44,7 @@ function openEdit(tag) {
     name: tag.name,
     slug: tag.slug || '',
     description: tag.description || '',
-    color: tag.color || '#2f9d79',
+    color: tag.color || '#4f86d8',
     sortOrder: tag.sortOrder || 0,
     visible: tag.visible
   })
@@ -153,7 +153,7 @@ onMounted(load)
             <tr v-for="tag in tags" :key="tag.id">
               <td>
                 <div class="tag-admin-name">
-                  <i :style="{ background: tag.color || '#2f9d79' }"></i>
+                  <i :style="{ background: tag.color || '#4f86d8' }"></i>
                   <div><strong>{{ tag.name }}</strong><span v-if="tag.description">{{ tag.description }}</span></div>
                 </div>
               </td>
