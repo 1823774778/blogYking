@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import http from '../../api'
 import { state, toast } from '../../state'
+import { MUSIC_PLATFORMS, detectMusicPlatform, platformMeta, playlistEmbedUrl, playlistOpenUrl } from '../../utils/music'
 
 const route = useRoute()
 const activeTab = computed(() => String(route.query.tab || 'basic'))
@@ -21,6 +22,16 @@ const showLogoPreview = computed(() => Boolean(config.value.logo) && !logoFailed
 const showAvatarPreview = computed(() => Boolean(config.value.avatar) && !avatarFailed.value)
 const previewFallback = computed(() => (config.value.siteName || '墨').trim().slice(0, 1) || '墨')
 
+const musicSourceValue = computed(() => (config.value.musicSource === 'playlist' ? 'playlist' : 'audio'))
+const musicPlatform = computed(() => platformMeta(config.value.musicPlaylistPlatform || detectMusicPlatform(config.value.musicPlaylistUrl)))
+const musicPreviewTitle = computed(() => musicSourceValue.value === 'playlist'
+  ? (config.value.musicPlaylistTitle || config.value.musicTitle || '未选择歌单')
+  : (config.value.musicTitle || '未选择音乐'))
+const musicPreviewSubtitle = computed(() => musicSourceValue.value === 'playlist'
+  ? `${musicPlatform.value.label} · 分享歌单`
+  : (config.value.musicArtist || '单曲音频'))
+const musicEmbedAvailable = computed(() => Boolean(playlistEmbedUrl(config.value.musicPlaylistPlatform, config.value.musicPlaylistUrl)))
+
 watch(() => config.value.logo, () => { logoFailed.value = false })
 watch(() => config.value.avatar, () => { avatarFailed.value = false })
 
@@ -30,6 +41,19 @@ function boolValue(value) {
 
 function setBool(key, event) {
   config.value[key] = event.target.checked ? 'true' : 'false'
+}
+
+function setMusicSource(source) {
+  config.value.musicSource = source
+}
+
+function onPlaylistInput() {
+  const platform = detectMusicPlatform(config.value.musicPlaylistUrl)
+  config.value.musicPlaylistPlatform = platform
+}
+
+function playlistOpenLink() {
+  return playlistOpenUrl(config.value.musicPlaylistPlatform, config.value.musicPlaylistUrl)
 }
 
 async function load() {
@@ -237,9 +261,25 @@ onMounted(load)
         </aside>
       </div>
 
-      <div v-else-if="activeTab === 'music'" class="adm-settings-grid">
+      <div v-else-if="activeTab === 'music'" class="adm-settings-grid music-settings-grid">
         <section class="adm-card">
-          <div class="adm-card-head"><div><span class="adm-card-kicker">MUSIC</span><h2>站点音乐</h2></div></div>
+          <div class="adm-card-head">
+            <div><span class="adm-card-kicker">MUSIC</span><h2>站点音乐</h2><p>单曲音频或各大平台分享歌单，均可展示在前台右下角的悬浮播放器。</p></div>
+          </div>
+
+          <div class="music-source-switch" role="tablist" aria-label="音乐来源">
+            <button type="button" :class="{ on: musicSourceValue === 'audio' }" @click="setMusicSource('audio')">
+              <span class="music-source-icon">♪</span>
+              <strong>单曲音频</strong>
+              <small>上传或填写直链</small>
+            </button>
+            <button type="button" :class="{ on: musicSourceValue === 'playlist' }" @click="setMusicSource('playlist')">
+              <span class="music-source-icon">♫</span>
+              <strong>平台歌单</strong>
+              <small>网易云 / QQ 音乐等</small>
+            </button>
+          </div>
+
           <div class="form-grid">
             <div class="field span-2">
               <label class="adm-switch-label">
@@ -247,40 +287,104 @@ onMounted(load)
                 <input type="checkbox" :checked="boolValue(config.musicEnabled)" @change="setBool('musicEnabled', $event)" />
                 <i class="adm-switch" aria-hidden="true"></i>
               </label>
-              <p class="adm-note">浏览器禁止自动播放，读者点击右下角音乐按钮后开始播放，不会强制打扰浏览。</p>
+              <p class="adm-note">浏览器禁止自动播放，读者点击右下角音乐按钮后才会展开并开始播放，不会强制打扰浏览。</p>
             </div>
-            <div class="field">
-              <label for="musicTitle">音乐名称</label>
-              <input id="musicTitle" v-model="config.musicTitle" type="text" maxlength="64" placeholder="例如：夜航星" />
-            </div>
-            <div class="field">
-              <label for="musicUrl">音乐地址</label>
-              <input id="musicUrl" v-model="config.musicUrl" type="text" placeholder="https://… 或上传音频" />
-            </div>
-            <div class="field span-2">
-              <label>上传音频</label>
-              <div class="adm-media-row">
-                <audio v-if="config.musicUrl" :src="config.musicUrl" controls preload="metadata" class="adm-audio-preview"></audio>
-                <div>
-                  <button class="btn btn-ghost btn-sm" type="button" :disabled="uploadingMusic" @click="pickMusic">{{ uploadingMusic ? '上传中…' : '选择音频' }}</button>
-                  <p class="meta">支持 mp3 / ogg / wav / m4a / aac / flac，30MB 以内。</p>
-                  <input ref="musicInput" type="file" accept="audio/*" hidden @change="uploadMusic" />
+
+            <template v-if="musicSourceValue === 'audio'">
+              <div class="field">
+                <label for="musicTitle">音乐名称</label>
+                <input id="musicTitle" v-model="config.musicTitle" type="text" maxlength="64" placeholder="例如：夜航星" />
+              </div>
+              <div class="field">
+                <label for="musicArtist">歌手 / 来源</label>
+                <input id="musicArtist" v-model="config.musicArtist" type="text" maxlength="64" placeholder="例如：不才 / 本站音频" />
+              </div>
+              <div class="field span-2">
+                <label for="musicUrl">音乐地址</label>
+                <input id="musicUrl" v-model="config.musicUrl" type="text" placeholder="https://… 或上传音频" />
+              </div>
+              <div class="field span-2">
+                <label>上传音频</label>
+                <div class="adm-media-row">
+                  <audio v-if="config.musicUrl" :src="config.musicUrl" controls preload="metadata" class="adm-audio-preview"></audio>
+                  <div>
+                    <button class="btn btn-ghost btn-sm" type="button" :disabled="uploadingMusic" @click="pickMusic">{{ uploadingMusic ? '上传中…' : '选择音频' }}</button>
+                    <p class="meta">支持 mp3 / ogg / wav / m4a / aac / flac，30MB 以内。</p>
+                    <input ref="musicInput" type="file" accept="audio/*" hidden @change="uploadMusic" />
+                  </div>
                 </div>
               </div>
-            </div>
+            </template>
+
+            <template v-else>
+              <div class="field span-2">
+                <label>分享平台</label>
+                <div class="music-platform-picker">
+                  <button
+                    v-for="platform in MUSIC_PLATFORMS"
+                    :key="platform.value"
+                    type="button"
+                    :class="{ on: config.musicPlaylistPlatform === platform.value }"
+                    :style="{ '--platform-tone': platform.tone }"
+                    @click="config.musicPlaylistPlatform = platform.value"
+                  >
+                    <span>{{ platform.mark }}</span>{{ platform.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="field span-2">
+                <label for="musicPlaylistUrl">歌单分享链接</label>
+                <input
+                  id="musicPlaylistUrl"
+                  v-model="config.musicPlaylistUrl"
+                  type="text"
+                  placeholder="粘贴网易云、QQ 音乐、酷狗或酷我的歌单分享链接"
+                  @input="onPlaylistInput"
+                />
+                <p class="meta">自动识别平台；网易云与 QQ 音乐支持内嵌播放，其他平台会在前台提供“打开歌单”入口。</p>
+              </div>
+              <div class="field span-2">
+                <label for="musicPlaylistTitle">歌单名称</label>
+                <input id="musicPlaylistTitle" v-model="config.musicPlaylistTitle" type="text" maxlength="80" placeholder="例如：深夜写代码时听的歌" />
+              </div>
+              <div class="field span-2">
+                <label>歌单预览</label>
+                <div class="music-playlist-check">
+                  <span class="music-platform-badge" :style="{ '--platform-tone': musicPlatform.tone }">{{ musicPlatform.mark }}</span>
+                  <div>
+                    <strong>{{ config.musicPlaylistTitle || '未命名歌单' }}</strong>
+                    <small>{{ musicPlatform.label }} · {{ musicEmbedAvailable ? '支持内嵌播放' : '将跳转到原平台播放' }}</small>
+                  </div>
+                  <a v-if="playlistOpenLink()" :href="playlistOpenLink()" target="_blank" rel="noopener" class="btn-text">打开歌单 ↗</a>
+                </div>
+              </div>
+            </template>
           </div>
         </section>
+
         <aside class="adm-side-stack">
-          <section class="adm-card">
+          <section class="adm-card music-preview-card">
             <div class="adm-card-head"><div><span class="adm-card-kicker">PLAYER</span><h2>播放器预览</h2></div></div>
-            <div class="adm-music-preview">
-              <span class="adm-music-bars"><i></i><i></i><i></i><i></i></span>
-              <div>
-                <strong>{{ config.musicTitle || '未选择音乐' }}</strong>
-                <span>{{ boolValue(config.musicEnabled) ? '已启用，显示在前台右下角' : '未启用' }}</span>
+            <div class="music-preview-shell" :class="{ 'is-playlist': musicSourceValue === 'playlist' }" :style="{ '--platform-tone': musicPlatform.tone }">
+              <span class="music-preview-orb" :style="{ '--platform-tone': musicPlatform.tone }">
+                {{ musicSourceValue === 'playlist' ? musicPlatform.mark : '♪' }}
+              </span>
+              <div class="music-preview-copy">
+                <strong>{{ musicPreviewTitle }}</strong>
+                <span>{{ musicPreviewSubtitle }}</span>
               </div>
+              <span class="music-preview-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
             </div>
-            <p class="adm-note">保存后到前台首页或文章页右下角查看实际播放按钮。</p>
+            <p class="adm-note">{{ boolValue(config.musicEnabled) ? '已启用，保存后显示在前台右下角。' : '尚未启用，保存并打开开关后才会显示。' }}</p>
+          </section>
+          <section class="adm-card">
+            <div class="adm-card-head"><div><span class="adm-card-kicker">TIPS</span><h2>歌单使用说明</h2></div></div>
+            <ul class="music-tips">
+              <li>在音乐平台网页版打开歌单，点击“分享”复制链接。</li>
+              <li>网易云链接形如 <code>music.163.com/playlist?id=…</code>。</li>
+              <li>QQ 音乐链接形如 <code>y.qq.com/n/ryqq/playlist/…</code>。</li>
+              <li>平台限制内嵌时，读者仍可通过“打开歌单”跳转收听。</li>
+            </ul>
           </section>
         </aside>
       </div>
@@ -355,4 +459,39 @@ onMounted(load)
 
 <style scoped>
 .site-announcement-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); color: var(--ink-soft); font-size: 12px; }
+
+.music-settings-grid { align-items: start; }
+.music-source-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, var(--accent-soft)); }
+.music-source-switch button { display: grid; grid-template-columns: 30px 1fr; grid-template-rows: auto auto; gap: 0 9px; align-items: center; padding: 11px 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink-soft); text-align: left; cursor: pointer; transition: .16s ease; }
+.music-source-switch button:hover { background: var(--paper); }
+.music-source-switch button.on { border-color: var(--accent); background: var(--paper); box-shadow: 0 4px 14px rgba(36, 88, 159, .08); }
+.music-source-icon { grid-row: span 2; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); font-size: 16px; }
+.music-source-switch strong { font-size: 12.5px; color: var(--ink); }
+.music-source-switch small { font-size: 10px; color: var(--muted); }
+.music-platform-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.music-platform-picker button { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink-soft); font-size: 12px; cursor: pointer; }
+.music-platform-picker button span { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 6px; background: color-mix(in srgb, var(--platform-tone) 14%, transparent); color: var(--platform-tone); font-size: 10px; font-weight: 800; }
+.music-platform-picker button.on { border-color: var(--platform-tone); color: var(--ink); box-shadow: 0 0 0 2px color-mix(in srgb, var(--platform-tone) 12%, transparent); }
+.music-playlist-check { display: flex; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface, var(--accent-soft)); }
+.music-playlist-check > div { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.music-playlist-check strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.music-playlist-check small { color: var(--muted); font-size: 10.5px; }
+.music-platform-badge { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; background: color-mix(in srgb, var(--platform-tone) 13%, var(--paper)); color: var(--platform-tone); font-size: 15px; font-weight: 800; }
+.music-preview-card { overflow: hidden; }
+.music-preview-shell { position: relative; display: flex; align-items: center; gap: 13px; padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: linear-gradient(135deg, var(--accent-soft), var(--paper)); }
+.music-preview-shell.is-playlist { background: linear-gradient(135deg, color-mix(in srgb, var(--platform-tone, var(--accent)) 10%, var(--paper)), var(--paper)); }
+.music-preview-orb { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 13px; background: color-mix(in srgb, var(--platform-tone, var(--accent)) 14%, var(--paper)); color: var(--platform-tone, var(--accent)); font-size: 18px; font-weight: 800; }
+.music-preview-copy { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.music-preview-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 14px; }
+.music-preview-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10.5px; }
+.music-preview-eq { display: flex; align-items: flex-end; gap: 3px; width: 20px; height: 19px; flex: 0 0 20px; }
+.music-preview-eq i { width: 3px; border-radius: 3px; background: var(--accent-ink); animation: music-eq 1s ease-in-out infinite alternate; }
+.music-preview-eq i:nth-child(1) { height: 7px; animation-delay: 0s; }
+.music-preview-eq i:nth-child(2) { height: 15px; animation-delay: .18s; }
+.music-preview-eq i:nth-child(3) { height: 10px; animation-delay: .34s; }
+.music-preview-eq i:nth-child(4) { height: 18px; animation-delay: .09s; }
+@keyframes music-eq { from { transform: scaleY(.55); opacity: .55; } to { transform: scaleY(1); opacity: 1; } }
+.music-tips { display: grid; gap: 9px; margin: 0; padding: 0 0 0 18px; color: var(--ink-soft); font-size: 11.5px; line-height: 1.7; }
+.music-tips code { color: var(--accent-ink); font-family: var(--mono); font-size: 10.5px; }
+@media (max-width: 720px) { .music-source-switch { grid-template-columns: 1fr; } .music-platform-picker { display: grid; grid-template-columns: 1fr 1fr; } .music-playlist-check { flex-wrap: wrap; } }
 </style>

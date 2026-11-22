@@ -5,6 +5,7 @@ import http from '../api'
 import { clearAuth, state, toast } from '../state'
 import { initialOf } from '../utils'
 import ThemeMenu from '../components/ThemeMenu.vue'
+import AdminNavIcon from '../components/AdminNavIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,17 +26,34 @@ const sections = [
   { key: 'dashboard', label: '仪表盘', to: '/admin', icon: 'dashboard' },
   { key: 'profile', label: '个人中心', to: '/admin/profile', icon: 'profile' },
   { key: 'users', label: '用户管理', to: '/admin/users', icon: 'users' },
-  { key: 'roles', label: '角色权限', to: '/admin/roles', icon: 'users' },
+  { key: 'roles', label: '角色权限', to: '/admin/roles', icon: 'roles' },
   { key: 'posts', label: '文章管理', to: '/admin/posts', icon: 'posts' },
   { key: 'comments', label: '评论管理', to: '/admin/comments', icon: 'comments' },
   { key: 'tags', label: '标签管理', to: '/admin/tags', icon: 'tags' },
-  { key: 'announcements', label: '公告管理', to: '/admin/announcements', icon: 'notifications' },
-  { key: 'themes', label: '主题管理', to: '/admin/themes', icon: 'site' },
+  { key: 'announcements', label: '公告管理', to: '/admin/announcements', icon: 'announcements' },
+  { key: 'themes', label: '主题管理', to: '/admin/themes', icon: 'themes' },
   { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site' },
   { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications' },
   { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage' },
   { key: 'settings', label: '站点设置', to: '/admin/settings', icon: 'settings' }
 ]
+
+const primarySections = [sections[0], sections[1]]
+const navGroups = [
+  {
+    key: 'content',
+    label: '内容',
+    hint: 'CONTENT',
+    items: ['posts', 'comments', 'tags', 'announcements', 'themes'].map((key) => sections.find((item) => item.key === key))
+  },
+  {
+    key: 'settings',
+    label: '设置',
+    hint: 'SETTINGS',
+    items: ['users', 'roles', 'site-info', 'notifications', 'storage', 'settings'].map((key) => sections.find((item) => item.key === key))
+  }
+]
+const groupedSections = navGroups.flatMap((group) => group.items)
 
 const sectionTabs = {
   dashboard: [
@@ -236,61 +254,56 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
     <aside class="admin-sidebar" :class="{ open: mobileOpen }">
       <nav class="admin-nav" aria-label="后台主导航">
         <router-link
-          v-for="section in sections"
+          v-for="section in primarySections"
           :key="section.key"
           :to="section.to"
-          class="admin-nav-item"
+          class="admin-nav-item is-primary"
           :class="{ active: currentSection?.key === section.key }"
           :title="collapsed ? section.label : ''"
           :aria-label="section.label"
           @click="closeMobile"
         >
-          <span class="admin-nav-icon" aria-hidden="true">
-            <svg v-if="section.icon === 'dashboard'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <rect x="3" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" />
-            </svg>
-            <svg v-else-if="section.icon === 'profile'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <circle cx="12" cy="8" r="3.4" />
-              <path d="M5 20a7 7 0 0 1 14 0" />
-            </svg>
-            <svg v-else-if="section.icon === 'users'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <circle cx="9" cy="8" r="3" />
-              <path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.6M17 14.5a5 5 0 0 1 3.5 4.5" />
-            </svg>
-            <svg v-else-if="section.icon === 'posts'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <path d="M5 3h10l4 4v14H5V3Z" />
-              <path d="M15 3v4h4M8 12h8M8 16h6" />
-            </svg>
-            <svg v-else-if="section.icon === 'comments'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <path d="M4 5h16v11H9l-5 4V5Z" />
-              <path d="M8 9h8M8 12h5" />
-            </svg>
-            <svg v-else-if="section.icon === 'site'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-            </svg>
-            <svg v-else-if="section.icon === 'tags'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <path d="M20 13 13 20a2 2 0 0 1-2.8 0L4 13.8V4h9.8L20 10.2a2 2 0 0 1 0 2.8Z" />
-              <circle cx="8.5" cy="8.5" r="1.4" />
-            </svg>
-            <svg v-else-if="section.icon === 'storage'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <ellipse cx="12" cy="6" rx="8" ry="3" />
-              <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
-            </svg>
-            <svg v-else-if="section.icon === 'notifications'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-              <path d="M10 21h4" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.9 1.9-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V20h-2.6v-.1A1.7 1.7 0 0 0 11 18.4a1.7 1.7 0 0 0-1.9.3l-.1.1-1.9-1.9.1-.1A1.7 1.7 0 0 0 7.5 15a1.7 1.7 0 0 0-1.5-1H6v-2.6h.1A1.7 1.7 0 0 0 7.5 10a1.7 1.7 0 0 0-.3-1.9L7.1 8l1.9-1.9.1.1A1.7 1.7 0 0 0 11 6.5a1.7 1.7 0 0 0 1-1.5V5h2.6v.1A1.7 1.7 0 0 0 15.6 6.5a1.7 1.7 0 0 0 1.9-.3l.1-.1L19.5 8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21v2.6h-.1a1.7 1.7 0 0 0-1.5 1Z" />
-            </svg>
-          </span>
+          <span class="admin-nav-icon" aria-hidden="true"><AdminNavIcon :name="section.icon" /></span>
           <span v-if="!collapsed || mobileOpen" class="admin-nav-label">{{ section.label }}</span>
         </router-link>
+
+        <div v-if="collapsed && !mobileOpen" class="admin-nav-rail-divider" aria-hidden="true"></div>
+
+        <template v-if="!collapsed || mobileOpen">
+          <div v-for="group in navGroups" :key="group.key" class="admin-nav-group">
+            <div class="admin-nav-group-head">
+              <span>{{ group.label }}</span>
+              <small>{{ group.hint }}</small>
+            </div>
+            <router-link
+              v-for="section in group.items"
+              :key="section.key"
+              :to="section.to"
+              class="admin-nav-item is-child"
+              :class="{ active: currentSection?.key === section.key }"
+              :aria-label="section.label"
+              @click="closeMobile"
+            >
+              <span class="admin-nav-icon" aria-hidden="true"><AdminNavIcon :name="section.icon" /></span>
+              <span class="admin-nav-label">{{ section.label }}</span>
+            </router-link>
+          </div>
+        </template>
+
+        <template v-else>
+          <router-link
+            v-for="section in groupedSections"
+            :key="section.key"
+            :to="section.to"
+            class="admin-nav-item is-child-rail"
+            :class="{ active: currentSection?.key === section.key }"
+            :title="section.label"
+            :aria-label="section.label"
+            @click="closeMobile"
+          >
+            <span class="admin-nav-icon" aria-hidden="true"><AdminNavIcon :name="section.icon" /></span>
+          </router-link>
+        </template>
       </nav>
 
       <div class="admin-sidebar-footer">

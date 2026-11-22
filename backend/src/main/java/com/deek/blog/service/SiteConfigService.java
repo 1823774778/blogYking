@@ -17,7 +17,8 @@ public class SiteConfigService {
             "announcementTitle", "announcementLink", "themePreset", "heroTitle", "heroSubtitle",
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
-            "musicEnabled", "musicUrl", "musicTitle", "commentReview",
+            "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
+            "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform", "commentReview",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
             "registrationInviteEnabled", "registrationEmailAllowlist",
             "registrationMinPasswordLength", "registrationMaxUsers",
@@ -30,7 +31,8 @@ public class SiteConfigService {
             "announcementTitle", "announcementLink", "themePreset", "heroTitle", "heroSubtitle",
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
-            "musicEnabled", "musicUrl", "musicTitle", "commentReview",
+            "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
+            "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform", "commentReview",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
             "registrationInviteEnabled", "registrationInviteCode",
             "registrationEmailAllowlist", "registrationMinPasswordLength", "registrationMaxUsers",
@@ -80,8 +82,14 @@ public class SiteConfigService {
         map.put("avatar", "");
         map.put("logo", "");
         map.put("musicEnabled", "false");
+        map.put("musicSource", "audio");
         map.put("musicUrl", "");
         map.put("musicTitle", "");
+        map.put("musicArtist", "");
+        map.put("musicCover", "");
+        map.put("musicPlaylistUrl", "");
+        map.put("musicPlaylistTitle", "");
+        map.put("musicPlaylistPlatform", "netease");
         map.put("commentReview", "false");
         map.put("registrationEnabled", "true");
         map.put("registrationVerifyEmail", "true");

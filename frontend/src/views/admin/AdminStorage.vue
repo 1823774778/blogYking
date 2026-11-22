@@ -15,14 +15,12 @@ let filesRequest = 0
 
 const providerOptions = [
   { value: 'local', label: '本地存储' },
-  { value: 's3', label: 'S3 兼容存储' },
   { value: 'webdav', label: 'WebDAV' },
   { value: 'openlist', label: 'OpenList' }
 ]
 
 const providerMeta = {
   local: { label: '本地存储', kicker: 'LOCAL' },
-  s3: { label: 'S3 兼容存储', kicker: 'S3' },
   webdav: { label: 'WebDAV', kicker: 'WEBDAV' },
   openlist: { label: 'OpenList', kicker: 'OPENLIST' }
 }
@@ -221,8 +219,7 @@ onBeforeUnmount(() => {
           <p class="meta">
             {{ formProvider === 'local' ? '文件保存在当前 jar 同级的 local-storage 目录，并按类型自动分文件夹。' :
               formProvider === 'openlist' ? 'OpenList 使用 WebDAV 协议，地址通常是 https://域名/dav。' :
-              formProvider === 'webdav' ? '填写完整的 WebDAV 根地址，账号密码使用 Basic Auth。' :
-              '兼容 AWS S3、Cloudflare R2、MinIO、阿里云 OSS 等 S3 接口。' }}
+              '填写完整的 WebDAV 根地址，账号密码使用 Basic Auth。' }}
           </p>
         </div>
         <div class="storage-mode-facts">
@@ -234,34 +231,6 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="formProvider !== 'local'" class="form-grid storage-cloud-fields">
-        <template v-if="formProvider === 's3'">
-          <div class="field span-2">
-            <label for="storageEndpoint">Endpoint</label>
-            <input id="storageEndpoint" v-model="config.storageEndpoint" type="url" placeholder="https://s3.example.com" />
-          </div>
-          <div class="field">
-            <label for="storageBucket">Bucket</label>
-            <input id="storageBucket" v-model="config.storageBucket" type="text" placeholder="my-blog" />
-          </div>
-          <div class="field">
-            <label for="storageRegion">Region</label>
-            <input id="storageRegion" v-model="config.storageRegion" type="text" placeholder="auto / us-east-1" />
-          </div>
-          <div class="field">
-            <label for="storageAccessKey">Access Key</label>
-            <input id="storageAccessKey" v-model="config.storageAccessKey" type="text" placeholder="AKIA…" autocomplete="off" />
-          </div>
-          <div class="field">
-            <label for="storageSecretKey">Secret Key</label>
-            <input id="storageSecretKey" v-model="config.storageSecretKey" type="password" :placeholder="config.storageSecretKeySet === 'true' ? '已设置，留空保持不变' : '请输入 Secret Key'" autocomplete="new-password" />
-          </div>
-          <div class="field span-2">
-            <label class="adm-check-line"><input type="checkbox" :checked="boolValue(config.storagePathStyle)" @change="setBool('storagePathStyle', $event)" /> 使用 Path-Style 访问</label>
-            <p class="meta">MinIO、R2 等通常需要开启；AWS S3 可按服务商要求关闭。</p>
-          </div>
-        </template>
-
-        <template v-else>
           <div class="field span-2">
             <label for="storageEndpoint">{{ formProvider === 'openlist' ? 'OpenList 地址' : 'WebDAV 地址' }}</label>
             <input id="storageEndpoint" v-model="config.storageEndpoint" type="url" :placeholder="formProvider === 'openlist' ? 'https://openlist.example.com/dav' : 'https://dav.example.com/remote.php/dav/files/user'" />
@@ -277,7 +246,6 @@ onBeforeUnmount(() => {
             <label for="storagePassword">密码</label>
             <input id="storagePassword" v-model="config.storagePassword" type="password" :placeholder="config.storagePasswordSet === 'true' ? '已设置，留空保持不变' : 'WebDAV 密码'" autocomplete="new-password" />
           </div>
-        </template>
 
         <div class="field">
           <label for="storagePathPrefix">路径前缀</label>
@@ -412,7 +380,6 @@ onBeforeUnmount(() => {
       <dl class="adm-facts storage-online-facts">
         <div><dt>存储方式</dt><dd>{{ savedMeta.label }}</dd></div>
         <div><dt>Endpoint / 地址</dt><dd class="adm-break">{{ overview?.endpoint || '—' }}</dd></div>
-        <div v-if="savedProvider === 's3'"><dt>Bucket</dt><dd>{{ overview?.bucket || '—' }}</dd></div>
         <div><dt>路径前缀</dt><dd>{{ overview?.pathPrefix || '—' }}</dd></div>
         <div><dt>公开域名</dt><dd class="adm-break">{{ overview?.publicBaseUrl || '（按服务商规则拼接）' }}</dd></div>
       </dl>
