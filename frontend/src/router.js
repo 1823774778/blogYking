@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { state } from './state'
+import { isAdmin, state } from './state'
 
 const routes = [
   { path: '/', component: () => import('./views/Home.vue'), meta: { title: '首页' } },
@@ -17,8 +17,11 @@ const routes = [
     meta: { title: '后台', auth: true, admin: true },
     children: [
       { path: '', name: 'admin-dashboard', component: () => import('./views/Admin.vue'), meta: { title: '仪表盘' } },
-      { path: 'profile', name: 'admin-profile', component: () => import('./views/admin/AdminProfile.vue'), meta: { title: '个人信息' } },
+      { path: 'profile', name: 'admin-profile', component: () => import('./views/admin/AdminProfile.vue'), meta: { title: '个人中心' } },
       { path: 'users', name: 'admin-users', component: () => import('./views/admin/AdminUsers.vue'), meta: { title: '用户管理' } },
+      { path: 'roles', name: 'admin-roles', component: () => import('./views/admin/AdminRoles.vue'), meta: { title: '角色权限' } },
+      { path: 'announcements', name: 'admin-announcements', component: () => import('./views/admin/AdminAnnouncements.vue'), meta: { title: '公告管理' } },
+      { path: 'themes', name: 'admin-themes', component: () => import('./views/admin/AdminThemes.vue'), meta: { title: '主题管理' } },
       { path: 'posts', name: 'admin-posts', component: () => import('./views/admin/AdminPosts.vue'), meta: { title: '文章管理' } },
       { path: 'comments', name: 'admin-comments', component: () => import('./views/admin/AdminComments.vue'), meta: { title: '评论管理' } },
       { path: 'tags', name: 'admin-tags', component: () => import('./views/admin/AdminTags.vue'), meta: { title: '标签管理' } },
@@ -51,7 +54,7 @@ router.beforeEach((to) => {
   if (authRequired && !state.token) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  if (adminRequired && state.user?.role !== 'ADMIN') {
+  if (adminRequired && !isAdmin()) {
     return { path: '/' }
   }
 })

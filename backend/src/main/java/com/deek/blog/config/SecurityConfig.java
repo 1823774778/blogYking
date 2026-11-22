@@ -4,6 +4,7 @@ import com.deek.blog.repository.UserRepository;
 import com.deek.blog.security.JwtAuthenticationFilter;
 import com.deek.blog.security.JwtUtil;
 import com.deek.blog.security.SiteModeFilter;
+import com.deek.blog.role.RoleService;
 import com.deek.blog.service.SiteConfigService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,11 +28,14 @@ public class SecurityConfig {
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
     private final SiteConfigService siteConfigService;
+    private final RoleService roleService;
 
-    public SecurityConfig(JwtUtil jwtUtil, UserRepository userRepository, SiteConfigService siteConfigService) {
+    public SecurityConfig(JwtUtil jwtUtil, UserRepository userRepository, SiteConfigService siteConfigService,
+                          RoleService roleService) {
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
         this.siteConfigService = siteConfigService;
+        this.roleService = roleService;
     }
 
     @Bean
@@ -54,13 +58,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/comments/**",
                                 "/api/notifications/**", "/api/tags/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/posts/*/ai-overview").permitAll()
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/admin/**").hasAuthority("PERM_system:admin")
                         .requestMatchers("/api/**").authenticated()
                         // 其余 GET 请求属于静态资源或前端 history 路由，交还给 SPA 处理
                         .requestMatchers(HttpMethod.GET, "/**").permitAll()
                         .requestMatchers("/uploads/**", "/", "/index.html", "/favicon.svg", "/assets/**").permitAll()
                         .anyRequest().authenticated())
-                .addFilterBefore(new JwtAuthenticationFilter(jwtUtil, userRepository),
+                .addFilterBefore(new JwtAuthenticationFilter(jwtUtil, userRepository, roleService),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new SiteModeFilter(siteConfigService),
                         UsernamePasswordAuthenticationFilter.class);

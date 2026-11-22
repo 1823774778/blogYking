@@ -13,7 +13,9 @@ import java.util.Set;
 public class SiteConfigService {
 
     private static final Set<String> PUBLIC_KEYS = Set.of(
-            "siteName", "siteDesc", "siteKeywords", "announcement", "footer",
+            "siteName", "siteDesc", "siteKeywords", "announcement", "announcementEnabled",
+            "announcementTitle", "announcementLink", "themePreset", "heroTitle", "heroSubtitle",
+            "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicUrl", "musicTitle", "commentReview",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
@@ -24,7 +26,9 @@ public class SiteConfigService {
             "maintenanceEnabled", "readOnlyMode", "maintenanceMessage", "readOnlyMessage");
 
     private static final Set<String> ALLOWED_KEYS = Set.of(
-            "siteName", "siteDesc", "siteKeywords", "announcement", "footer",
+            "siteName", "siteDesc", "siteKeywords", "announcement", "announcementEnabled",
+            "announcementTitle", "announcementLink", "themePreset", "heroTitle", "heroSubtitle",
+            "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicUrl", "musicTitle", "commentReview",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
@@ -39,9 +43,10 @@ public class SiteConfigService {
             "mailTemplateResetSubject", "mailTemplateResetHtml",
             "mailTemplateTestSubject", "mailTemplateTestHtml",
             "aiEnabled", "aiProvider", "aiBaseUrl", "aiModel", "aiApiKey",
-            "aiArticleEnabled", "aiCommentEnabled", "aiSummaryEnabled",
+            "aiArticleEnabled", "aiCommentEnabled", "aiSummaryEnabled", "aiAnnouncementEnabled",
             "aiArticleGeneratePrompt", "aiArticleReviewPrompt",
             "aiCommentReviewPrompt", "aiCommentSummaryPrompt", "aiSummaryPrompt",
+            "aiAnnouncementPrompt",
             "storageProvider", "storageEndpoint", "storageBucket", "storageRegion",
             "storageAccessKey", "storageSecretKey", "storagePublicBaseUrl",
             "storagePathPrefix", "storagePathStyle", "storageUsername", "storagePassword",
@@ -59,6 +64,15 @@ public class SiteConfigService {
         map.put("siteDesc", "一个写字的地方：代码、生活与漫长的思考。");
         map.put("siteKeywords", "个人博客,Java,Spring Boot,Vue,技术随笔");
         map.put("announcement", "");
+        map.put("announcementEnabled", "false");
+        map.put("announcementTitle", "站点公告");
+        map.put("announcementLink", "");
+        map.put("themePreset", "ink");
+        map.put("heroTitle", "");
+        map.put("heroSubtitle", "");
+        map.put("policeRecord", "");
+        map.put("customHead", "");
+        map.put("customFooter", "");
         map.put("footer", "用文字抵抗遗忘");
         map.put("icp", "");
         map.put("github", "");
@@ -110,6 +124,7 @@ public class SiteConfigService {
         map.put("aiArticleEnabled", "true");
         map.put("aiCommentEnabled", "true");
         map.put("aiSummaryEnabled", "true");
+        map.put("aiAnnouncementEnabled", "true");
         map.put("aiArticleGeneratePrompt",
                 "你是中文博客作者，擅长写结构清晰、可读性强的技术或生活文章。"
                         + "标题要准确，正文要有小标题和自然段落，代码示例必须能运行，不要编造事实。");
@@ -122,6 +137,8 @@ public class SiteConfigService {
                 "你是中文社区编辑，总结要克制、客观、不臆造评论中没有的信息，保留读者真正关心和有分歧的点。");
         map.put("aiSummaryPrompt",
                 "你是中文博客编辑。摘要要准确概括正文，不添加原文没有的信息，语言自然、克制。");
+        map.put("aiAnnouncementPrompt",
+                "你是博客站长的文字助理。公告要短、清楚、有行动指向，不制造焦虑，不编造活动中没有的信息。");
         map.put("storageProvider", "local");
         map.put("storageEndpoint", "");
         map.put("storageBucket", "");

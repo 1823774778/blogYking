@@ -35,6 +35,14 @@ public class User {
     @Column(length = 512)
     private String bio;
 
+    @Column(length = 32)
+    private String phone;
+
+    @Column(length = 16)
+    private String gender;
+
+    private java.time.LocalDate birthday;
+
     /** USER / ADMIN */
     @Column(nullable = false, length = 16)
     private String role = "USER";
@@ -106,6 +114,13 @@ public class User {
     public void setBio(String bio) {
         this.bio = bio;
     }
+
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
+    public String getGender() { return gender; }
+    public void setGender(String gender) { this.gender = gender; }
+    public java.time.LocalDate getBirthday() { return birthday; }
+    public void setBirthday(java.time.LocalDate birthday) { this.birthday = birthday; }
 
     public String getRole() {
         return role;

@@ -6,7 +6,8 @@ import java.util.List;
 public class PostDtos {
 
     public record PostReq(String title, String summary, String content, String cover,
-                          String tags, String status, Boolean top) {
+                          String tags, String status, Boolean top, String slug, String category,
+                          Boolean allowComment) {
     }
 
     public record PostView(Long id, String title, String summary, String cover, String tags, String status,
@@ -14,7 +15,8 @@ public class PostDtos {
                            LocalDateTime createdAt, LocalDateTime updatedAt,
                            Long authorId, String authorName, String authorAvatar,
                            String reviewNote, LocalDateTime reviewedAt, String reviewedBy,
-                           String commentSummary, LocalDateTime commentSummaryAt) {
+                           String commentSummary, LocalDateTime commentSummaryAt,
+                           String slug, String category, boolean allowComment) {
     }
 
     public record PostDetail(PostView post, String content, boolean liked, boolean favorited) {

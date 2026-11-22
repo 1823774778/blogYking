@@ -16,7 +16,10 @@ const form = reactive({
   tags: '',
   status: 'PUBLISHED',
   top: false,
-  reviewNote: ''
+  reviewNote: '',
+  slug: '',
+  category: '',
+  allowComment: true
 })
 
 const sourceRef = ref(null)
@@ -71,7 +74,10 @@ async function load() {
       tags: p.tags || '',
       status: p.status,
       top: p.top,
-      reviewNote: p.reviewNote || ''
+      reviewNote: p.reviewNote || '',
+      slug: p.slug || '',
+      category: p.category || '',
+      allowComment: p.allowComment !== false
     })
   } catch (e) {
     toast(e.message, 'error')
@@ -99,7 +105,10 @@ async function save(status) {
       cover: form.cover,
       tags: form.tags,
       status: form.status,
-      top: form.top
+      top: form.top,
+      slug: form.slug.trim(),
+      category: form.category.trim(),
+      allowComment: form.allowComment
     }
     if (isEdit.value) {
       await http.put(`/admin/posts/${route.params.id}`, payload)
@@ -453,6 +462,18 @@ onMounted(() => {
             <input id="tags" v-model="form.tags" type="text" placeholder="用逗号分隔，如 Java,随笔" />
           </div>
           <div class="field">
+            <label for="category">文章分类</label>
+            <input id="category" v-model="form.category" list="category-options" maxlength="32" placeholder="例如 技术、生活、随笔" />
+            <datalist id="category-options">
+              <option value="技术" /><option value="生活" /><option value="随笔" /><option value="思考" />
+            </datalist>
+          </div>
+          <div class="field">
+            <label for="slug">文章别名</label>
+            <input id="slug" v-model="form.slug" maxlength="128" placeholder="英文短链接，如 hello-world" />
+            <span class="meta">只能使用小写字母、数字、连字符和下划线；当前文章仍以 ID 访问。</span>
+          </div>
+          <div class="field">
             <label>封面</label>
             <img v-if="form.cover" class="cover-preview" :src="form.cover" alt="封面预览" />
             <div style="display: flex; gap: 8px; flex-wrap: wrap">
@@ -473,6 +494,10 @@ onMounted(() => {
             <label class="adm-check-line">
               <input v-model="form.top" type="checkbox" />
               置顶这篇文章
+            </label>
+            <label class="adm-check-line">
+              <input v-model="form.allowComment" type="checkbox" />
+              开启本文章评论区
             </label>
           </div>
           <p class="meta adm-note">正文支持标题、列表、代码块、引用、表格和图片。发布前可在右侧预览检查排版。</p>

@@ -266,7 +266,8 @@ public class PostService {
                 post.getCommentCount(), post.isTop(), post.getCreatedAt(), post.getUpdatedAt(),
                 post.getAuthorId(), post.getAuthorName(), post.getAuthorAvatar(),
                 post.getReviewNote(), post.getReviewedAt(), post.getReviewedBy(),
-                post.getCommentSummary(), post.getCommentSummaryAt());
+                post.getCommentSummary(), post.getCommentSummaryAt(),
+                post.getSlug(), post.getCategory(), post.isAllowComment());
     }
 
     @Transactional
@@ -370,6 +371,16 @@ public class PostService {
         }
         post.setStatus(status);
         post.setTop(Boolean.TRUE.equals(req.top()));
+        String slug = req.slug() == null ? "" : req.slug().trim().toLowerCase();
+        if (slug.length() > 128) slug = slug.substring(0, 128);
+        if (!slug.isEmpty() && !slug.matches("^[a-z0-9_-]+$")) {
+            throw new BizException("文章别名只能包含小写字母、数字、连字符和下划线");
+        }
+        post.setSlug(slug.isEmpty() ? null : slug);
+        String category = req.category() == null ? "" : req.category().trim();
+        if (category.length() > 32) category = category.substring(0, 32);
+        post.setCategory(category.isEmpty() ? null : category);
+        post.setAllowComment(req.allowComment() == null || Boolean.TRUE.equals(req.allowComment()));
     }
 
     private String normalizeTags(String tags) {

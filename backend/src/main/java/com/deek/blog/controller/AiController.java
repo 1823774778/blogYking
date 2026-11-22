@@ -30,6 +30,9 @@ public class AiController {
     public record CommentSummaryReq(String postTitle, List<String> comments, String prompt) {
     }
 
+    public record AnnouncementGenReq(String idea, String tone, String prompt) {
+    }
+
     private final AiService aiService;
 
     public AiController(AiService aiService) {
@@ -54,6 +57,12 @@ public class AiController {
     @GetMapping("/default-prompts")
     public ApiResponse<Map<String, String>> defaultPrompts() {
         return ApiResponse.ok(aiService.defaultPrompts());
+    }
+
+    @PostMapping("/generate-announcement")
+    public ApiResponse<Map<String, String>> generateAnnouncement(@RequestBody AnnouncementGenReq req) {
+        String content = aiService.generateAnnouncement(req.idea(), req.tone(), req.prompt());
+        return ApiResponse.ok(Map.of("content", content));
     }
 
     @PostMapping("/generate-article")

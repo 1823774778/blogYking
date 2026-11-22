@@ -6,6 +6,7 @@ import { state, toast } from '../state'
 import { formatDate, formatCount, initialOf, splitTags } from '../utils'
 import PostCard from '../components/PostCard.vue'
 import Pagination from '../components/Pagination.vue'
+import MarkdownBody from '../components/MarkdownBody.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +28,9 @@ const featured = computed(() =>
   page.value === 1 && !activeTag.value && !keyword.value.trim() ? posts.value[0] || null : null
 )
 const gridPosts = computed(() => (featured.value ? posts.value.slice(1) : posts.value))
+const announcementVisible = computed(() =>
+  String(state.site.announcementEnabled).toLowerCase() === 'true' && String(state.site.announcement || '').trim()
+)
 
 async function load() {
   loading.value = true
@@ -141,8 +145,8 @@ onMounted(() => {
     <div class="ff-hero-inner">
       <div class="ff-hero-copy">
         <span class="ff-hero-eyebrow">WELCOME TO</span>
-        <h1>{{ state.site.siteName }}</h1>
-        <p class="ff-hero-sub">{{ state.site.siteDesc }}</p>
+        <h1>{{ state.site.heroTitle || state.site.siteName }}</h1>
+        <p class="ff-hero-sub">{{ state.site.heroSubtitle || state.site.siteDesc }}</p>
         <div class="ff-hero-social">
           <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">GitHub</a>
           <a v-if="state.site.email" :href="'mailto:' + state.site.email">邮箱</a>
@@ -187,6 +191,17 @@ onMounted(() => {
           <p>{{ state.site.about || '从一个标题开始，慢慢把想法写下来。' }}</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section v-if="announcementVisible" class="ff-announcement">
+    <div class="shell ff-announcement-inner">
+      <span class="ff-announcement-mark" aria-hidden="true">!</span>
+      <div class="ff-announcement-copy">
+        <strong>{{ state.site.announcementTitle || '站点公告' }}</strong>
+        <MarkdownBody :content="state.site.announcement" />
+      </div>
+      <a v-if="state.site.announcementLink" class="ff-announcement-link" :href="state.site.announcementLink">查看详情 →</a>
     </div>
   </section>
 
@@ -313,3 +328,16 @@ onMounted(() => {
     </aside>
   </div>
 </template>
+
+<style scoped>
+.ff-announcement { padding: 12px 0 0; }
+.ff-announcement-inner { display: flex; align-items: flex-start; gap: 12px; padding: 13px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--accent-soft); }
+.ff-announcement-mark { flex: 0 0 auto; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 13px; }
+.ff-announcement-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.ff-announcement-copy strong { color: var(--accent-ink); font-size: 12px; letter-spacing: .04em; }
+.ff-announcement-copy :deep(.markdown) { color: var(--ink-soft); font-size: 13px; line-height: 1.65; }
+.ff-announcement-copy :deep(.markdown p) { margin: 0; display: inline; }
+.ff-announcement-copy :deep(.markdown img) { max-height: 44px; vertical-align: middle; border-radius: 5px; }
+.ff-announcement-link { flex: 0 0 auto; color: var(--accent-ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
+@media (max-width: 620px) { .ff-announcement-inner { flex-wrap: wrap; } .ff-announcement-link { margin-left: 36px; } }
+</style>

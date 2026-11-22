@@ -240,6 +240,18 @@ onMounted(async () => {
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.8M18 20a6 6 0 0 0-2-4.4" /></svg></span>
             <span>用户管理</span>
           </router-link>
+          <router-link class="adm-quick-item" to="/admin/announcements">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10v4M7 8v8M10 6v12M14 9v6M17 7v10M20 10v4" /></svg></span>
+            <span>公告与 AI</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/themes">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18c2 0 2-1 2-2 0-1.5 1-2 2-2h2a3 3 0 0 0 3-3 9 9 0 0 0-9-11Z" /><circle cx="8" cy="9" r="1" /><circle cx="12" cy="7" r="1" /><circle cx="16" cy="9" r="1" /></svg></span>
+            <span>主题管理</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/roles">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.8M18 20a6 6 0 0 0-2-4.4" /><path d="m18 12 1.5 3 3 .4-2.2 2.1.5 3-2.8-1.5-2.8 1.5.5-3-2.2-2.1 3-.4Z" /></svg></span>
+            <span>角色权限</span>
+          </router-link>
           <router-link class="adm-quick-item" to="/admin/site-info">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg></span>
             <span>站点信息</span>

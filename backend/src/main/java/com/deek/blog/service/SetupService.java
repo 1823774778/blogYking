@@ -132,7 +132,7 @@ public class SetupService {
         demoDataService.seedPosts(admin);
         writeConfig(req, admin);
 
-        return new AuthResp(jwtUtil.generate(admin.getId()), AuthService.toView(admin));
+        return new AuthResp(jwtUtil.generate(admin.getId()), AuthService.toBasicView(admin));
     }
 
     public ConnResp testMysql(MysqlReq req) {

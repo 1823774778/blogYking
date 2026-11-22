@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import http from './api'
-import { state, applyTheme, toast } from './state'
+import { state, applyTheme, applyThemePreset, toast } from './state'
 
 const route = useRoute()
 const router = useRouter()
@@ -60,8 +60,21 @@ watch(() => state.site.musicUrl, () => {
   if (musicAudio.value) musicAudio.value.load()
 })
 
+function syncCustomHead(html) {
+  document.getElementById('site-custom-head')?.remove()
+  if (!html || !html.trim()) return
+  const wrap = document.createElement('div')
+  wrap.id = 'site-custom-head'
+  wrap.innerHTML = html
+  document.head.appendChild(wrap)
+}
+
+watch(() => state.site.themePreset, (preset) => applyThemePreset(preset))
+watch(() => state.site.customHead, (html) => syncCustomHead(html), { immediate: true })
+
 onMounted(async () => {
   applyTheme(state.theme)
+  applyThemePreset(state.site.themePreset)
 
   // 首次启动：还没有管理员时，所有页面都先引导到初始化向导
   try {
@@ -122,8 +135,10 @@ onMounted(async () => {
           <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">GitHub</a>
           <a v-if="state.site.email" :href="'mailto:' + state.site.email">邮箱</a>
           <a v-if="state.site.icp" href="https://beian.miit.gov.cn" target="_blank" rel="noopener">{{ state.site.icp }}</a>
+          <a v-if="state.site.policeRecord" href="https://beian.mps.gov.cn/" target="_blank" rel="noopener">{{ state.site.policeRecord }}</a>
         </div>
       </div>
+      <div v-if="state.site.customFooter" class="shell footer-custom" v-html="state.site.customFooter"></div>
     </footer>
 
     <nav v-if="showPublicChrome" class="ff-dock" aria-label="移动端导航">

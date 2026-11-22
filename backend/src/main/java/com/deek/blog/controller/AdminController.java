@@ -234,7 +234,7 @@ public class AdminController {
                 keyword == null || keyword.isBlank() ? null : keyword.trim(),
                 normalizedRole, enabled, muted, LocalDateTime.now(),
                 PageRequest.of(p - 1, s, Sort.by(Sort.Order.desc("createdAt"))));
-        return ApiResponse.ok(new PageResp<>(result.getContent().stream().map(AuthService::toView).toList(),
+        return ApiResponse.ok(new PageResp<>(result.getContent().stream().map(authService::toView).toList(),
                 result.getTotalElements(), p, s));
     }
 
@@ -249,7 +249,7 @@ public class AdminController {
         }
         user.setEnabled(req.enabled());
         userRepository.save(user);
-        return ApiResponse.ok(AuthService.toView(user));
+        return ApiResponse.ok(authService.toView(user));
     }
 
     @PutMapping("/users/{id}/role")
@@ -268,7 +268,7 @@ public class AdminController {
         }
         user.setRole(role);
         userRepository.save(user);
-        return ApiResponse.ok(AuthService.toView(user));
+        return ApiResponse.ok(authService.toView(user));
     }
 
     @PutMapping("/users/{id}/mute")
@@ -288,7 +288,7 @@ public class AdminController {
         }
         user.setMuteReason(until == null ? null : reason);
         userRepository.save(user);
-        return ApiResponse.ok(AuthService.toView(user));
+        return ApiResponse.ok(authService.toView(user));
     }
 
     @GetMapping("/config")

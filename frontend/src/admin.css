@@ -1536,6 +1536,49 @@
   justify-content: space-between;
 }
 
+/* ---------- 通用模态框片段 ---------- */
+.adm-modal-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.adm-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.adm-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.adm-icon-btn:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.adm-icon-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
 /* ---------- 站点信息 ---------- */
 
 .adm-switch-label {

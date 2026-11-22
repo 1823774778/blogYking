@@ -144,8 +144,19 @@ onMounted(load)
               <input id="siteDesc" v-model="config.siteDesc" type="text" maxlength="200" />
             </div>
             <div class="field span-2">
-              <label for="announcement">首页公告</label>
-              <textarea id="announcement" v-model="config.announcement" maxlength="200" style="min-height: 78px" placeholder="留空则不显示公告"></textarea>
+              <label for="heroTitle">首页主标题 <span class="meta">留空使用站点名称</span></label>
+              <input id="heroTitle" v-model="config.heroTitle" maxlength="64" placeholder="例如 在代码与生活之间写字" />
+            </div>
+            <div class="field span-2">
+              <label for="heroSubtitle">首页副标题 <span class="meta">留空使用站点描述</span></label>
+              <textarea id="heroSubtitle" v-model="config.heroSubtitle" maxlength="200" style="min-height: 64px"></textarea>
+            </div>
+            <div class="field span-2">
+              <label>首页公告</label>
+              <div class="site-announcement-hint">
+                <span>{{ boolValue(config.announcementEnabled) ? '公告已开启' : '公告未开启' }}</span>
+                <router-link class="btn-text" to="/admin/announcements">去公告管理编辑、AI 生成 →</router-link>
+              </div>
             </div>
             <div class="field span-2">
               <label class="adm-switch-label">
@@ -274,7 +285,7 @@ onMounted(load)
         </aside>
       </div>
 
-      <div v-else class="adm-settings-grid">
+      <div v-else-if="activeTab === 'footer'" class="adm-settings-grid">
         <section class="adm-card">
           <div class="adm-card-head"><div><span class="adm-card-kicker">FOOTER</span><h2>页脚与联系</h2></div></div>
           <div class="form-grid">
@@ -311,6 +322,37 @@ onMounted(load)
           </section>
         </aside>
       </div>
+
+      <div v-else class="adm-settings-grid">
+        <section class="adm-card">
+          <div class="adm-card-head"><div><span class="adm-card-kicker">ADVANCED</span><h2>备案与代码注入</h2></div></div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="policeRecord">公安联网备案号</label>
+              <input id="policeRecord" v-model="config.policeRecord" maxlength="100" placeholder="例如：桂公网安备 45000000000000号" />
+            </div>
+            <div class="field span-2">
+              <label for="customHead">自定义 Head 代码</label>
+              <textarea id="customHead" v-model="config.customHead" rows="5" placeholder="统计脚本、站点验证或自定义 meta；保存后插入 &lt;head&gt;"></textarea>
+              <p class="meta">仅管理员可编辑，会原样插入全站页面头部；请只粘贴可信代码。</p>
+            </div>
+            <div class="field span-2">
+              <label for="customFooter">自定义页脚 HTML</label>
+              <textarea id="customFooter" v-model="config.customFooter" rows="4" placeholder="可放备案图标、赞助说明等；会显示在页脚下方"></textarea>
+            </div>
+          </div>
+        </section>
+        <aside class="adm-side-stack">
+          <section class="adm-card">
+            <div class="adm-card-head"><div><span class="adm-card-kicker">SAFETY</span><h2>代码注入说明</h2></div></div>
+            <p class="adm-note">自定义 Head/Footer 不会经过 Markdown 渲染，直接进入页面。请不要放入密码、API Key 或未经审查的第三方脚本。</p>
+          </section>
+        </aside>
+      </div>
     </template>
   </div>
 </template>
+
+<style scoped>
+.site-announcement-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); color: var(--ink-soft); font-size: 12px; }
+</style>

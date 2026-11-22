@@ -2,6 +2,7 @@ package com.deek.blog.security;
 
 import com.deek.blog.entity.User;
 import com.deek.blog.repository.UserRepository;
+import com.deek.blog.role.RoleService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -14,6 +15,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -23,10 +25,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
+    private final RoleService roleService;
 
-    public JwtAuthenticationFilter(JwtUtil jwtUtil, UserRepository userRepository) {
+    public JwtAuthenticationFilter(JwtUtil jwtUtil, UserRepository userRepository, RoleService roleService) {
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
+        this.roleService = roleService;
     }
 
     @Override
@@ -42,8 +46,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Long userId = jwtUtil.parseUserId(token);
                 User user = userRepository.findById(userId).orElse(null);
                 if (user != null && user.isEnabled()) {
-                    List<SimpleGrantedAuthority> authorities =
-                            List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
+                    List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+                    authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
+                    for (String permission : roleService.permissionsFor(user.getRole())) {
+                        authorities.add(new SimpleGrantedAuthority("PERM_" + permission));
+                    }
                     UsernamePasswordAuthenticationToken auth =
                             new UsernamePasswordAuthenticationToken(user.getId(), null, authorities);
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

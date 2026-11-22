@@ -23,11 +23,14 @@ function onLogoError() {
 
 const sections = [
   { key: 'dashboard', label: '仪表盘', to: '/admin', icon: 'dashboard' },
-  { key: 'profile', label: '个人信息', to: '/admin/profile', icon: 'profile' },
+  { key: 'profile', label: '个人中心', to: '/admin/profile', icon: 'profile' },
   { key: 'users', label: '用户管理', to: '/admin/users', icon: 'users' },
+  { key: 'roles', label: '角色权限', to: '/admin/roles', icon: 'users' },
   { key: 'posts', label: '文章管理', to: '/admin/posts', icon: 'posts' },
   { key: 'comments', label: '评论管理', to: '/admin/comments', icon: 'comments' },
   { key: 'tags', label: '标签管理', to: '/admin/tags', icon: 'tags' },
+  { key: 'announcements', label: '公告管理', to: '/admin/announcements', icon: 'notifications' },
+  { key: 'themes', label: '主题管理', to: '/admin/themes', icon: 'site' },
   { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site' },
   { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications' },
   { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage' },
@@ -49,6 +52,16 @@ const sectionTabs = {
     { key: 'banned', label: '已封禁' },
     { key: 'muted', label: '已禁言' }
   ],
+  roles: [
+    { key: 'all', label: '角色列表' },
+    { key: 'permissions', label: '权限目录' }
+  ],
+  announcements: [
+    { key: 'edit', label: '公告编辑' }
+  ],
+  themes: [
+    { key: 'all', label: '主题库' }
+  ],
   posts: [
     { key: 'all', label: '全部文章' },
     { key: 'published', label: '已发布' },
@@ -66,7 +79,8 @@ const sectionTabs = {
     { key: 'basic', label: '基础信息' },
     { key: 'appearance', label: '品牌与关于' },
     { key: 'music', label: '站点音乐' },
-    { key: 'footer', label: '页脚与联系' }
+    { key: 'footer', label: '页脚与联系' },
+    { key: 'advanced', label: '高级与代码' }
   ],
   tags: [
     { key: 'all', label: '标签目录' }
@@ -91,7 +105,10 @@ const sectionTabs = {
 const currentSection = computed(() => {
   const path = route.path
   if (path.startsWith('/admin/profile')) return sections.find((s) => s.key === 'profile')
+  if (path.startsWith('/admin/roles')) return sections.find((s) => s.key === 'roles')
   if (path.startsWith('/admin/users')) return sections.find((s) => s.key === 'users')
+  if (path.startsWith('/admin/announcements')) return sections.find((s) => s.key === 'announcements')
+  if (path.startsWith('/admin/themes')) return sections.find((s) => s.key === 'themes')
   if (path.startsWith('/admin/posts')) return sections.find((s) => s.key === 'posts')
   if (path.startsWith('/admin/comments')) return sections.find((s) => s.key === 'comments')
   if (path.startsWith('/admin/tags')) return sections.find((s) => s.key === 'tags')
@@ -105,7 +122,7 @@ const currentSection = computed(() => {
 const isEditor = computed(() => route.name === 'admin-post-new' || route.name === 'admin-post-edit')
 const sectionLabel = computed(() => currentSection.value?.label || '仪表盘')
 const displayName = computed(() => state.user?.nickname || state.user?.username || '站长')
-const roleLabel = computed(() => (state.user?.role === 'ADMIN' ? '管理员' : '读者'))
+const roleLabel = computed(() => state.user?.roleName || (state.user?.role === 'ADMIN' ? '管理员' : '读者'))
 
 const tabs = computed(() => sectionTabs[currentSection.value?.key] || [])
 const activeTab = computed(() => {

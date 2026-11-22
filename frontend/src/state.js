@@ -22,6 +22,15 @@ export const state = reactive({
     siteDesc: '一个写字的地方：代码、生活与漫长的思考。',
     siteKeywords: '',
     announcement: '',
+    announcementEnabled: 'false',
+    announcementTitle: '站点公告',
+    announcementLink: '',
+    themePreset: 'ink',
+    heroTitle: '',
+    heroSubtitle: '',
+    policeRecord: '',
+    customHead: '',
+    customFooter: '',
     footer: '用文字抵抗遗忘',
     icp: '',
     github: '',
@@ -83,6 +92,11 @@ export function resolvedTheme(preference) {
   return preference === 'dark' ? 'dark' : 'light'
 }
 
+export function applyThemePreset(preset) {
+  const next = String(preset || 'ink').trim() || 'ink'
+  document.documentElement.setAttribute('data-preset', next)
+}
+
 export function applyTheme(preference) {
   const next = ['light', 'dark', 'system'].includes(preference) ? preference : 'system'
   state.themePreference = next
@@ -119,5 +133,6 @@ export function toast(message, type = 'info') {
 }
 
 export function isAdmin() {
-  return state.user?.role === 'ADMIN'
+  const permissions = state.user?.permissions || []
+  return state.user?.role === 'ADMIN' || permissions.includes('system:admin')
 }

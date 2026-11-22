@@ -12,6 +12,7 @@ import com.deek.blog.entity.ResetToken;
 import com.deek.blog.entity.User;
 import com.deek.blog.repository.ResetTokenRepository;
 import com.deek.blog.repository.UserRepository;
+import com.deek.blog.role.RoleService;
 import com.deek.blog.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -39,13 +40,14 @@ public class AuthService {
     private final RegistrationCodeService registrationCodeService;
     private final CaptchaService captchaService;
     private final SiteConfigService siteConfigService;
+    private final RoleService roleService;
     private final String siteUrl;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UserRepository userRepository, ResetTokenRepository resetTokenRepository,
                        PasswordEncoder passwordEncoder, JwtUtil jwtUtil, MailService mailService,
                        RegistrationCodeService registrationCodeService, CaptchaService captchaService,
-                       SiteConfigService siteConfigService,
+                       SiteConfigService siteConfigService, RoleService roleService,
                        @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
         this.userRepository = userRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -55,6 +57,7 @@ public class AuthService {
         this.registrationCodeService = registrationCodeService;
         this.captchaService = captchaService;
         this.siteConfigService = siteConfigService;
+        this.roleService = roleService;
         this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
     }
 
@@ -189,6 +192,18 @@ public class AuthService {
     @Transactional
     public UserView updateProfile(Long userId, UpdateProfileReq req) {
         User user = requireUser(userId);
+        if (req.email() != null && !req.email().isBlank()) {
+            String email = trim(req.email()).toLowerCase();
+            if (!EMAIL_PATTERN.matcher(email).matches()) throw new BizException("邮箱格式不正确");
+            if (!email.equals(user.getEmail())) {
+                if (req.oldPassword() == null || !passwordEncoder.matches(req.oldPassword(), user.getPassword())) {
+                    throw new BizException("修改登录邮箱需要输入当前密码");
+                }
+                if (userRepository.existsByEmail(email)) throw new BizException("该邮箱已被其他账号使用");
+                user.setEmail(email);
+                user.setUsername(email);
+            }
+        }
         if (req.nickname() != null) {
             String nickname = trim(req.nickname());
             if (nickname.isEmpty() || nickname.length() > 32) {
@@ -204,6 +219,15 @@ public class AuthService {
         }
         if (req.avatar() != null) {
             user.setAvatar(req.avatar().trim());
+        }
+        if (req.phone() != null) {
+            user.setPhone(req.phone().trim().isEmpty() ? null : req.phone().trim());
+        }
+        if (req.gender() != null) {
+            user.setGender(req.gender().trim().isEmpty() ? null : req.gender().trim());
+        }
+        if (req.birthday() != null) {
+            user.setBirthday(req.birthday());
         }
         if (req.newPassword() != null && !req.newPassword().isEmpty()) {
             checkPassword(req.newPassword(), siteConfigService.get());
@@ -224,9 +248,20 @@ public class AuthService {
                 .orElseThrow(() -> new BizException(HttpStatus.UNAUTHORIZED, "登录状态已失效，请重新登录"));
     }
 
-    public static UserView toView(User user) {
+    public UserView toView(User user) {
         return new UserView(user.getId(), user.getUsername(), user.getEmail(), user.getNickname(),
-                user.getAvatar(), user.getBio(), user.getRole(), user.isEnabled(), user.getMutedUntil(),
+                user.getAvatar(), user.getBio(), user.getRole(), roleService.nameFor(user.getRole()),
+                roleService.permissionsFor(user.getRole()), user.getPhone(), user.getGender(),
+                user.getBirthday(), user.isEnabled(), user.getMutedUntil(),
+                user.getMuteReason(), user.isMuted(), user.getCreatedAt());
+    }
+
+    public static UserView toBasicView(User user) {
+        return new UserView(user.getId(), user.getUsername(), user.getEmail(), user.getNickname(),
+                user.getAvatar(), user.getBio(), user.getRole(),
+                "ADMIN".equals(user.getRole()) ? "管理员" : user.getRole(),
+                RoleService.defaultPermissions(user.getRole()), user.getPhone(), user.getGender(),
+                user.getBirthday(), user.isEnabled(), user.getMutedUntil(),
                 user.getMuteReason(), user.isMuted(), user.getCreatedAt());
     }
 

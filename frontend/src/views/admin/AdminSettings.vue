@@ -125,6 +125,12 @@ const aiFeatures = [
     enabledKey: 'aiSummaryEnabled',
     title: 'AI 摘要',
     desc: '编辑器内生成文章摘要'
+  },
+  {
+    key: 'announcement',
+    enabledKey: 'aiAnnouncementEnabled',
+    title: 'AI 公告',
+    desc: '在公告管理中按要点起草公告'
   }
 ]
 
@@ -139,13 +145,17 @@ const promptFields = computed(() => ({
   ],
   summary: [
     { key: 'aiSummaryPrompt', label: 'AI 摘要提示词' }
+  ],
+  announcement: [
+    { key: 'aiAnnouncementPrompt', label: 'AI 公告提示词' }
   ]
 }[promptFeature.value] || []))
 
 const promptFeatureTitle = computed(() => ({
   article: 'AI 文章提示词',
   comment: 'AI 评论提示词',
-  summary: 'AI 摘要提示词'
+  summary: 'AI 摘要提示词',
+  announcement: 'AI 公告提示词'
 }[promptFeature.value] || 'AI 提示词'))
 
 function boolValue(value) {
@@ -730,7 +740,8 @@ onMounted(async () => {
                 <span class="ai-feature-icon" aria-hidden="true">
                   <svg v-if="feature.key === 'article'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3h10l4 4v14H5V3Z"/><path d="M15 3v4h4M8 12h8M8 16h6"/></svg>
                   <svg v-else-if="feature.key === 'comment'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M8 9h8M8 12h5"/></svg>
-                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+                  <svg v-else-if="feature.key === 'summary'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 10v4M7 8v8M10 6v12M14 9v6M17 7v10M20 10v4"/></svg>
                 </span>
                 <span class="ai-feature-state">{{ boolValue(config[feature.enabledKey]) ? '已开启' : '已关闭' }}</span>
               </div>

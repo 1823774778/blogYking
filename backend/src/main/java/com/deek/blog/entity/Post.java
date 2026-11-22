@@ -33,6 +33,15 @@ public class Post {
     @Column(length = 256)
     private String tags;
 
+    @Column(length = 128)
+    private String slug;
+
+    @Column(length = 32)
+    private String category;
+
+    @Column(nullable = false)
+    private boolean allowComment = true;
+
     /** DRAFT / PENDING / PUBLISHED / REJECTED */
     @Column(nullable = false, length = 16)
     private String status = "DRAFT";
@@ -175,6 +184,13 @@ public class Post {
     public void setCommentSummaryAt(LocalDateTime commentSummaryAt) {
         this.commentSummaryAt = commentSummaryAt;
     }
+
+    public String getSlug() { return slug; }
+    public void setSlug(String slug) { this.slug = slug; }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
+    public boolean isAllowComment() { return allowComment; }
+    public void setAllowComment(boolean allowComment) { this.allowComment = allowComment; }
 
     public boolean isTop() {
         return top;

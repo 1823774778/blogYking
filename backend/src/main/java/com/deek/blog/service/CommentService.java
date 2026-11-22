@@ -60,6 +60,9 @@ public class CommentService {
         if (!"PUBLISHED".equals(post.getStatus())) {
             throw new BizException("文章未发布，无法评论");
         }
+        if (!post.isAllowComment()) {
+            throw new BizException("这篇文章已关闭评论区");
+        }
         Long parentId = req.parentId();
         if (parentId != null) {
             Comment parent = commentRepository.findById(parentId)

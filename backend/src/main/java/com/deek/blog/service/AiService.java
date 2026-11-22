@@ -45,6 +45,7 @@ public class AiService {
         data.put("articleEnabled", Boolean.parseBoolean(config.getOrDefault("aiArticleEnabled", "true")));
         data.put("commentEnabled", Boolean.parseBoolean(config.getOrDefault("aiCommentEnabled", "true")));
         data.put("summaryEnabled", Boolean.parseBoolean(config.getOrDefault("aiSummaryEnabled", "true")));
+        data.put("announcementEnabled", Boolean.parseBoolean(config.getOrDefault("aiAnnouncementEnabled", "true")));
         return data;
     }
 
@@ -135,6 +136,36 @@ public class AiService {
         } catch (Exception e) {
             throw new BizException("AI 生成失败：" + e.getMessage());
         }
+    }
+
+    /** 生成站点公告文案，返回可直接放进公告框的短文本。 */
+    public String generateAnnouncement(String idea, String tone, String customPrompt) {
+        String topic = idea == null ? "" : idea.trim();
+        if (topic.isBlank()) throw new BizException("请先填写公告要点");
+        Map<String, String> config = requireConfig();
+        requireFeature(config, "aiAnnouncementEnabled", "AI 公告");
+        String systemPrompt = resolvePrompt(config, "aiAnnouncementPrompt", customPrompt);
+        String toneHint = switch (tone == null ? "" : tone) {
+            case "festival" -> "轻松、有节日气氛";
+            case "serious" -> "正式、克制";
+            case "brief" -> "极简，一两句话";
+            default -> "自然、友好、清楚";
+        };
+        String prompt = """
+                请根据下面的要点，写一条中文博客站点公告。
+                风格：%s
+                要求：80-180 字；可以分成 1-3 个短段落；不要 Markdown 标题；不要编造日期、优惠或链接；
+                如果要点里没有链接，不要自行添加。直接输出公告正文，不要解释。
+                要点：%s
+                """.formatted(toneHint, topic);
+        String text = chat(List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", prompt)
+        ), 500, 0.55).trim();
+        if (text.startsWith("\"") && text.endsWith("\"") && text.length() > 2) {
+            text = text.substring(1, text.length() - 1).trim();
+        }
+        return text;
     }
 
     /** 从 OpenAI 兼容的 /models 接口读取可用模型。 */
