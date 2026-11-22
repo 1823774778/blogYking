@@ -69,7 +69,8 @@ public class SiteModeFilter extends OncePerRequestFilter {
         return path.equals("/api/auth/login")
                 || path.equals("/api/auth/logout")
                 || path.equals("/api/auth/captcha")
-                || path.equals("/api/auth/me");
+                || path.equals("/api/auth/me")
+                || (path.startsWith("/api/posts/") && path.endsWith("/ai-overview"));
     }
 
     private boolean isSafeMethod(String method) {

@@ -20,8 +20,6 @@ const routes = [
       { path: 'profile', name: 'admin-profile', component: () => import('./views/admin/AdminProfile.vue'), meta: { title: '个人信息' } },
       { path: 'users', name: 'admin-users', component: () => import('./views/admin/AdminUsers.vue'), meta: { title: '用户管理' } },
       { path: 'posts', name: 'admin-posts', component: () => import('./views/admin/AdminPosts.vue'), meta: { title: '文章管理' } },
-      { path: 'posts/new', name: 'admin-post-new', component: () => import('./views/AdminEditor.vue'), meta: { title: '新建文章' } },
-      { path: 'posts/:id/edit', name: 'admin-post-edit', component: () => import('./views/AdminEditor.vue'), meta: { title: '编辑文章' } },
       { path: 'comments', name: 'admin-comments', component: () => import('./views/admin/AdminComments.vue'), meta: { title: '评论管理' } },
       { path: 'tags', name: 'admin-tags', component: () => import('./views/admin/AdminTags.vue'), meta: { title: '标签管理' } },
       { path: 'site-info', name: 'admin-site-info', component: () => import('./views/admin/AdminSiteInfo.vue'), meta: { title: '站点信息' } },
@@ -30,6 +28,8 @@ const routes = [
       { path: 'settings', name: 'admin-settings', component: () => import('./views/admin/AdminSettings.vue'), meta: { title: '站点设置' } }
     ]
   },
+  { path: '/admin/posts/new', name: 'admin-post-new', component: () => import('./views/AdminEditor.vue'), meta: { title: '新建文章', auth: true, admin: true } },
+  { path: '/admin/posts/:id/edit', name: 'admin-post-edit', component: () => import('./views/AdminEditor.vue'), meta: { title: '编辑文章', auth: true, admin: true } },
   { path: '/admin/editor/:id?', redirect: (to) => (to.params.id ? `/admin/posts/${to.params.id}/edit` : '/admin/posts/new') },
   { path: '/:pathMatch(.*)*', component: () => import('./views/NotFound.vue'), meta: { title: '找不到页面' } }
 ]

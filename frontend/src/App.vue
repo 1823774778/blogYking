@@ -14,11 +14,13 @@ const musicPlaying = ref(false)
 const isAdminArea = computed(() => route.path.startsWith('/admin'))
 const maintenanceMode = computed(() =>
   !isAdminArea.value
+  && route.path !== '/login'
   && state.setupRequired === false
   && String(state.site.maintenanceEnabled ?? 'false').toLowerCase() === 'true'
 )
 const readOnlyMode = computed(() =>
   !isAdminArea.value
+  && route.path !== '/login'
   && state.setupRequired === false
   && !maintenanceMode.value
   && String(state.site.readOnlyMode ?? 'false').toLowerCase() === 'true'

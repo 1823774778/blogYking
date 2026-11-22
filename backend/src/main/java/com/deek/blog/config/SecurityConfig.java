@@ -53,6 +53,7 @@ public class SecurityConfig {
                                 "/api/meta/**", "/api/system/**", "/api/setup/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/comments/**",
                                 "/api/notifications/**", "/api/tags/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/posts/*/ai-overview").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/**").authenticated()
                         // 其余 GET 请求属于静态资源或前端 history 路由，交还给 SPA 处理

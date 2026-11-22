@@ -17,6 +17,10 @@ const detail = ref(null)
 const loading = ref(true)
 const error = ref('')
 const toggling = ref(false)
+const aiConfirmOpen = ref(false)
+const aiLoading = ref(false)
+const aiOverview = ref('')
+const aiError = ref('')
 
 const tags = ref([])
 const toc = computed(() => markdownHeadings(detail.value?.content))
@@ -45,6 +49,43 @@ async function load() {
     detail.value = null
   } finally {
     loading.value = false
+  }
+}
+
+function openAiOverview() {
+  aiOverview.value = ''
+  aiError.value = ''
+  aiConfirmOpen.value = true
+}
+
+function closeAiOverview() {
+  if (aiLoading.value) return
+  aiConfirmOpen.value = false
+}
+
+async function generateOverview() {
+  if (!detail.value?.post?.id) return
+  aiLoading.value = true
+  aiError.value = ''
+  aiOverview.value = ''
+  try {
+    const res = await http.post(`/posts/${detail.value.post.id}/ai-overview`, null, { timeout: 90000 })
+    aiOverview.value = String(res.data?.overview || '').trim()
+    if (!aiOverview.value) aiError.value = 'AI 没有返回内容，请稍后再试'
+  } catch (e) {
+    aiError.value = e.message
+  } finally {
+    aiLoading.value = false
+  }
+}
+
+async function copyOverview() {
+  if (!aiOverview.value) return
+  try {
+    await navigator.clipboard.writeText(aiOverview.value)
+    toast('总览已复制')
+  } catch (e) {
+    toast('复制失败，请手动选择文本', 'error')
   }
 }
 
@@ -220,5 +261,181 @@ watch(
         </section>
       </aside>
     </div>
+
+    <button class="ff-ai-fab" type="button" aria-label="获取本文 AI 总览" @click="openAiOverview">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+        <circle cx="12" cy="12" r="3.2" />
+      </svg>
+      <span>AI 总览</span>
+    </button>
+
+    <div v-if="aiConfirmOpen" class="ff-ai-mask" @click.self="closeAiOverview">
+      <section class="ff-ai-modal" role="dialog" aria-modal="true" aria-labelledby="ff-ai-title">
+        <header class="ff-ai-head">
+          <div>
+            <span class="ff-ai-kicker">AI · 文章总览</span>
+            <h3 id="ff-ai-title">{{ aiOverview ? '这篇文章讲了什么' : '要交给 AI 阅读吗？' }}</h3>
+          </div>
+          <button class="ff-ai-close" type="button" :disabled="aiLoading" aria-label="关闭" @click="closeAiOverview">×</button>
+        </header>
+
+        <div v-if="aiLoading" class="ff-ai-state">
+          <span class="ff-ai-spinner" aria-hidden="true"></span>
+          <p>AI 正在通读全文，整理主旨与要点…</p>
+          <span class="meta">通常需要 5–20 秒</span>
+        </div>
+
+        <div v-else-if="aiOverview" class="ff-ai-overview">
+          <div class="ff-ai-result-copy"><MarkdownBody :content="aiOverview" /></div>
+          <p class="ff-ai-disclaimer">由 AI 根据本文正文生成，仅供参考。</p>
+        </div>
+
+        <div v-else class="ff-ai-confirm">
+          <p>确认后，会把《{{ detail.post.title }}》的标题和正文发送给 AI，生成一句话主旨、3–5 条核心要点，以及适合谁阅读。</p>
+          <ul>
+            <li>只用于本次总览，不会改动文章内容</li>
+            <li>同一篇文章 20 秒内只能请求一次</li>
+          </ul>
+          <div v-if="aiError" class="ff-ai-error">{{ aiError }}</div>
+          <p class="meta">如果站点关闭了 AI 摘要功能，这里会提示暂不可用。</p>
+        </div>
+
+        <footer class="ff-ai-actions">
+          <template v-if="aiLoading" />
+          <template v-else-if="aiOverview">
+            <button class="btn btn-ghost btn-sm" type="button" @click="copyOverview">复制</button>
+            <button class="btn btn-ghost btn-sm" type="button" @click="openAiOverview">重新生成</button>
+            <button class="btn btn-sm" type="button" @click="closeAiOverview">关闭</button>
+          </template>
+          <template v-else>
+            <button class="btn btn-ghost btn-sm" type="button" @click="closeAiOverview">取消</button>
+            <button class="btn btn-sm" type="button" @click="generateOverview">{{ aiError ? '再试一次' : '确认生成' }}</button>
+          </template>
+        </footer>
+      </section>
+    </div>
   </article>
 </template>
+
+<style scoped>
+.ff-ai-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 30px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 17px;
+  border: 1px solid rgba(125, 211, 252, .35);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0b1220, #16233a);
+  color: #e0f2fe;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  box-shadow: 0 10px 30px rgba(2, 8, 20, .28), inset 0 1px 0 rgba(255, 255, 255, .08);
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+.ff-ai-fab svg { width: 17px; height: 17px; color: #7dd3fc; }
+.ff-ai-fab:hover {
+  transform: translateY(-2px);
+  border-color: rgba(125, 211, 252, .7);
+  box-shadow: 0 14px 34px rgba(2, 8, 20, .36);
+}
+.ff-ai-fab:active { transform: translateY(0); }
+.ff-ai-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(4, 10, 20, .6);
+  backdrop-filter: blur(6px);
+}
+.ff-ai-modal {
+  width: min(560px, 100%);
+  max-height: min(76vh, 680px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 16px;
+  background: var(--paper, #fff);
+  color: var(--ink, #111827);
+  box-shadow: 0 28px 80px rgba(2, 8, 20, .4);
+}
+.ff-ai-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+}
+.ff-ai-kicker { color: #2563eb; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+.ff-ai-head h3 { margin: 6px 0 0; font-size: 20px; line-height: 1.3; }
+.ff-ai-close {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted, #6b7280);
+  font-size: 21px;
+  cursor: pointer;
+}
+.ff-ai-close:hover { background: rgba(127, 127, 127, .1); }
+.ff-ai-confirm, .ff-ai-overview, .ff-ai-state { padding: 20px 24px; overflow-y: auto; }
+.ff-ai-confirm p { margin: 0 0 12px; line-height: 1.75; }
+.ff-ai-confirm ul { margin: 0 0 14px; padding-left: 18px; color: var(--muted, #6b7280); font-size: 13px; line-height: 1.8; }
+.ff-ai-error {
+  margin: 2px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, .25);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, .08);
+  color: #dc2626;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ff-ai-state { display: grid; justify-items: center; gap: 12px; padding: 44px 24px; text-align: center; }
+.ff-ai-state p { margin: 0; font-weight: 600; }
+.ff-ai-spinner {
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(37, 99, 235, .18);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: ff-ai-spin .8s linear infinite;
+}
+@keyframes ff-ai-spin { to { transform: rotate(360deg); } }
+.ff-ai-result-copy { font-size: 14px; line-height: 1.85; }
+.ff-ai-result-copy :deep(.markdown h1),
+.ff-ai-result-copy :deep(.markdown h2),
+.ff-ai-result-copy :deep(.markdown h3) { margin: 0 0 10px; font-size: 16px; }
+.ff-ai-result-copy :deep(.markdown p) { margin: 0 0 10px; }
+.ff-ai-result-copy :deep(.markdown li) { margin: 3px 0; }
+.ff-ai-disclaimer { margin: 16px 0 0; color: var(--muted, #6b7280); font-size: 12px; }
+.ff-ai-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--line, #e5e7eb);
+}
+@media (max-width: 720px) {
+  .ff-ai-fab { right: 16px; bottom: 18px; height: 42px; padding: 0 14px; }
+  .ff-ai-mask { padding: 12px; align-items: end; }
+  .ff-ai-modal { max-height: 84vh; border-radius: 16px 16px 0 0; }
+  .ff-ai-head { padding: 18px 18px 14px; }
+  .ff-ai-confirm, .ff-ai-overview { padding: 16px 18px; }
+  .ff-ai-actions { padding: 12px 18px 16px; }
+}
+</style>
+
