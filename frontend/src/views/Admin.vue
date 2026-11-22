@@ -189,55 +189,74 @@ onMounted(async () => {
     </template>
 
     <template v-else>
-      <section class="adm-stat-grid">
-        <article class="adm-stat-card featured">
-          <span class="adm-stat-index">01</span>
-          <div class="adm-stat-label">已发布文章</div>
+      <section class="adm-stat-grid halo-stat-grid">
+        <article class="adm-stat-card">
+          <div class="adm-stat-label">文章</div>
           <strong>{{ stats?.posts ?? '—' }}</strong>
-          <span class="adm-stat-foot">前台可见内容</span>
-        </article>
-        <article class="adm-stat-card alert" :class="{ quiet: !stats?.pendingPosts }">
-          <span class="adm-stat-index">02</span>
-          <div class="adm-stat-label">待审核文章</div>
-          <strong>{{ stats?.pendingPosts ?? '—' }}</strong>
-          <span class="adm-stat-foot">{{ stats?.pendingPosts ? '需要处理' : '已清空' }}</span>
+          <span class="adm-stat-foot">{{ stats?.drafts || 0 }} 篇草稿 · {{ stats?.pendingPosts || 0 }} 篇待审</span>
         </article>
         <article class="adm-stat-card">
-          <span class="adm-stat-index">03</span>
-          <div class="adm-stat-label">累计阅读</div>
-          <strong>{{ stats?.totalViews ?? '—' }}</strong>
-          <span class="adm-stat-foot">所有文章浏览</span>
-        </article>
-        <article class="adm-stat-card">
-          <span class="adm-stat-index">04</span>
-          <div class="adm-stat-label">评论总数</div>
+          <div class="adm-stat-label">评论</div>
           <strong>{{ stats?.comments ?? '—' }}</strong>
           <span class="adm-stat-foot">{{ stats?.pendingComments || 0 }} 条待审核</span>
         </article>
         <article class="adm-stat-card">
-          <span class="adm-stat-index">05</span>
-          <div class="adm-stat-label">注册用户</div>
+          <div class="adm-stat-label">阅读</div>
+          <strong>{{ stats?.totalViews ?? '—' }}</strong>
+          <span class="adm-stat-foot">{{ stats?.likes || 0 }} 次喜欢</span>
+        </article>
+        <article class="adm-stat-card">
+          <div class="adm-stat-label">用户</div>
           <strong>{{ stats?.users ?? '—' }}</strong>
-          <span class="adm-stat-foot">{{ stats?.disabledUsers || 0 }} 个已封禁</span>
+          <span class="adm-stat-foot">{{ stats?.mutedUsers || 0 }} 个禁言 · {{ stats?.disabledUsers || 0 }} 个封禁</span>
         </article>
-        <article class="adm-stat-card">
-          <span class="adm-stat-index">06</span>
-          <div class="adm-stat-label">草稿</div>
-          <strong>{{ stats?.drafts ?? '—' }}</strong>
-          <span class="adm-stat-foot">尚未提交审核</span>
-        </article>
-        <article class="adm-stat-card">
-          <span class="adm-stat-index">07</span>
-          <div class="adm-stat-label">喜欢</div>
-          <strong>{{ stats?.likes ?? '—' }}</strong>
-          <span class="adm-stat-foot">{{ stats?.favorites || 0 }} 次收藏</span>
-        </article>
-        <article class="adm-stat-card">
-          <span class="adm-stat-index">08</span>
-          <div class="adm-stat-label">已禁言</div>
-          <strong>{{ stats?.mutedUsers ?? '—' }}</strong>
-          <span class="adm-stat-foot">{{ stats?.admins || 0 }} 位管理员</span>
-        </article>
+      </section>
+
+      <section class="adm-card adm-quick-card">
+        <div class="adm-card-head">
+          <div>
+            <span class="adm-card-kicker">QUICK ACTIONS</span>
+            <h2>快捷操作</h2>
+          </div>
+        </div>
+        <div class="adm-quick-grid">
+          <router-link class="adm-quick-item" to="/admin/posts/new">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14" /></svg></span>
+            <span>写文章</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/posts">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l5 5v13H6V3Z" /><path d="M15 3v5h5M9 13h6M9 17h6" /></svg></span>
+            <span>文章管理</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/comments">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5Z" /></svg></span>
+            <span>评论管理</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/tags">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h7l9 9-7 7-9-9V4Z" /><circle cx="8.5" cy="8.5" r="1.2" /></svg></span>
+            <span>标签管理</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/users">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.8M18 20a6 6 0 0 0-2-4.4" /></svg></span>
+            <span>用户管理</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/site-info">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg></span>
+            <span>站点信息</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/notifications">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" /><path d="M10 19a2 2 0 0 0 4 0" /></svg></span>
+            <span>通知设置</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/storage">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></svg></span>
+            <span>存储管理</span>
+          </router-link>
+          <router-link class="adm-quick-item" to="/admin/settings">
+            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /></svg></span>
+            <span>站点设置</span>
+          </router-link>
+        </div>
       </section>
 
       <div class="adm-split wide-left">

@@ -1,9 +1,9 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
 import { state, toast } from '../state'
-import { formatCount } from '../utils'
+import { formatDate, formatCount, initialOf, splitTags } from '../utils'
 import PostCard from '../components/PostCard.vue'
 import Pagination from '../components/Pagination.vue'
 
@@ -22,6 +22,11 @@ const loading = ref(false)
 const tags = ref([])
 const hot = ref([])
 const stats = ref(null)
+
+const featured = computed(() =>
+  page.value === 1 && !activeTag.value && !keyword.value.trim() ? posts.value[0] || null : null
+)
+const gridPosts = computed(() => (featured.value ? posts.value.slice(1) : posts.value))
 
 async function load() {
   loading.value = true
@@ -132,35 +137,54 @@ onMounted(() => {
 
 <template>
   <section class="ff-hero">
+    <div class="ff-planet" aria-hidden="true"></div>
     <div class="ff-hero-inner">
-      <span class="ff-hero-eyebrow">{{ state.site.siteName }} · NOTES & JOURNAL</span>
-      <h1>{{ state.site.siteName }}</h1>
-      <p class="ff-hero-sub">{{ state.site.siteDesc }}</p>
-      <div class="ff-hero-actions">
+      <div class="ff-hero-copy">
+        <span class="ff-hero-eyebrow">WELCOME TO</span>
+        <h1>{{ state.site.siteName }}</h1>
+        <p class="ff-hero-sub">{{ state.site.siteDesc }}</p>
+        <div class="ff-hero-social">
+          <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">GitHub</a>
+          <a v-if="state.site.email" :href="'mailto:' + state.site.email">邮箱</a>
+          <router-link to="/about">关于本站</router-link>
+        </div>
         <div class="ff-hero-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-4-4" />
           </svg>
-          <input v-model="keyword" type="search" placeholder="搜索文章、摘要或标签…" @keyup.enter="search" />
+          <input v-model="keyword" type="search" placeholder="搜索文章…" @keyup.enter="search" />
           <button type="button" aria-label="搜索" @click="search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12h14M13 6l6 6-6 6" />
             </svg>
           </button>
         </div>
-        <div v-if="state.site.github || state.site.email" class="ff-hero-social">
-          <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener" aria-label="GitHub">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2a10 10 0 0 0-3.16 19.5c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.26-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.56 9.56 0 0 1 12 6.8c.85 0 1.7.11 2.5.34 1.9-1.29 2.74-1.02 2.74-1.02.55 1.37.2 2.38.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
-            </svg>
-          </a>
-          <a v-if="state.site.email" :href="'mailto:' + state.site.email" aria-label="邮箱">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-              <rect x="3" y="5" width="18" height="14" rx="2" />
-              <path d="m3 7 9 6 9-6" />
-            </svg>
-          </a>
+      </div>
+
+      <router-link v-if="featured" class="ff-feature-card" :to="`/post/${featured.id}`">
+        <div class="ff-feature-cover">
+          <img v-if="featured.cover" :src="featured.cover" :alt="featured.title" />
+          <span v-else class="ff-feature-placeholder" aria-hidden="true"></span>
+          <span v-if="featured.top" class="ff-top-flag">置顶</span>
+        </div>
+        <div class="ff-feature-body">
+          <span class="ff-feature-kicker">精选 · {{ splitTags(featured.tags)[0] || '随笔' }}</span>
+          <h2>{{ featured.title }}</h2>
+          <p>{{ featured.summary }}</p>
+          <div class="ff-post-byline">
+            <span class="ff-post-avatar">{{ initialOf(featured.authorName || '站长') }}</span>
+            <span class="ff-post-author">{{ featured.authorName || '站长' }}</span>
+            <span class="ff-post-date">发布于 {{ formatDate(featured.createdAt) }}</span>
+          </div>
+        </div>
+      </router-link>
+
+      <div v-else class="ff-feature-card is-empty">
+        <div class="ff-feature-body">
+          <span class="ff-feature-kicker">第一篇文章正在路上</span>
+          <h2>这里还没有内容</h2>
+          <p>{{ state.site.about || '从一个标题开始，慢慢把想法写下来。' }}</p>
         </div>
       </div>
     </div>
@@ -182,7 +206,7 @@ onMounted(() => {
             type="button"
             @click="pickTag(tag.name)"
           >
-            {{ tag.name }}
+            #{{ tag.name }}
           </button>
         </div>
         <span class="ff-feed-meta">{{ total }} 篇文章</span>
@@ -203,20 +227,36 @@ onMounted(() => {
         这里还没有文章。<br />换个关键词，或者从标签里找找。
       </div>
 
-      <PostCard v-for="post in posts" :key="post.id" :post="post" />
+      <div v-else class="ff-post-grid">
+        <PostCard v-for="post in gridPosts" :key="post.id" :post="post" />
+      </div>
 
       <Pagination :total="total" :page="page" :size="size" @change="changePage" />
     </main>
 
     <aside class="ff-widgets">
       <section class="ff-widget">
-        <h4 class="ff-widget-title">关于这里</h4>
+        <h4 class="ff-widget-title">
+          <span class="ff-wicon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v5M12 7.5v.5" />
+            </svg>
+          </span>
+          关于这里
+        </h4>
         <p class="ff-announce">{{ state.site.about || state.site.siteDesc }}</p>
         <router-link class="ff-widget-link" to="/about">了解更多 →</router-link>
       </section>
 
       <section class="ff-widget">
         <h4 class="ff-widget-title">
+          <span class="ff-wicon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M20 13 13 20a2 2 0 0 1-2.8 0L4 13.8V4h9.8L20 10.2a2 2 0 0 1 0 2.8Z" />
+              <circle cx="8.5" cy="8.5" r="1.4" />
+            </svg>
+          </span>
           标签
           <span class="ff-widget-count">{{ tags.length }}</span>
         </h4>
@@ -229,25 +269,40 @@ onMounted(() => {
             type="button"
             @click="pickTag(tag.name)"
           >
-            {{ tag.name }} · {{ tag.count }}
+            #{{ tag.name }} <sup>{{ tag.count }}</sup>
           </button>
           <span v-if="!tags.length" class="count">暂无标签</span>
         </div>
       </section>
 
       <section class="ff-widget">
-        <h4 class="ff-widget-title">热门文章</h4>
+        <h4 class="ff-widget-title">
+          <span class="ff-wicon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="m4 16 5-5 4 3 7-7" />
+              <path d="M15 7h5v5" />
+            </svg>
+          </span>
+          热门文章
+        </h4>
         <ul v-if="hot.length" class="ff-hot-list">
-          <li v-for="(item, index) in hot" :key="item.id" class="ff-hot-item">
-            <span class="ff-hot-index">{{ String(index + 1).padStart(2, '0') }}</span>
+          <li v-for="item in hot" :key="item.id" class="ff-hot-item">
             <router-link :to="`/post/${item.id}`">{{ item.title }}</router-link>
+            <span class="ff-hot-date"> {{ formatDate(item.createdAt) }}</span>
           </li>
         </ul>
         <div v-else class="count">暂无</div>
       </section>
 
       <section class="ff-widget">
-        <h4 class="ff-widget-title">站点统计</h4>
+        <h4 class="ff-widget-title">
+          <span class="ff-wicon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M5 20V10M10 20V4M15 20v-7M20 20V8" />
+            </svg>
+          </span>
+          站点统计
+        </h4>
         <div class="ff-stat-rows">
           <div class="ff-stat-row"><span>文章</span><strong>{{ stats ? formatCount(stats.posts) : '—' }}</strong></div>
           <div class="ff-stat-row"><span>阅读</span><strong>{{ stats ? formatCount(stats.totalViews) : '—' }}</strong></div>

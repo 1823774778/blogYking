@@ -37,3 +37,28 @@ export function readingMinutes(content) {
   const length = (content || '').replace(/\s/g, '').length
   return Math.max(1, Math.round(length / 400))
 }
+
+export function markdownHeadings(content) {
+  const lines = String(content || '').split('\n')
+  const headings = []
+  let fenced = false
+  let index = 0
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced
+      continue
+    }
+    if (fenced) continue
+    const match = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
+    if (!match) continue
+    const id = `heading-${index}`
+    const level = match[1].length
+    const text = match[2]
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/[`*_~]/g, '')
+      .trim()
+    index += 1
+    if (level >= 2 && level <= 3) headings.push({ id, level, text })
+  }
+  return headings
+}

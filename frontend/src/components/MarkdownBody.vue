@@ -5,11 +5,23 @@ import DOMPurify from 'dompurify'
 
 marked.setOptions({ gfm: true, breaks: true })
 
+let headingIndex = 0
+marked.use({
+  renderer: {
+    heading(text, level) {
+      const id = `heading-${headingIndex}`
+      headingIndex += 1
+      return `<h${level} id="${id}">${text}</h${level}>\n`
+    }
+  }
+})
+
 const props = defineProps({
   content: { type: String, default: '' }
 })
 
 const html = computed(() => {
+  headingIndex = 0
   const raw = marked.parse(props.content || '')
   return DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
 })
