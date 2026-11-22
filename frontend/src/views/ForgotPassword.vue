@@ -10,6 +10,7 @@ const result = ref(null)
 
 const emailFlowEnabled = computed(() =>
   String(state.site.registrationVerifyEmail ?? 'true').toLowerCase() === 'true'
+  && String(state.site.passwordResetEnabled ?? 'true').toLowerCase() === 'true'
 )
 const contactLink = computed(() => state.site.email ? `mailto:${state.site.email}` : '')
 
@@ -26,7 +27,7 @@ async function submit() {
   error.value = ''
   result.value = null
   if (!emailFlowEnabled.value) {
-    error.value = '本站未开启邮箱验证，找回密码功能不可用。请携带账号凭证联系管理员更新或找回密码。'
+    error.value = '本站暂未开放邮箱找回密码，请携带账号凭证联系管理员。'
     return
   }
   if (!email.value.trim()) {
@@ -52,7 +53,7 @@ onMounted(loadMeta)
     <div class="auth-intro">
       <span class="hero-eyebrow">Account recovery</span>
       <h2>忘了密码，<br />先确认这扇门还开着。</h2>
-      <p>邮箱找回依赖站长开启的邮箱验证。若未开启，请直接携带能证明账号归属的凭证联系管理员。</p>
+      <p>邮箱找回依赖站长开启的邮箱验证与找回密码开关。任一关闭时，请直接携带能证明账号归属的凭证联系管理员。</p>
       <ul class="auth-points">
         <li><b>01</b><span>重置链接 30 分钟内有效</span></li>
         <li><b>02</b><span>不会暴露邮箱是否已注册</span></li>
@@ -73,7 +74,7 @@ onMounted(loadMeta)
       <div v-if="!emailFlowEnabled" class="auth-disabled-panel">
         <div class="auth-disabled-icon" aria-hidden="true">!</div>
         <h3>邮箱找回暂不可用</h3>
-        <p>本站当前未开启邮箱验证，因此找回密码功能已停用。请携带账号凭证联系管理员更新或找回密码。</p>
+        <p>本站当前未开启邮箱验证或已关闭找回密码，因此该功能不可用。请携带账号凭证联系管理员处理。</p>
         <a v-if="contactLink" class="btn btn-sm" :href="contactLink">联系管理员</a>
         <router-link v-else class="btn btn-sm" to="/about">查看站点联系方式</router-link>
       </div>

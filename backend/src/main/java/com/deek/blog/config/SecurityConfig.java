@@ -3,6 +3,8 @@ package com.deek.blog.config;
 import com.deek.blog.repository.UserRepository;
 import com.deek.blog.security.JwtAuthenticationFilter;
 import com.deek.blog.security.JwtUtil;
+import com.deek.blog.security.SiteModeFilter;
+import com.deek.blog.service.SiteConfigService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -24,10 +26,12 @@ public class SecurityConfig {
 
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
+    private final SiteConfigService siteConfigService;
 
-    public SecurityConfig(JwtUtil jwtUtil, UserRepository userRepository) {
+    public SecurityConfig(JwtUtil jwtUtil, UserRepository userRepository, SiteConfigService siteConfigService) {
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
+        this.siteConfigService = siteConfigService;
     }
 
     @Bean
@@ -56,6 +60,8 @@ public class SecurityConfig {
                         .requestMatchers("/uploads/**", "/", "/index.html", "/favicon.svg", "/assets/**").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtUtil, userRepository),
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new SiteModeFilter(siteConfigService),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

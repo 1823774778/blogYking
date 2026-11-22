@@ -17,14 +17,18 @@ const registerLink = computed(() => {
   return redirect ? `/register?redirect=${encodeURIComponent(String(redirect))}` : '/register'
 })
 
-const emailFlowEnabled = computed(() =>
+const emailVerifyEnabled = computed(() =>
   String(state.site.registrationVerifyEmail ?? 'true').toLowerCase() === 'true'
 )
+const passwordResetEnabled = computed(() =>
+  String(state.site.passwordResetEnabled ?? 'true').toLowerCase() === 'true'
+)
+const emailFlowEnabled = computed(() => emailVerifyEnabled.value && passwordResetEnabled.value)
 
 function openForgot(event) {
   if (emailFlowEnabled.value) return
   event.preventDefault()
-  toast('本站未开启邮箱验证，请携带账号凭证联系管理员更新或找回密码', 'error')
+  toast('本站暂未开放邮箱找回密码，请携带账号凭证联系管理员', 'error')
   router.push('/forgot-password')
 }
 
@@ -82,7 +86,7 @@ async function submit() {
 
       <div class="form-tip">
         <router-link to="/forgot-password" @click="openForgot">忘记密码？</router-link>
-        <span>{{ emailFlowEnabled ? '通过邮箱重置' : '邮箱验证未开启' }}</span>
+        <span>{{ emailFlowEnabled ? '通过邮箱重置' : (!passwordResetEnabled ? '找回密码已关闭' : '邮箱验证未开启') }}</span>
       </div>
 
       <div class="auth-foot">

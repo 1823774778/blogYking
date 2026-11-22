@@ -16,13 +16,23 @@ public class SiteConfigService {
             "siteName", "siteDesc", "siteKeywords", "announcement", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicUrl", "musicTitle", "commentReview",
-            "registrationEnabled", "registrationVerifyEmail");
+            "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
+            "registrationInviteEnabled", "registrationEmailAllowlist",
+            "registrationMinPasswordLength", "registrationMaxUsers",
+            "registrationApproval", "registrationAutoLogin",
+            "registrationNotice", "registrationSuccessMessage", "registrationClosedMessage",
+            "maintenanceEnabled", "readOnlyMode", "maintenanceMessage", "readOnlyMessage");
 
     private static final Set<String> ALLOWED_KEYS = Set.of(
             "siteName", "siteDesc", "siteKeywords", "announcement", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicUrl", "musicTitle", "commentReview",
-            "registrationEnabled", "registrationVerifyEmail",
+            "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
+            "registrationInviteEnabled", "registrationInviteCode",
+            "registrationEmailAllowlist", "registrationMinPasswordLength", "registrationMaxUsers",
+            "registrationApproval", "registrationAutoLogin", "registrationNotice",
+            "registrationSuccessMessage", "registrationClosedMessage", "registrationDefaultBio",
+            "maintenanceEnabled", "readOnlyMode", "maintenanceMessage", "readOnlyMessage",
             "smtpEnabled", "smtpHost", "smtpPort", "smtpUsername", "smtpPassword",
             "smtpSenderName", "smtpSsl", "smtpStarttls",
             "mailTemplateRegistrationSubject", "mailTemplateRegistrationHtml",
@@ -61,6 +71,22 @@ public class SiteConfigService {
         map.put("commentReview", "false");
         map.put("registrationEnabled", "true");
         map.put("registrationVerifyEmail", "true");
+        map.put("passwordResetEnabled", "true");
+        map.put("registrationInviteEnabled", "false");
+        map.put("registrationInviteCode", "");
+        map.put("registrationEmailAllowlist", "");
+        map.put("registrationMinPasswordLength", "6");
+        map.put("registrationMaxUsers", "0");
+        map.put("registrationApproval", "false");
+        map.put("registrationAutoLogin", "true");
+        map.put("registrationNotice", "");
+        map.put("registrationSuccessMessage", "");
+        map.put("registrationClosedMessage", "站长暂时关闭了新用户注册。你仍然可以登录已有账号，或稍后再来看看。");
+        map.put("registrationDefaultBio", "");
+        map.put("maintenanceEnabled", "false");
+        map.put("readOnlyMode", "false");
+        map.put("maintenanceMessage", "站点正在维护升级，预计很快恢复。请稍后刷新页面。");
+        map.put("readOnlyMessage", "站点当前为只读模式，浏览不受影响，暂时不能发布内容、评论或修改资料。");
         map.put("about", "这里记录我在工程与生活中的一些片段。写下来，是为了把想清楚的事情留给以后的自己。");
         map.put("smtpEnabled", "false");
         map.put("smtpHost", "");

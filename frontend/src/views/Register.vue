@@ -7,9 +7,10 @@ import { setAuth, state, toast } from '../state'
 const route = useRoute()
 const router = useRouter()
 
-const form = ref({ email: '', password: '', confirm: '', emailCode: '', captchaAnswer: '' })
+const form = ref({ email: '', password: '', confirm: '', emailCode: '', inviteCode: '', captchaAnswer: '' })
 const loading = ref(false)
 const error = ref('')
+const success = ref('')
 const codeLoading = ref(false)
 const countdown = ref(0)
 const captcha = ref({ id: '', image: '' })
@@ -18,6 +19,14 @@ let timer = null
 
 const registrationOpen = computed(() => String(state.site.registrationEnabled ?? 'true').toLowerCase() !== 'false')
 const needEmailCode = computed(() => String(state.site.registrationVerifyEmail ?? 'true').toLowerCase() === 'true')
+const needInvite = computed(() => String(state.site.registrationInviteEnabled ?? 'false').toLowerCase() === 'true')
+const needApproval = computed(() => String(state.site.registrationApproval ?? 'false').toLowerCase() === 'true')
+const minPassword = computed(() => {
+  const value = Number(state.site.registrationMinPasswordLength || 6)
+  return Math.min(64, Math.max(6, Number.isFinite(value) ? value : 6))
+})
+const closedMessage = computed(() => state.site.registrationClosedMessage || '站长暂时关闭了新用户注册。你仍然可以登录已有账号，或稍后再来看看。')
+const notice = computed(() => state.site.registrationNotice || '')
 
 function validEmail(value) {
   return /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(value.trim())
@@ -91,6 +100,10 @@ async function submit() {
     error.value = '请输入 6 位邮箱验证码'
     return
   }
+  if (needInvite.value && !f.inviteCode.trim()) {
+    error.value = '请输入邀请码'
+    return
+  }
   if (!f.captchaAnswer.trim()) {
     error.value = '请填写图片验证码的计算结果'
     return
@@ -99,8 +112,12 @@ async function submit() {
     error.value = '验证码已失效，请点击图片刷新'
     return
   }
-  if (f.password.length < 6) {
-    error.value = '密码至少 6 位'
+  if (f.password.length < minPassword.value) {
+    error.value = `密码至少 ${minPassword.value} 位`
+    return
+  }
+  if (f.password.length > 64) {
+    error.value = '密码最多 64 位'
     return
   }
   if (f.password !== f.confirm) {
@@ -113,13 +130,20 @@ async function submit() {
       email: f.email.trim(),
       password: f.password,
       emailCode: needEmailCode.value ? f.emailCode.trim() : '',
+      inviteCode: needInvite.value ? f.inviteCode.trim() : '',
       captchaId: captcha.value.id,
       captchaAnswer: f.captchaAnswer.trim()
     })
-    setAuth(res.data.token, res.data.user)
-    toast('注册成功，欢迎')
-    const redirect = route.query.redirect ? String(route.query.redirect) : '/'
-    router.push(redirect)
+    if (res.data.token) {
+      setAuth(res.data.token, res.data.user)
+      toast(state.site.registrationSuccessMessage || '注册成功，欢迎')
+      const redirect = route.query.redirect ? String(route.query.redirect) : '/'
+      router.push(redirect)
+      return
+    }
+    success.value = needApproval.value
+      ? '注册申请已提交，管理员审核通过后即可登录。'
+      : (state.site.registrationSuccessMessage || '注册成功，请使用邮箱和密码登录。')
   } catch (e) {
     error.value = e.message
     await loadCaptcha()
@@ -153,11 +177,18 @@ onBeforeUnmount(() => {
       <div v-if="!registrationOpen" class="auth-closed">
         <span class="hero-eyebrow">Registration closed</span>
         <h2>注册暂未开放</h2>
-        <p>站长暂时关闭了新用户注册。你仍然可以登录已有账号，或稍后再来看看。</p>
+        <p>{{ closedMessage }}</p>
         <router-link class="btn" to="/login">已有账号，去登录</router-link>
       </div>
 
       <template v-else>
+        <div v-if="success" class="auth-closed">
+          <span class="hero-eyebrow">Registration received</span>
+          <h2>{{ needApproval ? '等待审核' : '注册成功' }}</h2>
+          <p>{{ success }}</p>
+          <router-link class="btn" to="/login">前往登录</router-link>
+        </div>
+        <template v-else>
         <div class="auth-card-head flex items-start justify-between gap-4">
           <div>
             <span class="hero-eyebrow">Join the journal</span>
@@ -167,6 +198,7 @@ onBeforeUnmount(() => {
           <span class="auth-step-pill">01 / 01</span>
         </div>
 
+        <div v-if="notice" class="auth-inline-note auth-notice">{{ notice }}</div>
         <div v-if="error" class="form-error">{{ error }}</div>
 
         <form @submit.prevent="submit">
@@ -184,9 +216,14 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <p v-else class="auth-inline-note">本站未开启邮箱验证，本次注册不需要邮箱验证码。</p>
+          <div v-if="needInvite" class="field">
+            <label for="inviteCode">邀请码</label>
+            <input id="inviteCode" v-model="form.inviteCode" type="text" maxlength="128" autocomplete="off" placeholder="请输入站长提供的邀请码" />
+            <p class="auth-field-hint">本站开启了邀请注册，没有邀请码无法创建账号。</p>
+          </div>
           <div class="field">
             <label for="password">密码</label>
-            <input id="password" v-model="form.password" type="password" autocomplete="new-password" placeholder="至少 6 位" />
+            <input id="password" v-model="form.password" type="password" autocomplete="new-password" :placeholder="`至少 ${minPassword} 位`" />
           </div>
           <div class="field">
             <label for="confirm">确认密码</label>
@@ -212,6 +249,7 @@ onBeforeUnmount(() => {
           <span>已经有账号？</span>
           <router-link to="/login">直接登录</router-link>
         </div>
+        </template>
       </template>
     </div>
   </div>

@@ -12,7 +12,18 @@ const musicAudio = ref(null)
 const musicPlaying = ref(false)
 
 const isAdminArea = computed(() => route.path.startsWith('/admin'))
-const showPublicChrome = computed(() => state.setupRequired === false && !isAdminArea.value)
+const maintenanceMode = computed(() =>
+  !isAdminArea.value
+  && state.setupRequired === false
+  && String(state.site.maintenanceEnabled ?? 'false').toLowerCase() === 'true'
+)
+const readOnlyMode = computed(() =>
+  !isAdminArea.value
+  && state.setupRequired === false
+  && !maintenanceMode.value
+  && String(state.site.readOnlyMode ?? 'false').toLowerCase() === 'true'
+)
+const showPublicChrome = computed(() => state.setupRequired === false && !isAdminArea.value && !maintenanceMode.value)
 const showFooter = computed(
   () => showPublicChrome.value && route.path !== '/login' && route.path !== '/register' && route.path !== '/setup'
 )
@@ -84,6 +95,17 @@ onMounted(async () => {
 
 <template>
   <div class="app" :class="{ 'is-admin': isAdminArea }">
+    <div v-if="maintenanceMode" class="site-mode-page">
+      <span class="hero-eyebrow">Maintenance</span>
+      <h1>站点维护中</h1>
+      <p>{{ state.site.maintenanceMessage || '站点正在维护升级，预计很快恢复。请稍后刷新页面。' }}</p>
+      <router-link v-if="state.user?.role === 'ADMIN'" class="btn" to="/admin">进入后台</router-link>
+      <router-link v-else class="btn" to="/login">管理员登录</router-link>
+    </div>
+    <div v-if="readOnlyMode" class="site-readonly-banner">
+      <strong>只读模式</strong>
+      <span>{{ state.site.readOnlyMessage || '站点当前为只读模式，浏览不受影响，暂时不能发布内容或评论。' }}</span>
+    </div>
     <NavBar v-if="showPublicChrome" />
     <router-view v-if="isAdminArea" />
     <main v-else class="shell main" :class="{ 'setup-main': state.setupRequired }">

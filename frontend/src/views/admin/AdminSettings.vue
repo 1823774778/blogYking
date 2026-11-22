@@ -12,6 +12,10 @@ const loading = ref(false)
 const savingSmtp = ref(false)
 const savingAi = ref(false)
 const savingRegistration = ref(false)
+const savingMaintenance = ref(false)
+const overview = ref(null)
+const exporting = ref(false)
+const clearingCache = ref(false)
 const testingMail = ref(false)
 const testingAi = ref(false)
 const mailTo = ref('')
@@ -20,7 +24,6 @@ const smtpDraftReady = ref(false)
 const mailTemplateDefaults = ref({})
 const templateKind = ref('registration')
 const htmlEditor = ref(null)
-const aiStatus = ref(null)
 const aiTestResult = ref('')
 const smtpOpen = ref(false)
 const aiOpen = ref(false)
@@ -295,19 +298,10 @@ async function testMail() {
   }
 }
 
-async function loadAiStatus() {
-  try {
-    aiStatus.value = (await http.get('/admin/ai/status')).data
-  } catch (e) {
-    /* AI 状态读取失败不阻塞 */
-  }
-}
-
 async function saveAi() {
   savingAi.value = true
   try {
     await persistConfig()
-    await loadAiStatus()
     aiOpen.value = false
     toast('AI 设置已保存')
   } catch (e) {
@@ -324,7 +318,6 @@ async function testAi() {
     const res = await http.post('/admin/ai/test')
     aiTestResult.value = res.data.message
     toast(res.data.message)
-    await loadAiStatus()
   } catch (e) {
     aiTestResult.value = e.message
     toast(e.message, 'error')
@@ -360,6 +353,22 @@ function applyModel(id) {
 async function saveRegistration() {
   savingRegistration.value = true
   try {
+    if (boolValue(config.value.registrationInviteEnabled) && !String(config.value.registrationInviteCode || '').trim()) {
+      toast('已开启邀请码，请先填写邀请码', 'error')
+      return
+    }
+    const minLength = Number(config.value.registrationMinPasswordLength || 6)
+    if (!Number.isInteger(minLength) || minLength < 6 || minLength > 64) {
+      toast('密码最小长度需为 6–64 位', 'error')
+      return
+    }
+    const maxUsers = Number(config.value.registrationMaxUsers || 0)
+    if (!Number.isInteger(maxUsers) || maxUsers < 0) {
+      toast('用户上限需为 0 或正整数', 'error')
+      return
+    }
+    config.value.registrationMinPasswordLength = String(minLength)
+    config.value.registrationMaxUsers = String(maxUsers)
     await persistConfig()
     toast('注册设置已保存')
   } catch (e) {
@@ -367,6 +376,74 @@ async function saveRegistration() {
   } finally {
     savingRegistration.value = false
   }
+}
+
+async function saveMaintenance() {
+  savingMaintenance.value = true
+  try {
+    await persistConfig()
+    await loadMaintenanceOverview()
+    toast('站点模式已保存')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    savingMaintenance.value = false
+  }
+}
+
+async function loadMaintenanceOverview() {
+  try {
+    overview.value = (await http.get('/admin/maintenance/overview')).data
+  } catch (e) {
+    toast(e.message, 'error')
+  }
+}
+
+async function exportData() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const blob = await http.get('/admin/maintenance/export', { responseType: 'blob', timeout: 60000 })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `blog-backup-${new Date().toISOString().slice(0, 19).replace(/\D/g, '')}.json`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    toast('数据快照已导出')
+  } catch (e) {
+    toast(e.message || '导出失败', 'error')
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function clearOtaCache() {
+  if (clearingCache.value) return
+  if (!window.confirm('确定清理更新缓存与下载产物吗？这不会影响当前运行版本。')) return
+  clearingCache.value = true
+  try {
+    await http.post('/admin/ota/cache/clear')
+    toast('更新缓存已清理')
+    loadRuntime()
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    clearingCache.value = false
+  }
+}
+
+function durationText(seconds) {
+  const value = Number(seconds)
+  if (!Number.isFinite(value) || value <= 0) return '—'
+  const days = Math.floor(value / 86400)
+  const hours = Math.floor((value % 86400) / 3600)
+  const minutes = Math.floor((value % 3600) / 60)
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
+  return `${minutes} 分钟`
 }
 
 async function toggleAiFeature(feature, event) {
@@ -520,7 +597,7 @@ function formatBytes(bytes) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadAiStatus(), loadRuntime(), loadMailTemplateDefaults()])
+  await Promise.all([loadConfig(), loadRuntime(), loadMailTemplateDefaults(), loadMaintenanceOverview()])
   await ensureSmtpDraft()
 })
 </script>
@@ -642,57 +719,6 @@ onMounted(async () => {
           </div>
         </section>
 
-        <div class="ai-overview-grid">
-          <section class="adm-card ai-connection-card">
-            <div class="adm-card-head">
-              <div><span class="adm-card-kicker">CONNECTION</span><h2>模型连接</h2></div>
-              <span class="ai-mini-chip">{{ config.aiProvider || '未配置' }}</span>
-            </div>
-            <div class="ai-model-line">
-              <span class="ai-model-mark" aria-hidden="true">AI</span>
-              <div>
-                <strong>{{ config.aiModel || '尚未选择模型' }}</strong>
-                <small>{{ config.aiBaseUrl || '尚未填写 Base URL' }}</small>
-              </div>
-            </div>
-            <div class="ai-metric-grid">
-              <div><span>服务商</span><b>{{ config.aiProvider || '—' }}</b></div>
-              <div><span>模型</span><b>{{ config.aiModel || '—' }}</b></div>
-              <div><span>API Key</span><b :class="{ 'is-on': config.aiApiKeySet === 'true' }">{{ config.aiApiKeySet === 'true' ? '已设置' : '未设置' }}</b></div>
-              <div><span>接口状态</span><b :class="{ 'is-on': aiStatus?.apiKeySet }">{{ aiStatus?.message || '等待测试' }}</b></div>
-            </div>
-            <p class="ai-card-note">Base URL 填到版本号为止，不要带 <code>/chat/completions</code>；系统会自动补全。</p>
-          </section>
-
-          <section class="adm-card ai-status-card">
-            <div class="adm-card-head">
-              <div><span class="adm-card-kicker">STATUS</span><h2>运行状态</h2></div>
-              <span class="ai-live-label" :class="{ on: aiStatus?.enabled }"><i></i>{{ aiStatus?.enabled ? '可用' : '未启用' }}</span>
-            </div>
-            <div class="ai-status-list">
-              <div class="ai-status-row">
-                <span class="ai-status-icon" :class="{ on: aiStatus?.enabled }" aria-hidden="true"></span>
-                <div><b>AI 服务</b><small>{{ aiStatus?.enabled ? '请求可以正常发起' : '启用后才能调用模型' }}</small></div>
-                <strong>{{ aiStatus?.enabled ? '已启用' : '未启用' }}</strong>
-              </div>
-              <div class="ai-status-row">
-                <span class="ai-status-icon" :class="{ on: aiStatus?.apiKeySet }" aria-hidden="true"></span>
-                <div><b>访问密钥</b><small>{{ aiStatus?.apiKeySet ? '密钥已在服务端保存' : '需要填写 API Key' }}</small></div>
-                <strong>{{ aiStatus?.apiKeySet ? '已设置' : '未设置' }}</strong>
-              </div>
-              <div class="ai-status-row">
-                <span class="ai-status-icon" :class="{ on: aiStatus?.model }" aria-hidden="true"></span>
-                <div><b>模型</b><small>{{ aiStatus?.provider || 'OpenAI 兼容接口' }}</small></div>
-                <strong>{{ aiStatus?.model || '—' }}</strong>
-              </div>
-            </div>
-            <div class="ai-status-foot">
-              <span>连接测试会向服务端发起一次最小请求，不会生成文章。</span>
-              <button class="btn-text" type="button" :disabled="testingAi" @click="testAi">{{ testingAi ? '测试中…' : '再测一次 →' }}</button>
-            </div>
-          </section>
-        </div>
-
         <section class="adm-card ai-capability-panel">
           <div class="adm-card-head">
             <div><span class="adm-card-kicker">CAPABILITY</span><h2>能力与提示词</h2><p class="ai-card-sub">按需开启能力，并为每种能力维护独立提示词。</p></div>
@@ -730,41 +756,113 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="activeTab === 'registration'" class="adm-settings-grid">
-        <section class="adm-card">
-          <div class="adm-card-head">
-            <div><span class="adm-card-kicker">REGISTRATION</span><h2>注册开关</h2></div>
-            <span class="adm-status" :class="boolValue(config.registrationEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.registrationEnabled) ? '已开放' : '已关闭' }}</span>
-          </div>
-          <div class="form-grid">
-            <div class="field span-2">
-              <label class="adm-switch-label">
-                <span>开放新用户注册</span>
-                <input type="checkbox" :checked="boolValue(config.registrationEnabled)" @change="setBool('registrationEnabled', $event)" />
-                <i class="adm-switch" aria-hidden="true"></i>
-              </label>
-              <p class="adm-note">关闭后注册页会直接提示暂未开放，已有账号不受影响。</p>
+        <div class="adm-main-stack">
+          <section class="adm-card">
+            <div class="adm-card-head">
+              <div><span class="adm-card-kicker">REGISTRATION</span><h2>注册策略</h2></div>
+              <span class="adm-status" :class="boolValue(config.registrationEnabled) ? 'is-published' : 'is-draft'">{{ boolValue(config.registrationEnabled) ? '已开放' : '已关闭' }}</span>
             </div>
-            <div class="field span-2">
-              <label class="adm-switch-label">
-                <span>开启邮箱验证（注册验证码 / 找回密码）</span>
-                <input type="checkbox" :checked="boolValue(config.registrationVerifyEmail)" @change="setBool('registrationVerifyEmail', $event)" />
-                <i class="adm-switch" aria-hidden="true"></i>
-              </label>
-              <p class="adm-note">开启后，注册必须获取并填写邮箱验证码，同时开放邮箱找回密码；需要可用的 SMTP 服务。关闭后注册只需邮箱、密码与本地图形验证码，找回密码入口会同步停用。</p>
+            <div class="form-grid">
+              <div class="field span-2">
+                <label class="adm-switch-label">
+                  <span>开放新用户注册</span>
+                  <input type="checkbox" :checked="boolValue(config.registrationEnabled)" @change="setBool('registrationEnabled', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">关闭后注册页显示自定义提示，已有账号不受影响。</p>
+              </div>
+              <div class="field">
+                <label class="adm-switch-label">
+                  <span>注册邮箱验证</span>
+                  <input type="checkbox" :checked="boolValue(config.registrationVerifyEmail)" @change="setBool('registrationVerifyEmail', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">要求填写邮箱验证码；依赖 SMTP。</p>
+              </div>
+              <div class="field">
+                <label class="adm-switch-label">
+                  <span>允许找回密码</span>
+                  <input type="checkbox" :checked="boolValue(config.passwordResetEnabled)" @change="setBool('passwordResetEnabled', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">关闭后登录页的找回密码入口停用。</p>
+              </div>
+              <div class="field">
+                <label for="registrationMinPasswordLength">密码最小长度</label>
+                <input id="registrationMinPasswordLength" v-model="config.registrationMinPasswordLength" type="number" min="6" max="64" />
+                <p class="adm-note">6–64 位，同时作用于注册、改密和重置密码。</p>
+              </div>
+              <div class="field">
+                <label for="registrationMaxUsers">用户总数上限</label>
+                <input id="registrationMaxUsers" v-model="config.registrationMaxUsers" type="number" min="0" />
+                <p class="adm-note">填 0 表示不限制；达到上限后注册会被拒绝。</p>
+              </div>
+              <div class="field span-2">
+                <label class="adm-switch-label">
+                  <span>注册需要邀请码</span>
+                  <input type="checkbox" :checked="boolValue(config.registrationInviteEnabled)" @change="setBool('registrationInviteEnabled', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">邀请码只在服务端校验，不会暴露给公共页面。</p>
+              </div>
+              <div v-if="boolValue(config.registrationInviteEnabled)" class="field span-2">
+                <label for="registrationInviteCode">邀请码</label>
+                <input id="registrationInviteCode" v-model="config.registrationInviteCode" type="text" maxlength="128" placeholder="例如：DE EK-2026" />
+              </div>
+              <div class="field span-2">
+                <label for="registrationEmailAllowlist">允许注册的邮箱域名</label>
+                <textarea id="registrationEmailAllowlist" v-model="config.registrationEmailAllowlist" rows="2" maxlength="4000" placeholder="留空不限制；每行或用逗号分隔，例如 example.com、*.company.com"></textarea>
+                <p class="adm-note">支持精确域名和通配后缀；留空表示所有邮箱域名均可注册。</p>
+              </div>
+              <div class="field">
+                <label class="adm-switch-label">
+                  <span>新用户需要审核</span>
+                  <input type="checkbox" :checked="boolValue(config.registrationApproval)" @change="setBool('registrationApproval', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">开启后新账号默认禁用，需在用户管理中手动启用。</p>
+              </div>
+              <div class="field">
+                <label class="adm-switch-label">
+                  <span>注册后自动登录</span>
+                  <input type="checkbox" :checked="boolValue(config.registrationAutoLogin)" :disabled="boolValue(config.registrationApproval)" @change="setBool('registrationAutoLogin', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">关闭后注册成功只返回账号信息，用户需自行登录。审核模式下不签发登录凭证。</p>
+              </div>
+              <div class="field span-2">
+                <label for="registrationNotice">注册页公告</label>
+                <textarea id="registrationNotice" v-model="config.registrationNotice" rows="3" maxlength="4000" placeholder="例如：本站账号仅用于评论与收藏，请勿发布广告。"></textarea>
+              </div>
+              <div class="field">
+                <label for="registrationSuccessMessage">注册成功提示</label>
+                <textarea id="registrationSuccessMessage" v-model="config.registrationSuccessMessage" rows="2" maxlength="1000" placeholder="留空使用默认欢迎语"></textarea>
+              </div>
+              <div class="field">
+                <label for="registrationDefaultBio">新用户默认简介</label>
+                <textarea id="registrationDefaultBio" v-model="config.registrationDefaultBio" rows="2" maxlength="512" placeholder="可留空"></textarea>
+              </div>
+              <div class="field span-2">
+                <label for="registrationClosedMessage">关闭注册时的提示</label>
+                <textarea id="registrationClosedMessage" v-model="config.registrationClosedMessage" rows="2" maxlength="1000"></textarea>
+              </div>
             </div>
-          </div>
-          <div class="adm-form-actions">
-            <button class="btn" type="button" :disabled="savingRegistration" @click="saveRegistration">{{ savingRegistration ? '保存中…' : '保存注册设置' }}</button>
-          </div>
-        </section>
+            <div class="adm-form-actions">
+              <button class="btn" type="button" :disabled="savingRegistration" @click="saveRegistration">{{ savingRegistration ? '保存中…' : '保存注册设置' }}</button>
+            </div>
+          </section>
+        </div>
         <aside class="adm-side-stack">
           <section class="adm-card">
             <div class="adm-card-head"><div><span class="adm-card-kicker">FLOW</span><h2>注册流程</h2></div></div>
             <ol class="adm-flow-list">
               <li>填写邮箱；邮箱即用户名</li>
               <li>完成本地图形验证码</li>
-              <li>按开关决定是否填写邮箱验证码</li>
-              <li>填写密码，注册成功后自动登录</li>
+              <li v-if="boolValue(config.registrationVerifyEmail)">获取并填写邮箱验证码</li>
+              <li v-if="boolValue(config.registrationInviteEnabled)">填写站长提供的邀请码</li>
+              <li v-if="boolValue(config.registrationApproval)">提交后进入待审核状态</li>
+              <li v-else-if="boolValue(config.registrationAutoLogin)">注册成功后自动登录</li>
+              <li v-else>注册成功后前往登录页</li>
             </ol>
           </section>
           <section class="adm-card">
@@ -773,41 +871,126 @@ onMounted(async () => {
               <div><dt>SMTP</dt><dd>{{ boolValue(config.smtpEnabled) ? '已启用' : '未启用' }}</dd></div>
               <div><dt>注册</dt><dd>{{ boolValue(config.registrationEnabled) ? '开放' : '关闭' }}</dd></div>
               <div><dt>邮箱验证</dt><dd>{{ boolValue(config.registrationVerifyEmail) ? '开启' : '关闭' }}</dd></div>
-              <div><dt>找回密码</dt><dd>{{ boolValue(config.registrationVerifyEmail) ? '可用' : '停用' }}</dd></div>
+              <div><dt>找回密码</dt><dd>{{ boolValue(config.passwordResetEnabled) && boolValue(config.registrationVerifyEmail) ? '可用' : '停用' }}</dd></div>
+              <div><dt>邀请码</dt><dd>{{ boolValue(config.registrationInviteEnabled) ? (config.registrationInviteCode ? '已配置' : '缺少邀请码') : '不需要' }}</dd></div>
+              <div><dt>用户上限</dt><dd>{{ Number(config.registrationMaxUsers || 0) > 0 ? `最多 ${config.registrationMaxUsers} 人` : '不限制' }}</dd></div>
             </dl>
             <p v-if="boolValue(config.registrationEnabled) && boolValue(config.registrationVerifyEmail) && !boolValue(config.smtpEnabled)" class="adm-note danger-text">注册已开放且要求邮箱验证，但 SMTP 未启用，验证码将无法发送。请先配置 SMTP 或关闭邮箱验证。</p>
+            <p v-if="boolValue(config.registrationInviteEnabled) && !config.registrationInviteCode" class="adm-note danger-text">已开启邀请码但未填写内容，注册会被服务端拒绝。</p>
           </section>
         </aside>
       </div>
 
       <div v-else class="adm-settings-grid">
-        <section class="adm-card">
-          <div class="adm-card-head"><div><span class="adm-card-kicker">RUNTIME</span><h2>当前运行</h2></div><span class="badge" :class="ota?.canAutoUpdate ? 'on' : 'warn'">{{ otaModeLabel(ota?.mode) }}</span></div>
-          <div class="adm-runtime-grid">
-            <div class="adm-runtime-item"><span>版本</span><strong>{{ version?.version || ota?.version || '—' }}</strong></div>
-            <div class="adm-runtime-item"><span>构建时间</span><strong>{{ version?.buildTime || '—' }}</strong></div>
-            <div class="adm-runtime-item"><span>已运行</span><strong>{{ ota?.uptimeSeconds ?? version?.uptimeSeconds ?? '—' }} 秒</strong></div>
-            <div class="adm-runtime-item"><span>实例</span><strong class="mono">{{ shortSha(ota?.instanceId || version?.instanceId) }}</strong></div>
-            <div class="adm-runtime-item"><span>jar 大小</span><strong>{{ formatBytes(ota?.size) }}</strong></div>
-            <div class="adm-runtime-item"><span>PID</span><strong>{{ ota?.pid || version?.pid || '—' }}</strong></div>
-            <div class="adm-runtime-item"><span>数据库</span><strong>{{ health?.database || '—' }}</strong></div>
-            <div class="adm-runtime-item"><span>Redis</span><strong>{{ health?.redis || '—' }}</strong></div>
-          </div>
-          <div class="ota-sha"><span>当前 SHA-256</span><code>{{ shortSha(ota?.sha256) }}</code></div>
-          <div class="adm-restart-panel">
-            <div>
-              <strong>重启站点</strong>
-              <p class="adm-note">按当前 jar 重启，不更换版本；重启期间会短暂断站。未启用自动更新时不可用。</p>
+        <div class="adm-main-stack">
+          <section class="adm-card">
+            <div class="adm-card-head">
+              <div><span class="adm-card-kicker">SITE MODE</span><h2>站点模式</h2></div>
+              <div class="maint-status-pills">
+                <span class="adm-status" :class="boolValue(config.maintenanceEnabled) ? 'is-draft' : 'is-published'">{{ boolValue(config.maintenanceEnabled) ? '维护中' : '正常' }}</span>
+                <span class="adm-status" :class="boolValue(config.readOnlyMode) ? 'is-draft' : 'is-published'">{{ boolValue(config.readOnlyMode) ? '只读' : '可写' }}</span>
+              </div>
             </div>
-            <button class="btn btn-danger" type="button" :disabled="restarting || !ota?.canAutoUpdate" @click="restartSite">{{ restarting ? '重启中…' : '重启站点' }}</button>
-          </div>
-          <div v-if="restarting || restartMessage" class="adm-restart-status">
-            <span class="ota-spinner" v-if="restarting"></span>
-            <span>{{ restartMessage }}</span>
-          </div>
-          <div v-if="!ota?.canAutoUpdate" class="adm-note">{{ ota?.modeNote || '当前运行模式不支持自动重启。' }}</div>
-        </section>
+            <div class="form-grid">
+              <div class="field span-2">
+                <label class="adm-switch-label">
+                  <span>开启维护模式</span>
+                  <input type="checkbox" :checked="boolValue(config.maintenanceEnabled)" @change="setBool('maintenanceEnabled', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">除后台、登录和站点元信息外，所有 API 会返回 503；公共站会显示维护遮罩。</p>
+                <textarea v-model="config.maintenanceMessage" rows="2" maxlength="2000" placeholder="维护期间展示给访客的提示"></textarea>
+              </div>
+              <div class="field span-2">
+                <label class="adm-switch-label">
+                  <span>开启只读模式</span>
+                  <input type="checkbox" :checked="boolValue(config.readOnlyMode)" @change="setBool('readOnlyMode', $event)" />
+                  <i class="adm-switch" aria-hidden="true"></i>
+                </label>
+                <p class="adm-note">访客可以浏览，但发布、评论、点赞、收藏、改资料和上传都会被服务端拒绝。管理员后台不受影响。</p>
+                <textarea v-model="config.readOnlyMessage" rows="2" maxlength="2000" placeholder="只读期间展示给访客的提示"></textarea>
+              </div>
+            </div>
+            <div class="adm-form-actions">
+              <button class="btn" type="button" :disabled="savingMaintenance" @click="saveMaintenance">{{ savingMaintenance ? '保存中…' : '保存站点模式' }}</button>
+            </div>
+          </section>
+
+          <section class="adm-card">
+            <div class="adm-card-head">
+              <div><span class="adm-card-kicker">DATA</span><h2>运行与数据</h2></div>
+              <button class="btn-text" type="button" @click="loadMaintenanceOverview">刷新 →</button>
+            </div>
+            <div class="adm-runtime-grid">
+              <div class="adm-runtime-item"><span>文章</span><strong>{{ overview?.posts ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>已发布</span><strong>{{ overview?.publishedPosts ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>草稿</span><strong>{{ overview?.draftPosts ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>待审文章</span><strong>{{ overview?.pendingPosts ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>评论</span><strong>{{ overview?.comments ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>待审评论</span><strong>{{ overview?.pendingComments ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>用户</span><strong>{{ overview?.users ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>禁用用户</span><strong>{{ overview?.disabledUsers ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>标签</span><strong>{{ overview?.tags ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>文件</span><strong>{{ overview?.files ?? '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>堆内存</span><strong>{{ formatBytes(overview?.heapUsed) }} / {{ formatBytes(overview?.heapMax) }}</strong></div>
+              <div class="adm-runtime-item"><span>运行时长</span><strong>{{ durationText(overview?.uptimeSeconds) }}</strong></div>
+            </div>
+            <div class="maint-action-row">
+              <div>
+                <strong>导出站点数据</strong>
+                <p class="adm-note">生成 JSON 快照，包含文章、评论、标签和脱敏用户资料；不含密码哈希与密钥。</p>
+              </div>
+              <button class="btn btn-ghost" type="button" :disabled="exporting" @click="exportData">{{ exporting ? '导出中…' : '导出数据' }}</button>
+            </div>
+            <div class="maint-action-row">
+              <div>
+                <strong>清理更新缓存</strong>
+                <p class="adm-note">清理 GitHub Release 缓存、已下载的更新包与更新历史；下载任务进行中会拒绝执行。</p>
+              </div>
+              <button class="btn btn-ghost" type="button" :disabled="clearingCache" @click="clearOtaCache">{{ clearingCache ? '清理中…' : '清理缓存' }}</button>
+            </div>
+          </section>
+
+          <section class="adm-card">
+            <div class="adm-card-head"><div><span class="adm-card-kicker">RUNTIME</span><h2>当前进程</h2></div><span class="badge" :class="ota?.canAutoUpdate ? 'on' : 'warn'">{{ otaModeLabel(ota?.mode) }}</span></div>
+            <div class="adm-runtime-grid">
+              <div class="adm-runtime-item"><span>版本</span><strong>{{ version?.version || ota?.version || '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>构建时间</span><strong>{{ version?.buildTime || '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>已运行</span><strong>{{ ota?.uptimeSeconds ?? version?.uptimeSeconds ?? '—' }} 秒</strong></div>
+              <div class="adm-runtime-item"><span>实例</span><strong class="mono">{{ shortSha(ota?.instanceId || version?.instanceId) }}</strong></div>
+              <div class="adm-runtime-item"><span>jar 大小</span><strong>{{ formatBytes(ota?.size) }}</strong></div>
+              <div class="adm-runtime-item"><span>PID</span><strong>{{ ota?.pid || version?.pid || '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>数据库</span><strong>{{ health?.database || '—' }}</strong></div>
+              <div class="adm-runtime-item"><span>Redis</span><strong>{{ health?.redis || '—' }}</strong></div>
+            </div>
+            <div class="ota-sha"><span>当前 SHA-256</span><code>{{ shortSha(ota?.sha256) }}</code></div>
+            <div class="adm-restart-panel">
+              <div>
+                <strong>重启站点</strong>
+                <p class="adm-note">按当前 jar 重启，不更换版本；重启期间会短暂断站。未启用自动更新时不可用。</p>
+              </div>
+              <button class="btn btn-danger" type="button" :disabled="restarting || !ota?.canAutoUpdate" @click="restartSite">{{ restarting ? '重启中…' : '重启站点' }}</button>
+            </div>
+            <div v-if="restarting || restartMessage" class="adm-restart-status">
+              <span class="ota-spinner" v-if="restarting"></span>
+              <span>{{ restartMessage }}</span>
+            </div>
+            <div v-if="!ota?.canAutoUpdate" class="adm-note">{{ ota?.modeNote || '当前运行模式不支持自动重启。' }}</div>
+          </section>
+        </div>
+
         <aside class="adm-side-stack">
+          <section class="adm-card">
+            <div class="adm-card-head"><div><span class="adm-card-kicker">HEALTH</span><h2>健康概览</h2></div></div>
+            <dl class="adm-facts">
+              <div><dt>磁盘</dt><dd>{{ formatBytes(overview?.diskUsable) }} 可用 / {{ formatBytes(overview?.diskTotal) }}</dd></div>
+              <div><dt>处理器</dt><dd>{{ overview?.processors ?? '—' }} 核</dd></div>
+              <div><dt>Java</dt><dd>{{ overview?.javaVersion || '—' }}</dd></div>
+              <div><dt>系统</dt><dd class="adm-break">{{ overview?.os || '—' }}</dd></div>
+              <div><dt>工作目录</dt><dd class="adm-break">{{ overview?.workDir || '—' }}</dd></div>
+            </dl>
+            <button class="btn btn-ghost btn-sm" type="button" @click="loadRuntime">重新读取</button>
+          </section>
           <section class="adm-card">
             <div class="adm-card-head"><div><span class="adm-card-kicker">SYSTEM</span><h2>运行信息</h2></div></div>
             <dl class="adm-facts">
@@ -816,7 +999,11 @@ onMounted(async () => {
               <div><dt>Java</dt><dd>{{ version?.java || '—' }}</dd></div>
               <div><dt>系统</dt><dd>{{ version?.os || '—' }}</dd></div>
             </dl>
-            <button class="btn btn-ghost btn-sm" type="button" @click="loadRuntime">重新读取</button>
+          </section>
+          <section class="adm-card">
+            <div class="adm-card-head"><div><span class="adm-card-kicker">NOTE</span><h2>模式说明</h2></div></div>
+            <p class="adm-note">维护模式和只读模式都由后端过滤器强制执行，不是前端遮罩。后台管理员始终可以进入设置页关闭模式。</p>
+            <p class="adm-note">导出数据只做快照备份，不会自动清空或覆盖现有数据。</p>
           </section>
         </aside>
       </div>
@@ -1027,3 +1214,63 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.adm-switch-label {
+  position: relative;
+}
+
+.adm-switch-label input {
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.adm-main-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.maint-status-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.maint-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0;
+  border-top: 1px solid var(--adm-line);
+}
+
+.maint-action-row:first-of-type {
+  border-top: 0;
+}
+
+.maint-action-row strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.maint-action-row .adm-note {
+  margin: 0;
+}
+
+.maint-action-row .btn {
+  flex: none;
+}
+
+@media (max-width: 720px) {
+  .maint-action-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+</style>

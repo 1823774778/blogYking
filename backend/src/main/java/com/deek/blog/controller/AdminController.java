@@ -9,11 +9,16 @@ import com.deek.blog.dto.PostDtos.PostDetail;
 import com.deek.blog.dto.PostDtos.PostReq;
 import com.deek.blog.dto.PostDtos.PostView;
 import com.deek.blog.dto.PostDtos.StatsResp;
+import com.deek.blog.entity.Comment;
+import com.deek.blog.entity.Post;
+import com.deek.blog.entity.Tag;
 import com.deek.blog.entity.User;
 import com.deek.blog.repository.CommentRepository;
 import com.deek.blog.repository.PostFavoriteRepository;
 import com.deek.blog.repository.PostLikeRepository;
 import com.deek.blog.repository.PostRepository;
+import com.deek.blog.repository.StoredFileRepository;
+import com.deek.blog.repository.TagRepository;
 import com.deek.blog.repository.UserRepository;
 import com.deek.blog.security.SecurityUtils;
 import com.deek.blog.service.AiService;
@@ -24,10 +29,14 @@ import com.deek.blog.service.MailTemplateService;
 import com.deek.blog.service.PostService;
 import com.deek.blog.service.SiteConfigService;
 import com.deek.blog.service.StorageService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,7 +47,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -81,13 +95,17 @@ public class AdminController {
     private final UserRepository userRepository;
     private final PostLikeRepository likeRepository;
     private final PostFavoriteRepository favoriteRepository;
+    private final TagRepository tagRepository;
+    private final StoredFileRepository storedFileRepository;
+    private final ObjectMapper objectMapper;
 
     public AdminController(PostService postService, CommentService commentService, AuthService authService,
                            SiteConfigService siteConfigService, MailService mailService,
                            MailTemplateService mailTemplateService, AiService aiService,
                            StorageService storageService, PostRepository postRepository, CommentRepository commentRepository,
                            UserRepository userRepository, PostLikeRepository likeRepository,
-                           PostFavoriteRepository favoriteRepository) {
+                           PostFavoriteRepository favoriteRepository, TagRepository tagRepository,
+                           StoredFileRepository storedFileRepository, ObjectMapper objectMapper) {
         this.postService = postService;
         this.commentService = commentService;
         this.authService = authService;
@@ -101,6 +119,9 @@ public class AdminController {
         this.userRepository = userRepository;
         this.likeRepository = likeRepository;
         this.favoriteRepository = favoriteRepository;
+        this.tagRepository = tagRepository;
+        this.storedFileRepository = storedFileRepository;
+        this.objectMapper = objectMapper;
     }
 
     @GetMapping("/stats")
@@ -340,6 +361,135 @@ public class AdminController {
             throw new BizException("发送失败：" + e.getMessage());
         }
         return ApiResponse.ok();
+    }
+
+    @GetMapping("/maintenance/overview")
+    public ApiResponse<Map<String, Object>> maintenanceOverview() {
+        Map<String, String> cfg = siteConfigService.get();
+        Runtime runtime = Runtime.getRuntime();
+        long heapUsed = runtime.totalMemory() - runtime.freeMemory();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("maintenanceEnabled", cfg.getOrDefault("maintenanceEnabled", "false"));
+        data.put("readOnlyMode", cfg.getOrDefault("readOnlyMode", "false"));
+        data.put("posts", postRepository.count());
+        data.put("publishedPosts", postRepository.countByStatus("PUBLISHED"));
+        data.put("draftPosts", postRepository.countByStatus("DRAFT"));
+        data.put("pendingPosts", postRepository.countByStatus("PENDING"));
+        data.put("comments", commentRepository.count());
+        data.put("pendingComments", commentRepository.countByStatus("PENDING"));
+        data.put("users", userRepository.count());
+        data.put("disabledUsers", userRepository.countByEnabledFalse());
+        data.put("tags", tagRepository.count());
+        data.put("files", storedFileRepository.count());
+        data.put("heapUsed", heapUsed);
+        data.put("heapMax", runtime.maxMemory());
+        data.put("processors", runtime.availableProcessors());
+        data.put("uptimeSeconds", java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime() / 1000);
+        data.put("javaVersion", System.getProperty("java.version", ""));
+        data.put("os", System.getProperty("os.name", "") + " " + System.getProperty("os.arch", ""));
+        data.put("workDir", System.getProperty("user.dir", ""));
+        try {
+            Path root = Paths.get(System.getProperty("user.dir", ".")).toAbsolutePath();
+            var store = Files.getFileStore(root);
+            data.put("diskTotal", store.getTotalSpace());
+            data.put("diskUsable", store.getUsableSpace());
+        } catch (Exception e) {
+            data.put("diskTotal", -1L);
+            data.put("diskUsable", -1L);
+        }
+        return ApiResponse.ok(data);
+    }
+
+    @GetMapping("/maintenance/export")
+    public ResponseEntity<byte[]> exportData() throws IOException {
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("schemaVersion", 1);
+        root.put("exportedAt", LocalDateTime.now().toString());
+        root.put("site", siteConfigService.publicConfig());
+        root.put("posts", postRepository.findAll(Sort.by(Sort.Direction.ASC, "id")).stream()
+                .map(this::safePost).toList());
+        root.put("comments", commentRepository.findAll(Sort.by(Sort.Direction.ASC, "id")).stream()
+                .map(this::safeComment).toList());
+        root.put("tags", tagRepository.findAll(Sort.by(Sort.Direction.ASC, "id")).stream()
+                .map(this::safeTag).toList());
+        List<Map<String, Object>> users = userRepository.findAll(Sort.by(Sort.Direction.ASC, "id")).stream()
+                .map(this::safeUser).toList();
+        root.put("users", users);
+        byte[] bytes = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(root);
+        String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"blog-backup-" + stamp + ".json\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(bytes);
+    }
+
+    private Map<String, Object> safeUser(User user) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", user.getId());
+        map.put("username", user.getUsername());
+        map.put("email", user.getEmail());
+        map.put("nickname", user.getNickname());
+        map.put("avatar", user.getAvatar());
+        map.put("bio", user.getBio());
+        map.put("role", user.getRole());
+        map.put("enabled", user.isEnabled());
+        map.put("createdAt", String.valueOf(user.getCreatedAt()));
+        return map;
+    }
+
+    private Map<String, Object> safePost(Post post) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", post.getId());
+        map.put("title", post.getTitle());
+        map.put("summary", post.getSummary());
+        map.put("content", post.getContent());
+        map.put("cover", post.getCover());
+        map.put("tags", post.getTags());
+        map.put("status", post.getStatus());
+        map.put("reviewNote", post.getReviewNote());
+        map.put("reviewedAt", String.valueOf(post.getReviewedAt()));
+        map.put("reviewedBy", post.getReviewedBy());
+        map.put("commentSummary", post.getCommentSummary());
+        map.put("commentSummaryAt", String.valueOf(post.getCommentSummaryAt()));
+        map.put("top", post.isTop());
+        map.put("views", post.getViews());
+        map.put("likeCount", post.getLikeCount());
+        map.put("favoriteCount", post.getFavoriteCount());
+        map.put("commentCount", post.getCommentCount());
+        map.put("authorId", post.getAuthorId());
+        map.put("authorName", post.getAuthorName());
+        map.put("authorAvatar", post.getAuthorAvatar());
+        map.put("createdAt", String.valueOf(post.getCreatedAt()));
+        map.put("updatedAt", String.valueOf(post.getUpdatedAt()));
+        return map;
+    }
+
+    private Map<String, Object> safeComment(Comment comment) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", comment.getId());
+        map.put("postId", comment.getPostId());
+        map.put("userId", comment.getUserId());
+        map.put("parentId", comment.getParentId());
+        map.put("content", comment.getContent());
+        map.put("nickname", comment.getNickname());
+        map.put("avatar", comment.getAvatar());
+        map.put("status", comment.getStatus());
+        map.put("createdAt", String.valueOf(comment.getCreatedAt()));
+        return map;
+    }
+
+    private Map<String, Object> safeTag(Tag tag) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", tag.getId());
+        map.put("name", tag.getName());
+        map.put("slug", tag.getSlug());
+        map.put("description", tag.getDescription());
+        map.put("color", tag.getColor());
+        map.put("sortOrder", tag.getSortOrder());
+        map.put("visible", tag.isVisible());
+        map.put("createdAt", String.valueOf(tag.getCreatedAt()));
+        map.put("updatedAt", String.valueOf(tag.getUpdatedAt()));
+        return map;
     }
 
     private Map<String, String> maskedConfig(Map<String, String> raw) {

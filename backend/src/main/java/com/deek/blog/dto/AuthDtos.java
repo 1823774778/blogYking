@@ -5,7 +5,7 @@ import java.time.LocalDateTime;
 public class AuthDtos {
 
     public record RegisterReq(String email, String password, String emailCode,
-                              String captchaId, String captchaAnswer) {
+                              String inviteCode, String captchaId, String captchaAnswer) {
     }
 
     public record EmailCodeReq(String email) {

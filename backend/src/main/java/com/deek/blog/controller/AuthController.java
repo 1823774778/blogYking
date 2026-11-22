@@ -54,7 +54,9 @@ public class AuthController {
     public ApiResponse<AuthResp> register(@RequestBody RegisterReq req,
                                           HttpServletRequest request, HttpServletResponse response) {
         AuthResp auth = authService.register(req);
-        writeAuthCookie(request, response, auth.token());
+        if (auth.token() != null && !auth.token().isBlank()) {
+            writeAuthCookie(request, response, auth.token());
+        }
         return ApiResponse.ok(auth);
     }
 
