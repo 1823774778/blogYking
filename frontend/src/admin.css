@@ -374,13 +374,45 @@
 .admin-nav-group-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 0 14px 7px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
   color: var(--adm-chrome-subtle);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.18s ease, color 0.18s ease;
 }
 
-.admin-nav-group-head span {
+.admin-nav-group-head:hover {
+  background: var(--adm-chrome-hover);
+  color: var(--adm-chrome-fg);
+}
+
+.admin-nav-group.active .admin-nav-group-head {
+  color: var(--adm-chrome-fg);
+}
+
+.admin-nav-group-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  opacity: 0.62;
+}
+
+.admin-nav-group.active .admin-nav-group-icon {
+  opacity: 1;
+  color: var(--adm-accent, #2f6fed);
+}
+
+.admin-nav-group-title {
+  flex: 1;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -389,7 +421,55 @@
 .admin-nav-group-head small {
   font-size: 8px;
   letter-spacing: 0.16em;
-  opacity: 0.7;
+  opacity: 0.64;
+}
+
+.admin-nav-group-chevron {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  opacity: 0.62;
+  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+}
+
+.admin-nav-group-chevron svg {
+  width: 15px;
+  height: 15px;
+}
+
+.admin-nav-group.expanded .admin-nav-group-chevron {
+  transform: rotate(180deg);
+  opacity: 0.9;
+}
+
+.admin-nav-children {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-nav-children.open {
+  grid-template-rows: 1fr;
+}
+
+.admin-nav-children-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-nav-children-inner .admin-nav-item {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+
+.admin-nav-children.open .admin-nav-children-inner .admin-nav-item {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .admin-nav-item.is-child {
@@ -1995,11 +2075,12 @@
   position: fixed;
   right: 22px;
   bottom: 22px;
-  z-index: 55;
+  z-index: 82;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
+  pointer-events: none;
 }
 
 .site-music-btn {
@@ -2018,6 +2099,9 @@
   box-shadow: 0 12px 30px rgba(20, 45, 40, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(18px);
   cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  z-index: 2;
   transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
 }
 
@@ -2132,6 +2216,9 @@
   background: color-mix(in srgb, var(--paper) 92%, transparent);
   box-shadow: 0 24px 70px rgba(14, 35, 30, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(24px);
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .music-panel-enter-active,

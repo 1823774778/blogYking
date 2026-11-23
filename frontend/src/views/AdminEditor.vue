@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
-import { toast } from '../state'
+import { state, toast } from '../state'
 import MarkdownBody from '../components/MarkdownBody.vue'
 
 const route = useRoute()
@@ -34,8 +34,15 @@ const loading = ref(false)
 const coverInput = ref(null)
 const inlineInput = ref(null)
 const headingOpen = ref(false)
-const aiMenuOpen = ref(false)
 const uploadingInline = ref(false)
+const aiWriterOpen = ref(false)
+const aiWriterInput = ref('')
+const aiWriterError = ref('')
+const aiGenerating = ref(false)
+const aiGenerationStatus = ref('')
+let aiAbortController = null
+let aiTypeTimer = null
+let aiRunId = 0
 const history = ref([])
 const historyIndex = ref(-1)
 const historyReady = ref(false)
@@ -44,12 +51,10 @@ const canRedo = computed(() => historyIndex.value >= 0 && historyIndex.value < h
 let historyTimer = null
 let historyApplying = false
 const selectionBar = reactive({ show: false, left: 0, top: 0, start: 0, end: 0 })
-const aiGenOpen = ref(false)
-const aiGenLoading = ref(false)
 const aiReviewOpen = ref(false)
 const aiReviewLoading = ref(false)
 const aiReview = ref(null)
-const aiGen = reactive({ topic: '', outline: '', tone: 'natural', length: 'medium', prompt: '' })
+const aiGeneratePrompt = ref('')
 const aiReviewPromptOpen = ref(false)
 const aiReviewPrompt = ref('')
 const summaryPromptOpen = ref(false)
@@ -63,6 +68,7 @@ const aiConfig = reactive({
 })
 
 const isEdit = computed(() => Boolean(route.params.id))
+const isDark = computed(() => state.theme === 'dark')
 const statusLabel = computed(() => (form.status === 'PUBLISHED' ? '已发布' : form.status === 'DRAFT' ? '草稿' : '待审核'))
 const charCount = computed(() => form.content.replace(/\s/g, '').length)
 const statusText = computed(() => ({
@@ -145,7 +151,7 @@ async function loadAiConfig() {
     aiConfig.articleGeneratePrompt = cfg.aiArticleGeneratePrompt || ''
     aiConfig.articleReviewPrompt = cfg.aiArticleReviewPrompt || ''
     aiConfig.summaryPrompt = cfg.aiSummaryPrompt || ''
-    aiGen.prompt = aiConfig.articleGeneratePrompt
+    aiGeneratePrompt.value = aiConfig.articleGeneratePrompt
     aiReviewPrompt.value = aiConfig.articleReviewPrompt
     summaryPrompt.value = aiConfig.summaryPrompt
   } catch {
@@ -192,39 +198,104 @@ async function generateSummary() {
   }
 }
 
-async function generateArticle() {
+function openAiWriter() {
   if (!aiConfig.articleEnabled) {
     toast('AI 文章功能未开启，请先在站点设置中打开', 'error')
     return
   }
-  if (!aiGen.topic.trim()) {
-    toast('请先填写文章主题', 'error')
+  aiWriterError.value = ''
+  aiWriterInput.value = aiWriterInput.value || form.title.trim()
+  aiWriterOpen.value = true
+}
+
+function stopAiGeneration(silent = false) {
+  aiRunId += 1
+  if (aiAbortController) {
+    aiAbortController.abort()
+    aiAbortController = null
+  }
+  if (aiTypeTimer) {
+    clearTimeout(aiTypeTimer)
+    aiTypeTimer = null
+  }
+  aiGenerating.value = false
+  aiGenerationStatus.value = ''
+  if (!silent) toast('已停止生成，已写入的内容会保留')
+}
+
+function typeOutContent(full, runId) {
+  return new Promise((resolve) => {
+    let index = 0
+    const total = full.length
+    const chunk = Math.max(3, Math.ceil(total / 420))
+    form.content = ''
+    const tick = () => {
+      if (runId !== aiRunId) {
+        resolve(false)
+        return
+      }
+      index = Math.min(total, index + chunk)
+      form.content = full.slice(0, index)
+      aiGenerationStatus.value = index < total
+        ? `正在写入正文 ${Math.round((index / total) * 100)}%`
+        : '正在收尾…'
+      if (index < total) {
+        aiTypeTimer = setTimeout(tick, 22)
+      } else {
+        aiTypeTimer = null
+        resolve(true)
+      }
+    }
+    tick()
+  })
+}
+
+async function generateFromAi() {
+  if (aiGenerating.value) return
+  const idea = aiWriterInput.value.trim()
+  if (!idea) {
+    aiWriterError.value = '先告诉 AI 你想写什么主题'
     return
   }
-  if (!aiGen.prompt.trim()) {
-    toast('请填写 AI 生成文章提示词', 'error')
+  if (!aiConfig.articleEnabled) {
+    aiWriterError.value = 'AI 文章功能未开启，请先在站点设置中打开'
     return
   }
-  aiGenLoading.value = true
+  aiWriterOpen.value = false
+  aiWriterError.value = ''
+  aiGenerating.value = true
+  aiGenerationStatus.value = '正在理解主题…'
+  const runId = ++aiRunId
+  aiAbortController = new AbortController()
   try {
     const res = await http.post('/admin/ai/generate-article', {
-      topic: aiGen.topic.trim(),
-      outline: aiGen.outline.trim(),
-      tone: aiGen.tone,
-      length: aiGen.length,
-      prompt: aiGen.prompt.trim()
-    }, { timeout: 120000 })
+      topic: idea,
+      outline: '',
+      tone: 'natural',
+      length: 'medium',
+      prompt: aiConfig.articleGeneratePrompt || aiGeneratePrompt.value || ''
+    }, { timeout: 120000, signal: aiAbortController.signal })
+    if (runId !== aiRunId) return
     const data = res.data || {}
-    if (data.title) form.title = data.title
-    if (data.summary) form.summary = data.summary
-    if (data.tags) form.tags = data.tags
-    if (data.content) form.content = data.content
-    aiGenOpen.value = false
-    toast('AI 草稿已生成，请检查后继续编辑')
+    if (!String(data.content || '').trim()) throw new Error('AI 没有返回正文，请稍后重试')
+    form.title = data.title || idea
+    form.summary = data.summary || ''
+    form.tags = data.tags || ''
+    aiGenerationStatus.value = '正在写入正文 0%'
+    const completed = await typeOutContent(String(data.content), runId)
+    if (!completed || runId !== aiRunId) return
+    aiGenerationStatus.value = '生成完成'
+    toast('AI 草稿已写入，请检查后继续编辑')
   } catch (e) {
-    toast(e.message, 'error')
+    if (runId !== aiRunId || e.name === 'CanceledError' || e.name === 'AbortError' || e.code === 'ERR_CANCELED') return
+    aiWriterError.value = e.message || 'AI 生成失败，请稍后重试'
+    aiWriterOpen.value = true
   } finally {
-    aiGenLoading.value = false
+    if (runId === aiRunId) {
+      aiAbortController = null
+      aiGenerating.value = false
+      aiGenerationStatus.value = ''
+    }
   }
 }
 
@@ -589,7 +660,10 @@ async function saveFromInfo() {
 
 watch(() => [form.title, form.content], () => queueHistory())
 
-onBeforeUnmount(() => clearTimeout(historyTimer))
+onBeforeUnmount(() => {
+  clearTimeout(historyTimer)
+  stopAiGeneration(true)
+})
 
 onMounted(async () => {
   await load()
@@ -601,6 +675,7 @@ onMounted(async () => {
 <template>
   <div
     class="adm-editor-full"
+    :class="{ 'is-dark': isDark }"
     @keydown="handleEditorKeydown"
     @keydown.ctrl.s.prevent="openArticleInfo"
     @keydown.meta.s.prevent="openArticleInfo"
@@ -674,20 +749,7 @@ onMounted(async () => {
             <button class="fe-tool" type="button" title="引用" @click="insertBlock('> 引用内容')">❝</button>
             <button class="fe-tool fe-tool-code" type="button" title="代码块 (Ctrl+E)" @click="insertCodeBlock">&lt;/&gt;</button>
             <span class="fe-tool-divider"></span>
-            <div class="fe-ai-wrap">
-              <button class="fe-tool fe-tool-ai" type="button" title="AI 写作助手" @click="aiMenuOpen = !aiMenuOpen">✦ AI <span>▾</span></button>
-              <div v-if="aiMenuOpen" class="fe-ai-menu">
-                <button type="button" :disabled="!aiConfig.articleEnabled" @click="aiMenuOpen = false; aiGenOpen = true">
-                  <strong>生成文章</strong><small>从主题生成标题、摘要与正文</small>
-                </button>
-                <button type="button" :disabled="!aiConfig.articleEnabled" @click="aiMenuOpen = false; openReviewPrompt()">
-                  <strong>审核文章</strong><small>检查结构、事实与表达</small>
-                </button>
-                <button type="button" :disabled="!aiConfig.summaryEnabled" @click="aiMenuOpen = false; openSummaryPrompt()">
-                  <strong>生成摘要</strong><small>按当前正文压缩摘要</small>
-                </button>
-              </div>
-            </div>
+            <button class="fe-tool fe-tool-ai" type="button" title="用 AI 写一篇完整文章" @click="openAiWriter">✦ AI</button>
             <span class="fe-tool-spacer"></span>
             <span class="fe-char-count">{{ charCount }} 字</span>
             <button class="fe-tool fe-icon-btn" type="button" title="下载 Markdown" @click="downloadMarkdown">
@@ -740,6 +802,20 @@ onMounted(async () => {
       <span v-if="form.reviewNote && form.status === 'REJECTED'" class="fe-reject">退回意见：{{ form.reviewNote }}</span>
       <span class="fe-footer-right">Ctrl / ⌘ + S 保存 · Ctrl + Z 撤销</span>
     </footer>
+
+    <transition name="ai-orb">
+      <div v-if="aiGenerating" class="ai-gen-orb-wrap">
+        <div class="ai-gen-bubble">
+          <strong>AI 正在写作</strong>
+          <span>{{ aiGenerationStatus || '正在连接模型…' }}</span>
+        </div>
+        <button class="ai-gen-orb" type="button" title="点击停止生成" aria-label="停止 AI 生成" @click="stopAiGeneration()">
+          <i class="ai-gen-ring"></i>
+          <i class="ai-gen-ring second"></i>
+          <span>✦</span>
+        </button>
+      </div>
+    </transition>
 
     <div v-if="selectionBar.show" class="fe-selection-bar" :style="{ left: selectionBar.left + 'px', top: selectionBar.top + 'px' }">
       <button type="button" title="加粗" @click="applySelection('bold')">B</button>
@@ -834,48 +910,39 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="aiGenOpen" class="adm-modal-wrap" @click.self="aiGenOpen = false">
-      <div class="adm-modal is-wide">
-        <div class="adm-modal-head">
-          <div><span class="adm-card-kicker">AI WRITER</span><h2>AI 生成文章</h2><p class="meta">生成后会覆盖当前标题、摘要、标签和正文，请在生成前保存已有草稿。</p></div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiGenOpen = false">×</button>
+    <div v-if="aiWriterOpen" class="adm-modal-wrap ai-writer-mask" @click.self="aiWriterOpen = false">
+      <div class="adm-modal ai-writer-modal" role="dialog" aria-label="AI 写作">
+        <div class="ai-writer-head">
+          <div>
+            <span class="adm-card-kicker">AI WRITER</span>
+            <h2>用 AI 写一篇完整文章</h2>
+            <p>描述主题、角度或想覆盖的内容，AI 会生成标题、摘要、标签和正文。</p>
+          </div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiWriterOpen = false">×</button>
         </div>
-        <div class="form-grid">
-          <div class="field span-2">
-            <label for="aiTopic">文章主题</label>
-            <input id="aiTopic" v-model="aiGen.topic" type="text" placeholder="例如：用 Spring Boot 做一个可热更新的个人博客" />
+        <div class="ai-writer-body">
+          <label for="aiWriterInput">你想写点什么？</label>
+          <textarea
+            id="aiWriterInput"
+            v-model="aiWriterInput"
+            maxlength="2000"
+            placeholder="例如：写一篇给后端工程师看的 Spring Boot 自动更新实践，包含设计取舍、代码结构和回滚方案"
+            @keydown.ctrl.enter.prevent="generateFromAi"
+            @keydown.meta.enter.prevent="generateFromAi"
+          ></textarea>
+          <div class="ai-writer-meta">
+            <span>{{ aiWriterInput.length }} / 2000</span>
+            <span>Ctrl / ⌘ + Enter 快速生成</span>
           </div>
-          <div class="field span-2">
-            <label for="aiOutline">提纲 / 补充要求（可选）</label>
-            <textarea id="aiOutline" v-model="aiGen.outline" style="min-height: 110px" placeholder="想覆盖的小标题、代码示例、语气或需要避免的内容"></textarea>
-          </div>
-          <div class="field span-2">
-            <label for="aiGenPrompt">生成提示词</label>
-            <textarea id="aiGenPrompt" v-model="aiGen.prompt" maxlength="4000" style="min-height: 96px" placeholder="描述写作角色、文章结构、语气和必须遵守的规则"></textarea>
-            <p class="adm-note">默认读取站点设置中的 AI 文章提示词，本次修改只影响这次生成。</p>
-          </div>
-          <div class="field">
-            <label for="aiTone">写作风格</label>
-            <select id="aiTone" v-model="aiGen.tone">
-              <option value="natural">自然清晰</option>
-              <option value="professional">专业克制</option>
-              <option value="casual">轻松口语</option>
-              <option value="story">叙事随笔</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="aiLength">篇幅</label>
-            <select id="aiLength" v-model="aiGen.length">
-              <option value="short">短篇 600–900 字</option>
-              <option value="medium">中篇 1200–1800 字</option>
-              <option value="long">长篇 2000–3000 字</option>
-            </select>
-          </div>
+          <p class="ai-writer-note">生成会覆盖当前标题与正文。AI 草稿写入后仍可继续编辑，发布前请人工确认。</p>
+          <p v-if="aiWriterError" class="ai-writer-error">{{ aiWriterError }}</p>
         </div>
-        <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" :disabled="aiGenLoading" @click="aiGenOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="aiGenLoading" @click="generateArticle">{{ aiGenLoading ? '生成中…' : '开始生成' }}</button>
-        </div>
+        <footer class="ai-writer-foot">
+          <button class="btn btn-ghost" type="button" @click="aiWriterOpen = false">取消</button>
+          <button class="btn ai-writer-submit" type="button" :disabled="!aiWriterInput.trim()" @click="generateFromAi">
+            <span aria-hidden="true">✦</span> 生成
+          </button>
+        </footer>
       </div>
     </div>
 
@@ -1345,6 +1412,202 @@ onMounted(async () => {
 .adm-editor-full .adm-modal-wrap { z-index: 120; }
 .adm-editor-full .adm-modal { background: #fff; color: #1f2937; }
 
+/* AI 写作弹窗 */
+.ai-writer-modal {
+  width: min(560px, calc(100vw - 28px));
+  border-radius: 15px;
+  overflow: hidden;
+}
+.ai-writer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 16px;
+}
+.ai-writer-head h2 { margin: 5px 0 0; color: #111827; font-size: 19px; }
+.ai-writer-head p { margin: 7px 0 0; color: #9ca3af; font-size: 11px; line-height: 1.65; }
+.ai-writer-head .adm-drawer-close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 20px;
+  cursor: pointer;
+}
+.ai-writer-head .adm-drawer-close:hover { background: #f3f4f6; color: #111827; }
+.ai-writer-body { display: grid; gap: 9px; padding: 4px 24px 20px; }
+.ai-writer-body label { color: #4b5563; font-size: 11.5px; font-weight: 600; }
+.ai-writer-body textarea {
+  width: 100%;
+  min-height: 150px;
+  padding: 12px 13px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.75;
+  outline: none;
+  resize: vertical;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.ai-writer-body textarea:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37, 99, 235, .08); }
+.ai-writer-body textarea::placeholder { color: #9ca3af; }
+.ai-writer-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #9ca3af; font-size: 9.5px; }
+.ai-writer-note { margin: 0; padding: 9px 11px; border-radius: 8px; background: #f9fafb; color: #9ca3af; font-size: 10px; line-height: 1.65; }
+.ai-writer-error { margin: 0; padding: 9px 11px; border: 1px solid #fecaca; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 10.5px; line-height: 1.6; }
+.ai-writer-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+.ai-writer-foot .btn { min-height: 34px; padding: 0 16px; border-radius: 7px; font-size: 12px; }
+.ai-writer-submit { display: inline-flex; align-items: center; gap: 6px; background: #2563eb; color: #fff; font-weight: 600; }
+.ai-writer-submit:hover:not(:disabled) { background: #1d4ed8; }
+
+/* AI 生成悬浮球 */
+.ai-gen-orb-wrap {
+  position: fixed;
+  right: 24px;
+  bottom: 46px;
+  z-index: 115;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.ai-gen-bubble {
+  display: grid;
+  gap: 3px;
+  max-width: 220px;
+  padding: 9px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
+  backdrop-filter: blur(14px);
+}
+.ai-gen-bubble strong { color: #1d4ed8; font-size: 11.5px; }
+.ai-gen-bubble span { color: #64748b; font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.ai-gen-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #60a5fa, #2563eb 55%, #1e40af);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(37, 99, 235, .32);
+}
+.ai-gen-orb > span { position: relative; z-index: 2; animation: ai-spark 1.4s ease-in-out infinite; }
+.ai-gen-ring {
+  position: absolute;
+  inset: -6px;
+  border: 1px solid rgba(96, 165, 250, .55);
+  border-radius: 50%;
+  animation: ai-orbit 2.2s ease-out infinite;
+}
+.ai-gen-ring.second { inset: -12px; border-color: rgba(147, 197, 253, .32); animation-delay: .65s; }
+@keyframes ai-orbit {
+  0% { transform: scale(.88); opacity: .9; }
+  100% { transform: scale(1.22); opacity: 0; }
+}
+@keyframes ai-spark {
+  0%, 100% { transform: scale(1); opacity: .92; }
+  50% { transform: scale(1.18) rotate(12deg); opacity: 1; }
+}
+.ai-orb-enter-active, .ai-orb-leave-active { transition: opacity .2s ease, transform .2s ease; }
+.ai-orb-enter-from, .ai-orb-leave-to { opacity: 0; transform: translateY(12px) scale(.92); }
+
+/* 深色模式：编辑器跟随站点主题 */
+.adm-editor-full.is-dark { background: #0d1524; color: #e2e8f0; }
+.is-dark .fe-topbar { background: #0b1220; border-bottom-color: #243244; }
+.is-dark .fe-title { color: #f1f5f9; }
+.is-dark .fe-title::placeholder { color: #64748b; }
+.is-dark .fe-sync { background: #162033; color: #94a3b8; }
+.is-dark .fe-sync:hover { background: #1d2b42; }
+.is-dark .fe-sync.on { background: #172554; color: #93c5fd; }
+.is-dark .fe-btn-ghost { border-color: #2c3b52; background: transparent; color: #cbd5e1; }
+.is-dark .fe-btn-ghost:hover:not(:disabled) { background: #172033; border-color: #3b4b64; }
+.is-dark .fe-body, .is-dark .fe-compose, .is-dark .fe-preview { background: #0d1524; }
+.is-dark .fe-compose { border-right-color: #243244; }
+.is-dark .fe-toolbar-wrap { background: #101a2b; border-bottom-color: #243244; }
+.is-dark .fe-toolbar { background: #101a2b; }
+.is-dark .fe-tool { color: #93a4bb; }
+.is-dark .fe-tool:hover:not(:disabled) { background: #1b2940; color: #e2e8f0; }
+.is-dark .fe-tool-strong, .is-dark .fe-tool-italic, .is-dark .fe-tool-heading { color: #cbd5e1; }
+.is-dark .fe-tool-ai { background: #172554; color: #93c5fd; }
+.is-dark .fe-tool-heading > span { color: #64748b; }
+.is-dark .fe-tool-divider { background: #28364c; }
+.is-dark .fe-char-count { color: #64748b; }
+.is-dark .fe-heading-menu, .is-dark .fe-ai-menu { border-color: #2c3b52; background: #111827; box-shadow: 0 14px 36px rgba(0, 0, 0, .4); }
+.is-dark .fe-heading-menu button, .is-dark .fe-ai-menu strong { color: #cbd5e1; }
+.is-dark .fe-heading-menu button:hover, .is-dark .fe-ai-menu button:hover:not(:disabled) { background: #1a2740; }
+.is-dark .fe-ai-menu small, .is-dark .fe-heading-menu button span { color: #64748b; }
+.is-dark .fe-textarea { background: #0d1524; color: #dbe7f5; }
+.is-dark .fe-textarea::placeholder { color: #4b5c73; }
+.is-dark .fe-write-status { border-top-color: #243244; background: #0b1220; color: #64748b; }
+.is-dark .fe-preview-head { border-bottom-color: #243244; color: #cbd5e1; }
+.is-dark .fe-empty { color: #64748b; }
+.is-dark .fe-empty > span { background: #162033; color: #94a3b8; }
+.is-dark .fe-preview :deep(.markdown) { color: #cbd5e1; }
+.is-dark .fe-preview :deep(.markdown h1),
+.is-dark .fe-preview :deep(.markdown h2),
+.is-dark .fe-preview :deep(.markdown h3),
+.is-dark .fe-preview :deep(.markdown h4) { color: #f1f5f9; }
+.is-dark .fe-preview :deep(.markdown a) { color: #7dd3fc; }
+.is-dark .fe-preview :deep(.markdown code) { background: #1e293b; color: #fca5a5; }
+.is-dark .fe-preview :deep(.markdown pre) { background: #0b1220; border-color: #243244; }
+.is-dark .fe-preview :deep(.markdown pre code) { color: #cbd5e1; }
+.is-dark .fe-preview :deep(.markdown blockquote) { border-left-color: #3b82f6; background: #162033; color: #94a3b8; }
+.is-dark .fe-preview :deep(.markdown table th) { background: #1a2740; color: #e2e8f0; border-color: #2c3b52; }
+.is-dark .fe-preview :deep(.markdown table td) { border-color: #2c3b52; }
+.is-dark .fe-preview :deep(.markdown hr) { border-color: #243244; }
+.is-dark .fe-footer { background: #0b1220; border-top-color: #243244; color: #64748b; }
+.is-dark .fe-info { background: #111827; }
+.is-dark .fe-info-head { border-bottom-color: #243244; background: #111827; }
+.is-dark .fe-info-head h2 { color: #f1f5f9; }
+.is-dark .fe-info-head p, .is-dark .fe-info-close { color: #64748b; }
+.is-dark .fe-info-close:hover { background: #1a2740; color: #fff; }
+.is-dark .fe-info .field label { color: #94a3b8; }
+.is-dark .fe-info .field input,
+.is-dark .fe-info .field textarea,
+.is-dark .fe-info .field select { border-color: #2c3b52; background: #0d1524; color: #e2e8f0; }
+.is-dark .fe-info .field input:focus,
+.is-dark .fe-info .field textarea:focus,
+.is-dark .fe-info .field select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, .12); }
+.is-dark .fe-field-note, .is-dark .fe-summary-row span, .is-dark .fe-info-note, .is-dark .fe-cover-preview.empty, .is-dark .fe-cover-actions > span { color: #64748b; }
+.is-dark .fe-cover-preview { border-color: #2c3b52; background: #0d1524; }
+.is-dark .fe-info-note { background: #0d1524; }
+.is-dark .fe-info-foot { border-top-color: #243244; background: #111827; }
+.is-dark .fe-info-foot > span { color: #64748b; }
+.is-dark .adm-modal { background: #111827; color: #e2e8f0; }
+.is-dark .ai-writer-head h2 { color: #f1f5f9; }
+.is-dark .ai-writer-head p, .is-dark .ai-writer-head .adm-drawer-close { color: #64748b; }
+.is-dark .ai-writer-head .adm-drawer-close:hover { background: #1a2740; color: #fff; }
+.is-dark .ai-writer-body label { color: #94a3b8; }
+.is-dark .ai-writer-body textarea { border-color: #2c3b52; background: #0d1524; color: #e2e8f0; }
+.is-dark .ai-writer-body textarea::placeholder { color: #52627a; }
+.is-dark .ai-writer-note { background: #0d1524; color: #64748b; }
+.is-dark .ai-writer-meta { color: #64748b; }
+.is-dark .ai-writer-foot { border-top-color: #243244; background: #0b1220; }
+.is-dark .ai-gen-bubble { border-color: #1e40af; background: rgba(17, 24, 39, .92); }
+.is-dark .ai-gen-bubble strong { color: #93c5fd; }
+.is-dark .ai-gen-bubble span { color: #94a3b8; }
+
+
 @media (max-width: 900px) {
   .fe-topbar { min-height: 56px; padding: 0 12px; gap: 8px; }
   .fe-title { font-size: 15px; height: 38px; }
@@ -1355,6 +1618,7 @@ onMounted(async () => {
   .fe-btn { height: 33px; padding: 0 11px; font-size: 12px; }
   .fe-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .fe-compose { border-right: 0; border-bottom: 1px solid #e5e7eb; }
+  .is-dark .fe-compose { border-bottom-color: #243244; }
   .fe-textarea { padding: 16px 18px 30vh; font-size: 13px; }
   .fe-preview-head { min-height: 38px; padding: 0 16px; }
   .fe-preview-inner { padding: 18px 18px 40px; }

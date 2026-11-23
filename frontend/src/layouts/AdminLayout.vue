@@ -44,16 +44,40 @@ const navGroups = [
     key: 'content',
     label: '内容',
     hint: 'CONTENT',
+    icon: 'posts',
     items: ['posts', 'comments', 'tags', 'announcements', 'themes'].map((key) => sections.find((item) => item.key === key))
   },
   {
     key: 'settings',
     label: '设置',
     hint: 'SETTINGS',
+    icon: 'settings',
     items: ['users', 'roles', 'site-info', 'notifications', 'storage', 'settings'].map((key) => sections.find((item) => item.key === key))
   }
 ]
 const groupedSections = navGroups.flatMap((group) => group.items)
+const savedOpenGroups = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('admin_nav_groups') || '{}') || {}
+  } catch {
+    return {}
+  }
+})()
+const openGroups = ref({
+  content: savedOpenGroups.content !== false,
+  settings: savedOpenGroups.settings !== false
+})
+function toggleNavGroup(key) {
+  openGroups.value = { ...openGroups.value, [key]: !openGroups.value[key] }
+  try {
+    localStorage.setItem('admin_nav_groups', JSON.stringify(openGroups.value))
+  } catch {
+    /* ignore storage failures */
+  }
+}
+function groupHasActive(group) {
+  return group.items.some((item) => item.key === currentSection.value?.key)
+}
 
 const sectionTabs = {
   dashboard: [
@@ -143,6 +167,18 @@ const displayName = computed(() => state.user?.nickname || state.user?.username 
 const roleLabel = computed(() => state.user?.roleName || (state.user?.role === 'ADMIN' ? '管理员' : '读者'))
 
 const tabs = computed(() => sectionTabs[currentSection.value?.key] || [])
+
+watch(() => currentSection.value?.key, (key) => {
+  const group = navGroups.find((item) => item.items.some((entry) => entry.key === key))
+  if (group && !openGroups.value[group.key]) {
+    openGroups.value = { ...openGroups.value, [group.key]: true }
+    try {
+      localStorage.setItem('admin_nav_groups', JSON.stringify(openGroups.value))
+    } catch {
+      /* ignore storage failures */
+    }
+  }
+}, { immediate: true })
 const activeTab = computed(() => {
   if (isEditor.value) return 'edit'
   if (route.name === 'admin-posts' && route.params.id) return 'edit'
@@ -270,23 +306,47 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         <div v-if="collapsed && !mobileOpen" class="admin-nav-rail-divider" aria-hidden="true"></div>
 
         <template v-if="!collapsed || mobileOpen">
-          <div v-for="group in navGroups" :key="group.key" class="admin-nav-group">
-            <div class="admin-nav-group-head">
-              <span>{{ group.label }}</span>
-              <small>{{ group.hint }}</small>
-            </div>
-            <router-link
-              v-for="section in group.items"
-              :key="section.key"
-              :to="section.to"
-              class="admin-nav-item is-child"
-              :class="{ active: currentSection?.key === section.key }"
-              :aria-label="section.label"
-              @click="closeMobile"
+          <div
+            v-for="group in navGroups"
+            :key="group.key"
+            class="admin-nav-group"
+            :class="{ expanded: openGroups[group.key], active: groupHasActive(group) }"
+          >
+            <button
+              class="admin-nav-group-head"
+              type="button"
+              :aria-expanded="openGroups[group.key] ? 'true' : 'false'"
+              :aria-controls="`admin-nav-children-${group.key}`"
+              @click="toggleNavGroup(group.key)"
             >
-              <span class="admin-nav-icon" aria-hidden="true"><AdminNavIcon :name="section.icon" /></span>
-              <span class="admin-nav-label">{{ section.label }}</span>
-            </router-link>
+              <span class="admin-nav-group-icon" aria-hidden="true"><AdminNavIcon :name="group.icon" /></span>
+              <span class="admin-nav-group-title">{{ group.label }}</span>
+              <small>{{ group.hint }}</small>
+              <i class="admin-nav-group-chevron" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m8 10 4 4 4-4" /></svg>
+              </i>
+            </button>
+            <div
+              :id="`admin-nav-children-${group.key}`"
+              class="admin-nav-children"
+              :class="{ open: openGroups[group.key] }"
+              :inert="!openGroups[group.key]"
+            >
+              <div class="admin-nav-children-inner">
+                <router-link
+                  v-for="section in group.items"
+                  :key="section.key"
+                  :to="section.to"
+                  class="admin-nav-item is-child"
+                  :class="{ active: currentSection?.key === section.key }"
+                  :aria-label="section.label"
+                  @click="closeMobile"
+                >
+                  <span class="admin-nav-icon" aria-hidden="true"><AdminNavIcon :name="section.icon" /></span>
+                  <span class="admin-nav-label">{{ section.label }}</span>
+                </router-link>
+              </div>
+            </div>
           </div>
         </template>
 

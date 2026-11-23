@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import http from './api'
@@ -62,28 +62,44 @@ function formatMusicTime(seconds) {
 
 function toggleMusicPanel() {
   musicPanelOpen.value = !musicPanelOpen.value
-  if (musicSource.value === 'playlist') return
-  if (!musicPanelOpen.value && musicPlaying.value) {
-    musicAudio.value?.pause()
-  }
 }
 
-function toggleMusic() {
+function closeMusicPanel() {
+  musicPanelOpen.value = false
+}
+
+function toggleMusicPlayback() {
   if (musicSource.value === 'playlist') {
-    musicPanelOpen.value = !musicPanelOpen.value
+    musicPanelOpen.value = true
     return
   }
   const audio = musicAudio.value
-  if (!audio) return
-  if (!musicPanelOpen.value) musicPanelOpen.value = true
+  if (!audio) {
+    toast('播放器还在加载，请稍后再试', 'error')
+    return
+  }
   if (audio.paused) {
     audio.play()
       .then(() => { musicPlaying.value = true })
-      .catch(() => toast('浏览器阻止了播放，请再点一次', 'error'))
+      .catch(() => {
+        musicPlaying.value = false
+        toast('浏览器阻止了播放，请再点一次', 'error')
+      })
   } else {
     audio.pause()
     musicPlaying.value = false
   }
+}
+
+function onMusicError() {
+  musicPlaying.value = false
+  toast('音频加载失败，请检查音乐地址', 'error')
+}
+
+function onDocumentPointerDown(event) {
+  if (!musicPanelOpen.value) return
+  if (event.target?.closest?.('.site-music')) return
+  musicPanelOpen.value = false
 }
 
 function onMusicTimeUpdate() {
@@ -128,7 +144,12 @@ function syncCustomHead(html) {
 watch(() => state.site.themePreset, (preset) => applyThemePreset(preset))
 watch(() => state.site.customHead, (html) => syncCustomHead(html), { immediate: true })
 
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+})
+
 onMounted(async () => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
   applyTheme(state.theme)
   applyThemePreset(state.site.themePreset)
 
@@ -246,6 +267,7 @@ onMounted(async () => {
         @pause="musicPlaying = false"
         @timeupdate="onMusicTimeUpdate"
         @loadedmetadata="onMusicLoaded"
+        @error="onMusicError"
       ></audio>
 
       <transition name="music-panel">
@@ -259,11 +281,11 @@ onMounted(async () => {
               <strong>{{ musicTitle }}</strong>
               <span>{{ musicSubtitle }}</span>
             </div>
-            <button type="button" class="site-music-close" aria-label="收起播放器" @click="toggleMusicPanel">×</button>
+            <button type="button" class="site-music-close" aria-label="收起播放器" @click="closeMusicPanel">×</button>
           </header>
 
           <div v-if="musicSource === 'audio'" class="site-music-controls">
-            <button type="button" class="site-music-play" :aria-label="musicPlaying ? '暂停' : '播放'" @click="toggleMusic">
+            <button type="button" class="site-music-play" :aria-label="musicPlaying ? '暂停' : '播放'" @click="toggleMusicPlayback">
               <svg v-if="musicPlaying" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M7 5v14M17 5v14" />
               </svg>
@@ -321,7 +343,7 @@ onMounted(async () => {
         </aside>
       </transition>
 
-      <button type="button" class="site-music-btn" :aria-label="musicPanelOpen ? '收起站点音乐' : '打开站点音乐'" @click="toggleMusic">
+      <button type="button" class="site-music-btn" :aria-label="musicPanelOpen ? '收起站点音乐' : '打开站点音乐'" :title="musicPanelOpen ? '收起播放器（音乐继续播放）' : '打开站点音乐'" @click="toggleMusicPanel">
         <span class="site-music-fab-art">
           <img v-if="state.site.musicCover" :src="state.site.musicCover" alt="" />
           <template v-else>{{ musicSource === 'playlist' ? musicPlatform.mark : '♪' }}</template>
