@@ -182,14 +182,6 @@ onMounted(load)
                 <router-link class="btn-text" to="/admin/announcements">去公告管理编辑、AI 生成 →</router-link>
               </div>
             </div>
-            <div class="field span-2">
-              <label class="adm-switch-label">
-                <span>评论先审后发</span>
-                <input type="checkbox" :checked="boolValue(config.commentReview)" @change="setBool('commentReview', $event)" />
-                <i class="adm-switch" aria-hidden="true"></i>
-              </label>
-              <p class="adm-note">开启后新评论进入待审核状态，管理员通过后才在前台展示。已有评论不受影响。</p>
-            </div>
           </div>
         </section>
         <aside class="adm-side-stack">

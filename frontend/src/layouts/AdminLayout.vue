@@ -31,7 +31,6 @@ const sections = [
   { key: 'comments', label: '评论管理', to: '/admin/comments', icon: 'comments' },
   { key: 'tags', label: '标签管理', to: '/admin/tags', icon: 'tags' },
   { key: 'announcements', label: '公告管理', to: '/admin/announcements', icon: 'announcements' },
-  { key: 'themes', label: '主题管理', to: '/admin/themes', icon: 'themes' },
   { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site' },
   { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications' },
   { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage' },
@@ -45,7 +44,7 @@ const navGroups = [
     label: '内容',
     hint: 'CONTENT',
     icon: 'posts',
-    items: ['posts', 'comments', 'tags', 'announcements', 'themes'].map((key) => sections.find((item) => item.key === key))
+    items: ['posts', 'comments', 'tags', 'announcements'].map((key) => sections.find((item) => item.key === key))
   },
   {
     key: 'settings',
@@ -101,9 +100,6 @@ const sectionTabs = {
   announcements: [
     { key: 'edit', label: '公告编辑' }
   ],
-  themes: [
-    { key: 'all', label: '主题库' }
-  ],
   posts: [
     { key: 'all', label: '全部文章' },
     { key: 'published', label: '已发布' },
@@ -150,7 +146,6 @@ const currentSection = computed(() => {
   if (path.startsWith('/admin/roles')) return sections.find((s) => s.key === 'roles')
   if (path.startsWith('/admin/users')) return sections.find((s) => s.key === 'users')
   if (path.startsWith('/admin/announcements')) return sections.find((s) => s.key === 'announcements')
-  if (path.startsWith('/admin/themes')) return sections.find((s) => s.key === 'themes')
   if (path.startsWith('/admin/posts')) return sections.find((s) => s.key === 'posts')
   if (path.startsWith('/admin/comments')) return sections.find((s) => s.key === 'comments')
   if (path.startsWith('/admin/tags')) return sections.find((s) => s.key === 'tags')

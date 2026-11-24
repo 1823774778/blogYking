@@ -96,7 +96,8 @@ public class CommentService {
                 "「" + nickname + "」" + (parentId == null ? "评论了《" : "回复了《")
                         + post.getTitle() + "》：" + excerpt
                         + (reviewRequired ? "（待审核）" : ""),
-                "/posts/" + postId + "#comment-" + comment.getId(), nickname, postId);
+                reviewRequired ? "/admin/comments?tab=pending" : "/post/" + postId + "#comment-" + comment.getId(),
+                nickname, postId, reviewRequired);
         return toView(comment, user.getId(), post.getTitle());
     }
 
@@ -140,6 +141,27 @@ public class CommentService {
         }
         String title = postRepository.findById(comment.getPostId()).map(Post::getTitle).orElse(null);
         return toView(comment, null, title);
+    }
+
+    @Transactional
+    public int moderateBulk(List<Long> ids, String status) {
+        if (ids == null || ids.isEmpty()) {
+            throw new BizException("请选择要处理的评论");
+        }
+        if (ids.size() > 200) {
+            throw new BizException("一次最多处理 200 条评论");
+        }
+        String normalized = status == null ? "" : status.trim().toUpperCase();
+        if (!List.of("VISIBLE", "HIDDEN").contains(normalized)) {
+            throw new BizException("批量操作只支持通过或隐藏评论");
+        }
+        int changed = 0;
+        for (Long id : ids) {
+            if (id == null) continue;
+            moderate(id, normalized);
+            changed++;
+        }
+        return changed;
     }
 
     public PageResp<CommentView> adminList(int page, int size, String status, String keyword) {

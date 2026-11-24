@@ -21,7 +21,6 @@ const routes = [
       { path: 'users', name: 'admin-users', component: () => import('./views/admin/AdminUsers.vue'), meta: { title: '用户管理' } },
       { path: 'roles', name: 'admin-roles', component: () => import('./views/admin/AdminRoles.vue'), meta: { title: '角色权限' } },
       { path: 'announcements', name: 'admin-announcements', component: () => import('./views/admin/AdminAnnouncements.vue'), meta: { title: '公告管理' } },
-      { path: 'themes', name: 'admin-themes', component: () => import('./views/admin/AdminThemes.vue'), meta: { title: '主题管理' } },
       { path: 'posts', name: 'admin-posts', component: () => import('./views/admin/AdminPosts.vue'), meta: { title: '文章管理' } },
       { path: 'comments', name: 'admin-comments', component: () => import('./views/admin/AdminComments.vue'), meta: { title: '评论管理' } },
       { path: 'tags', name: 'admin-tags', component: () => import('./views/admin/AdminTags.vue'), meta: { title: '标签管理' } },

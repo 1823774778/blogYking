@@ -4503,6 +4503,16 @@
   color: var(--adm-accent-deep);
 }
 
+.adm-notice-icon.is-user {
+  background: rgba(120, 82, 180, 0.12);
+  color: #7852b4;
+}
+
+.adm-notice-icon.is-test {
+  background: rgba(36, 88, 159, 0.12);
+  color: var(--adm-accent-deep);
+}
+
 .adm-notice-copy {
   min-width: 0;
   display: block;

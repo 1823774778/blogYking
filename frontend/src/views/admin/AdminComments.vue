@@ -25,9 +25,15 @@ const aiReviewPrompt = ref('')
 const summaryPromptOpen = ref(false)
 const summaryPrompt = ref('')
 const aiCommentEnabled = ref(true)
+const commentReviewEnabled = ref(false)
+const reviewSaving = ref(false)
+const selectedIds = ref([])
+const bulkSaving = ref(false)
 const defaultPrompts = reactive({ review: '', summary: '' })
 
 const statusMap = { pending: 'PENDING', visible: 'VISIBLE', hidden: 'HIDDEN' }
+const allSelected = computed(() => comments.records.length > 0 && selectedIds.value.length === comments.records.length)
+const selectedCount = computed(() => selectedIds.value.length)
 
 const tabMeta = computed(() => ({
   all: { label: '全部评论', desc: '所有读者评论与回复' },
@@ -54,6 +60,7 @@ async function load(page = 1) {
     comments.records = res.data.records
     comments.total = res.data.total
     comments.page = res.data.page
+    selectedIds.value = []
   } catch (e) {
     toast(e.message, 'error')
   } finally {
@@ -91,6 +98,7 @@ async function loadAiConfig() {
   try {
     const cfg = (await http.get('/admin/config')).data || {}
     aiCommentEnabled.value = String(cfg.aiCommentEnabled ?? 'true') === 'true'
+    commentReviewEnabled.value = String(cfg.commentReview ?? 'false') === 'true'
     defaultPrompts.review = cfg.aiCommentReviewPrompt || ''
     defaultPrompts.summary = cfg.aiCommentSummaryPrompt || ''
     aiReviewPrompt.value = defaultPrompts.review
@@ -102,7 +110,7 @@ async function loadAiConfig() {
 
 function openAiReview(comment) {
   if (!aiCommentEnabled.value) {
-    toast('AI 评论功能未开启，请先在站点设置中打开', 'error')
+    toast('AI 评论功能未开启，请先在站点设置中开启 AI 评论', 'error')
     return
   }
   aiReviewTarget.value = comment
@@ -149,7 +157,7 @@ async function applyAiReview() {
 function openSummary(comment) {
   if (!comment.postId) return
   if (!aiCommentEnabled.value) {
-    toast('AI 评论功能未开启，请先在站点设置中打开', 'error')
+    toast('AI 评论功能未开启，请先在站点设置中开启 AI 评论', 'error')
     return
   }
   summaryTarget.value = comment
@@ -196,6 +204,52 @@ async function removeComment(comment) {
   }
 }
 
+function toggleSelectAll(event) {
+  selectedIds.value = event.target.checked ? comments.records.map((item) => item.id) : []
+}
+
+function toggleSelect(comment) {
+  if (selectedIds.value.includes(comment.id)) {
+    selectedIds.value = selectedIds.value.filter((id) => id !== comment.id)
+  } else {
+    selectedIds.value = [...selectedIds.value, comment.id]
+  }
+}
+
+async function saveCommentReview(event) {
+  const next = Boolean(event.target.checked)
+  reviewSaving.value = true
+  try {
+    const res = (await http.put('/admin/config', { commentReview: next ? 'true' : 'false' })).data || {}
+    commentReviewEnabled.value = String(res.commentReview ?? (next ? 'true' : 'false')) === 'true'
+    if (stats.value) stats.value = { ...stats.value, commentReview: commentReviewEnabled.value ? 'true' : 'false' }
+    toast(commentReviewEnabled.value ? '已开启评论先审后发' : '已关闭评论先审后发，新评论将直接展示')
+  } catch (e) {
+    event.target.checked = commentReviewEnabled.value
+    toast(e.message, 'error')
+  } finally {
+    reviewSaving.value = false
+  }
+}
+
+async function bulkModerate(status) {
+  if (!selectedIds.value.length) return
+  const label = status === 'VISIBLE' ? '通过' : '隐藏'
+  if (!window.confirm(`确定批量${label}选中的 ${selectedIds.value.length} 条评论吗？`)) return
+  bulkSaving.value = true
+  try {
+    const res = await http.put('/admin/comments/bulk-status', { ids: selectedIds.value, status })
+    toast(`已${label} ${res.data?.updated ?? selectedIds.value.length} 条评论`)
+    selectedIds.value = []
+    load()
+    loadStats()
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    bulkSaving.value = false
+  }
+}
+
 watch(activeTab, () => load(1))
 onMounted(() => {
   load(1)
@@ -222,6 +276,28 @@ onMounted(() => {
       </div>
     </section>
 
+    <section class="adm-card comment-policy-card">
+      <div>
+        <span class="adm-card-kicker">COMMENT POLICY</span>
+        <h2>评论先审后发</h2>
+        <p>开启后，新评论进入待审核状态，通过后才在前台展示；关闭后新评论直接公开。开关即时保存，已有评论不受影响。</p>
+      </div>
+      <label class="adm-switch-label comment-policy-switch">
+        <span>{{ commentReviewEnabled ? '审核已开启' : '直接展示' }}</span>
+        <input type="checkbox" :checked="commentReviewEnabled" :disabled="reviewSaving" @change="saveCommentReview" />
+        <i class="adm-switch" aria-hidden="true"></i>
+      </label>
+    </section>
+
+    <div v-if="selectedCount" class="adm-bulkbar">
+      <span>已选 {{ selectedCount }} 条评论</span>
+      <div class="adm-head-actions">
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="bulkSaving" @click="bulkModerate('VISIBLE')">批量通过</button>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="bulkSaving" @click="bulkModerate('HIDDEN')">批量隐藏</button>
+        <button class="btn-text" type="button" :disabled="bulkSaving" @click="selectedIds = []">取消选择</button>
+      </div>
+    </div>
+
     <section class="adm-toolbar">
       <div class="adm-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -241,6 +317,7 @@ onMounted(() => {
         <table class="table adm-table adm-comment-table">
           <thead>
             <tr>
+              <th class="adm-check-col"><input type="checkbox" :checked="allSelected" aria-label="全选当前页评论" @change="toggleSelectAll" /></th>
               <th>评论内容</th>
               <th>评论者</th>
               <th>所属文章</th>
@@ -251,6 +328,7 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="comment in comments.records" :key="comment.id">
+              <td class="adm-check-col"><input type="checkbox" :checked="selectedIds.includes(comment.id)" :aria-label="`选择评论 ${comment.id}`" @change="toggleSelect(comment)" /></td>
               <td class="adm-comment-cell">
                 <p>“{{ comment.content }}”</p>
                 <span v-if="comment.parentId" class="adm-row-meta">回复评论 #{{ comment.parentId }}</span>
@@ -279,7 +357,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="!comments.records.length">
-              <td colspan="6" class="adm-empty-cell">没有符合条件的评论</td>
+              <td colspan="7" class="adm-empty-cell">没有符合条件的评论</td>
             </tr>
           </tbody>
         </table>
@@ -366,3 +444,15 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.comment-policy-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 14px; padding: 18px 20px; }
+.comment-policy-card h2 { margin: 5px 0 4px; font-size: 18px; color: var(--ink); }
+.comment-policy-card > div { flex: 1; min-width: 0; }
+.comment-policy-card p { max-width: 760px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.comment-policy-switch { flex: 0 0 220px; width: 220px; min-width: 220px; }
+.adm-bulkbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink-soft); font-size: 12px; }
+.adm-check-col { width: 34px; text-align: center; }
+.adm-check-col input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+@media (max-width: 720px) { .comment-policy-card { align-items: flex-start; flex-direction: column; } .comment-policy-switch { flex: 0 0 auto; width: 100%; } .adm-bulkbar { align-items: flex-start; flex-direction: column; } }
+</style>

@@ -14,7 +14,7 @@ public class SiteConfigService {
 
     private static final Set<String> PUBLIC_KEYS = Set.of(
             "siteName", "siteDesc", "siteKeywords", "announcement", "announcementEnabled",
-            "announcementTitle", "announcementLink", "themePreset", "heroTitle", "heroSubtitle",
+            "announcementTitle", "announcementLink", "heroTitle", "heroSubtitle",
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
@@ -28,11 +28,13 @@ public class SiteConfigService {
 
     private static final Set<String> ALLOWED_KEYS = Set.of(
             "siteName", "siteDesc", "siteKeywords", "announcement", "announcementEnabled",
-            "announcementTitle", "announcementLink", "themePreset", "heroTitle", "heroSubtitle",
+            "announcementTitle", "announcementLink", "heroTitle", "heroSubtitle",
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
             "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform", "commentReview",
+            "notifyCommentsEnabled", "notifyLikesEnabled", "notifyFavoritesEnabled",
+            "notifyUpdatesEnabled", "notifyNewUsersEnabled", "notifyPendingCommentsOnly",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
             "registrationInviteEnabled", "registrationInviteCode",
             "registrationEmailAllowlist", "registrationMinPasswordLength", "registrationMaxUsers",
@@ -69,7 +71,6 @@ public class SiteConfigService {
         map.put("announcementEnabled", "false");
         map.put("announcementTitle", "站点公告");
         map.put("announcementLink", "");
-        map.put("themePreset", "ink");
         map.put("heroTitle", "");
         map.put("heroSubtitle", "");
         map.put("policeRecord", "");
@@ -91,6 +92,12 @@ public class SiteConfigService {
         map.put("musicPlaylistTitle", "");
         map.put("musicPlaylistPlatform", "netease");
         map.put("commentReview", "false");
+        map.put("notifyCommentsEnabled", "true");
+        map.put("notifyLikesEnabled", "true");
+        map.put("notifyFavoritesEnabled", "true");
+        map.put("notifyUpdatesEnabled", "true");
+        map.put("notifyNewUsersEnabled", "true");
+        map.put("notifyPendingCommentsOnly", "false");
         map.put("registrationEnabled", "true");
         map.put("registrationVerifyEmail", "true");
         map.put("passwordResetEnabled", "true");

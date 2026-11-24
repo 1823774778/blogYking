@@ -220,7 +220,7 @@ public class PostService {
         String actor = actorName(userId);
         activityNoticeService.record("LIKE", "收到新的喜欢",
                 "「" + actor + "」喜欢了《" + post.getTitle() + "》",
-                "/posts/" + postId, actor, postId);
+                "/post/" + postId, actor, postId);
         return new ToggleResp(true, post.getLikeCount());
     }
 
@@ -244,7 +244,7 @@ public class PostService {
         String actor = actorName(userId);
         activityNoticeService.record("FAVORITE", "收到新的收藏",
                 "「" + actor + "」收藏了《" + post.getTitle() + "》",
-                "/posts/" + postId, actor, postId);
+                "/post/" + postId, actor, postId);
         return new ToggleResp(true, post.getFavoriteCount());
     }
 

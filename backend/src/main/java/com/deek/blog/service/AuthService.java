@@ -41,6 +41,7 @@ public class AuthService {
     private final CaptchaService captchaService;
     private final SiteConfigService siteConfigService;
     private final RoleService roleService;
+    private final ActivityNoticeService activityNoticeService;
     private final String siteUrl;
     private final SecureRandom random = new SecureRandom();
 
@@ -48,6 +49,7 @@ public class AuthService {
                        PasswordEncoder passwordEncoder, JwtUtil jwtUtil, MailService mailService,
                        RegistrationCodeService registrationCodeService, CaptchaService captchaService,
                        SiteConfigService siteConfigService, RoleService roleService,
+                       ActivityNoticeService activityNoticeService,
                        @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
         this.userRepository = userRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -58,6 +60,7 @@ public class AuthService {
         this.captchaService = captchaService;
         this.siteConfigService = siteConfigService;
         this.roleService = roleService;
+        this.activityNoticeService = activityNoticeService;
         this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
     }
 
@@ -114,6 +117,9 @@ public class AuthService {
         user.setRole("USER");
         user.setEnabled(!approval);
         userRepository.save(user);
+        activityNoticeService.record("USER", approval ? "新用户待审核" : "新用户注册",
+                "「" + user.getNickname() + "」" + (approval ? "提交了注册申请，等待审核。" : "注册了账号。"),
+                "/admin/users", user.getNickname(), null);
         String token = (!approval && autoLogin) ? jwtUtil.generate(user.getId()) : null;
         return new AuthResp(token, toView(user));
     }

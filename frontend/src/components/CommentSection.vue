@@ -97,7 +97,7 @@ onMounted(load)
     <div v-if="state.user" class="comment-form">
       <textarea v-model="content" placeholder="说点什么……"></textarea>
       <div class="comment-form-foot">
-        <span class="hint">以 {{ state.user.nickname || state.user.username }} 的身份评论</span>
+        <span class="hint">以 {{ state.user.nickname || state.user.username }} 的身份评论<span v-if="state.site.commentReview === 'true'"> · 审核通过后展示</span></span>
         <button class="btn btn-sm" type="button" :disabled="submitting || !content.trim()" @click="submitNew">
           发表评论
         </button>
@@ -113,7 +113,7 @@ onMounted(load)
     <div v-if="loading" class="empty">评论加载中…</div>
     <div v-else-if="!roots.length" class="empty">还没有评论，来坐第一排。</div>
 
-    <div v-for="c in roots" :key="c.id" class="comment">
+    <div v-for="c in roots" :key="c.id" :id="`comment-${c.id}`" class="comment">
       <span class="avatar">
         <img v-if="c.avatar" :src="c.avatar" alt="" />
         <template v-else>{{ initialOf(c.nickname) }}</template>
@@ -142,7 +142,7 @@ onMounted(load)
         </div>
 
         <div v-if="repliesOf(c.id).length" class="replies">
-          <div v-for="r in repliesOf(c.id)" :key="r.id" class="comment" style="border-bottom: none; padding: 12px 0">
+          <div v-for="r in repliesOf(c.id)" :key="r.id" :id="`comment-${r.id}`" class="comment" style="border-bottom: none; padding: 12px 0">
             <span class="avatar" style="width: 30px; height: 30px; font-size: 13px">
               <img v-if="r.avatar" :src="r.avatar" alt="" />
               <template v-else>{{ initialOf(r.nickname) }}</template>

@@ -30,4 +30,11 @@ public class AdminActivityNoticeController {
         long changed = service.markAllRead();
         return ApiResponse.ok(Map.of("changed", changed));
     }
+
+    @PostMapping("/test")
+    public ApiResponse<Map<String, Object>> test() {
+        service.record("TEST", "测试提醒", "如果你看到这条通知，说明后台提醒链路正常。",
+                "/admin", "系统", null);
+        return ApiResponse.ok(service.overview(1));
+    }
 }

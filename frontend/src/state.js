@@ -25,7 +25,6 @@ export const state = reactive({
     announcementEnabled: 'false',
     announcementTitle: '站点公告',
     announcementLink: '',
-    themePreset: 'ink',
     heroTitle: '',
     heroSubtitle: '',
     policeRecord: '',
@@ -96,11 +95,6 @@ export function clearAuth() {
 export function resolvedTheme(preference) {
   if (preference === 'system') return systemTheme?.matches ? 'dark' : 'light'
   return preference === 'dark' ? 'dark' : 'light'
-}
-
-export function applyThemePreset(preset) {
-  const next = String(preset || 'ink').trim() || 'ink'
-  document.documentElement.setAttribute('data-preset', next)
 }
 
 export function applyTheme(preference) {

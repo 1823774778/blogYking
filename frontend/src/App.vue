@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import http from './api'
-import { state, applyTheme, applyThemePreset, toast } from './state'
+import { state, applyTheme, toast } from './state'
 import { detectMusicPlatform, platformMeta, playlistEmbedUrl, playlistOpenUrl } from './utils/music'
 
 const route = useRoute()
@@ -141,7 +141,6 @@ function syncCustomHead(html) {
   document.head.appendChild(wrap)
 }
 
-watch(() => state.site.themePreset, (preset) => applyThemePreset(preset))
 watch(() => state.site.customHead, (html) => syncCustomHead(html), { immediate: true })
 
 onBeforeUnmount(() => {
@@ -151,7 +150,6 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   document.addEventListener('pointerdown', onDocumentPointerDown)
   applyTheme(state.theme)
-  applyThemePreset(state.site.themePreset)
 
   // 首次启动：还没有管理员时，所有页面都先引导到初始化向导
   try {

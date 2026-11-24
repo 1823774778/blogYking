@@ -18,9 +18,11 @@ public class ActivityNoticeService {
     private static final Logger log = LoggerFactory.getLogger(ActivityNoticeService.class);
 
     private final ActivityNoticeMapper mapper;
+    private final SiteConfigService siteConfigService;
 
-    public ActivityNoticeService(ActivityNoticeMapper mapper) {
+    public ActivityNoticeService(ActivityNoticeMapper mapper, SiteConfigService siteConfigService) {
         this.mapper = mapper;
+        this.siteConfigService = siteConfigService;
     }
 
     public Map<String, Object> overview(int limit) {
@@ -38,6 +40,14 @@ public class ActivityNoticeService {
 
     public void record(String type, String title, String content, String link,
                        String actorName, Long postId) {
+        record(type, title, content, link, actorName, postId, false);
+    }
+
+    public void record(String type, String title, String content, String link,
+                       String actorName, Long postId, boolean pending) {
+        if (!enabledFor(type, pending)) {
+            return;
+        }
         try {
             ActivityNotice notice = new ActivityNotice();
             notice.setType(normalize(type, "SYSTEM", 24));
@@ -53,6 +63,29 @@ public class ActivityNoticeService {
             // 通知不能反过来打断点赞、收藏或评论主流程。
             log.warn("互动通知写入失败：type={}, title={}, error={}", type, title, e.getMessage());
         }
+    }
+
+    private boolean enabledFor(String type, boolean pending) {
+        Map<String, String> cfg = siteConfigService.get();
+        String normalized = type == null ? "" : type.trim().toUpperCase();
+        boolean enabled = switch (normalized) {
+            case "COMMENT" -> booleanValue(cfg, "notifyCommentsEnabled", true);
+            case "LIKE" -> booleanValue(cfg, "notifyLikesEnabled", true);
+            case "FAVORITE" -> booleanValue(cfg, "notifyFavoritesEnabled", true);
+            case "UPDATE" -> booleanValue(cfg, "notifyUpdatesEnabled", true);
+            case "USER" -> booleanValue(cfg, "notifyNewUsersEnabled", true);
+            default -> true;
+        };
+        if (!enabled) {
+            return false;
+        }
+        return !("COMMENT".equals(normalized) && !pending
+                && booleanValue(cfg, "notifyPendingCommentsOnly", false));
+    }
+
+    private boolean booleanValue(Map<String, String> cfg, String key, boolean fallback) {
+        String raw = cfg.get(key);
+        return raw == null || raw.isBlank() ? fallback : Boolean.parseBoolean(raw);
     }
 
     private ActivityNoticeView toView(ActivityNotice n) {

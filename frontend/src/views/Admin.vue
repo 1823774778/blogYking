@@ -97,7 +97,7 @@ async function markActivityRead() {
 }
 
 function activityTypeLabel(type) {
-  return ({ LIKE: '喜欢', FAVORITE: '收藏', COMMENT: '评论', UPDATE: '更新' })[type] || '通知'
+  return ({ LIKE: '喜欢', FAVORITE: '收藏', COMMENT: '评论', UPDATE: '更新', USER: '用户', TEST: '测试' })[type] || '通知'
 }
 
 async function refresh() {
@@ -244,10 +244,6 @@ onMounted(async () => {
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10v4M7 8v8M10 6v12M14 9v6M17 7v10M20 10v4" /></svg></span>
             <span>公告与 AI</span>
           </router-link>
-          <router-link class="adm-quick-item" to="/admin/themes">
-            <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18c2 0 2-1 2-2 0-1.5 1-2 2-2h2a3 3 0 0 0 3-3 9 9 0 0 0-9-11Z" /><circle cx="8" cy="9" r="1" /><circle cx="12" cy="7" r="1" /><circle cx="16" cy="9" r="1" /></svg></span>
-            <span>主题管理</span>
-          </router-link>
           <router-link class="adm-quick-item" to="/admin/roles">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.8M18 20a6 6 0 0 0-2-4.4" /><path d="m18 12 1.5 3 3 .4-2.2 2.1.5 3-2.8-1.5-2.8 1.5.5-3-2.2-2.1 3-.4Z" /></svg></span>
             <span>角色权限</span>
@@ -345,7 +341,7 @@ onMounted(async () => {
               <span class="adm-notice-count">{{ activityUnread }}</span>
               <div>
                 <strong>{{ activityUnread ? '条新互动等你查看' : '没有未读通知' }}</strong>
-                <p>{{ activityUnread ? '点赞、收藏、评论和版本更新都会出现在这里。' : '新的互动会实时记录，不必反复刷新。' }}</p>
+                <p>{{ activityUnread ? '点赞、收藏、评论、新用户和版本更新都会出现在这里。' : '新的互动会实时记录，不必反复刷新。' }}</p>
               </div>
             </div>
 
@@ -367,6 +363,12 @@ onMounted(async () => {
                   </svg>
                   <svg v-else-if="item.type === 'COMMENT'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
                     <path d="M4 5h16v11H9l-5 4V5Z" />
+                  </svg>
+                  <svg v-else-if="item.type === 'USER'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <circle cx="12" cy="8" r="3.2" /><path d="M5 21a7 7 0 0 1 14 0" />
+                  </svg>
+                  <svg v-else-if="item.type === 'TEST'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" /><path d="M10 19a2 2 0 0 0 4 0" />
                   </svg>
                   <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
                     <path d="M12 3v18M3 12h18" />

@@ -76,6 +76,9 @@ public class AdminController {
     public record CommentStatusReq(String status) {
     }
 
+    public record CommentBulkReq(java.util.List<Long> ids, String status) {
+    }
+
     public record MailTestReq(String to) {
     }
 
@@ -205,6 +208,12 @@ public class AdminController {
     public ApiResponse<CommentView> moderateComment(@PathVariable Long id,
                                                      @RequestBody CommentStatusReq req) {
         return ApiResponse.ok(commentService.moderate(id, req.status()));
+    }
+
+    @PutMapping("/comments/bulk-status")
+    public ApiResponse<Map<String, Object>> bulkCommentStatus(@RequestBody CommentBulkReq req) {
+        int updated = commentService.moderateBulk(req.ids(), req.status());
+        return ApiResponse.ok(Map.of("updated", updated));
     }
 
     @GetMapping("/users")
