@@ -449,6 +449,38 @@ body {
   color: #86909c;
 }
 
+[data-theme="dark"] .ff-feature-card {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 18px 52px -22px rgba(0, 0, 0, 0.72);
+}
+
+[data-theme="dark"] .ff-feature-card:hover {
+  box-shadow: 0 22px 60px -20px rgba(0, 0, 0, 0.82);
+}
+
+[data-theme="dark"] .ff-feature-body {
+  background: var(--paper);
+}
+
+[data-theme="dark"] .ff-feature-body h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ff-feature-body p {
+  color: var(--ink-soft);
+}
+
+[data-theme="dark"] .ff-feature-body .ff-post-byline,
+[data-theme="dark"] .ff-feature-body .ff-post-author,
+[data-theme="dark"] .ff-feature-body .ff-post-date {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ff-feature-kicker {
+  color: var(--accent-ink);
+}
+
 /* ---------- 首页主体 ---------- */
 
 .ff-home {

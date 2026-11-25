@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
 import { state, toast } from '../state'
 import MarkdownBody from '../components/MarkdownBody.vue'
+import AiThinking from '../components/AiThinking.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,7 +40,9 @@ const aiWriterOpen = ref(false)
 const aiWriterInput = ref('')
 const aiWriterError = ref('')
 const aiGenerating = ref(false)
+const aiThinking = ref(false)
 const aiGenerationStatus = ref('')
+const aiWriterSteps = ['理解主题与目标读者', '构思结构与表达语气', '生成标题、摘要与正文', '等待模型返回完整草稿']
 let aiAbortController = null
 let aiTypeTimer = null
 let aiRunId = 0
@@ -218,9 +221,26 @@ function stopAiGeneration(silent = false) {
     clearTimeout(aiTypeTimer)
     aiTypeTimer = null
   }
+  aiThinking.value = false
   aiGenerating.value = false
   aiGenerationStatus.value = ''
   if (!silent) toast('已停止生成，已写入的内容会保留')
+}
+
+function closeAiWriter() {
+  if (aiThinking.value) return
+  if (aiGenerating.value) stopAiGeneration()
+  aiWriterOpen.value = false
+}
+
+function closeSummaryPrompt() {
+  if (generating.value) return
+  summaryPromptOpen.value = false
+}
+
+function closeArticleReviewPrompt() {
+  if (aiReviewLoading.value) return
+  aiReviewPromptOpen.value = false
 }
 
 function typeOutContent(full, runId) {
@@ -261,8 +281,9 @@ async function generateFromAi() {
     aiWriterError.value = 'AI 文章功能未开启，请先在站点设置中打开'
     return
   }
-  aiWriterOpen.value = false
+  aiWriterOpen.value = true
   aiWriterError.value = ''
+  aiThinking.value = true
   aiGenerating.value = true
   aiGenerationStatus.value = '正在理解主题…'
   const runId = ++aiRunId
@@ -278,6 +299,8 @@ async function generateFromAi() {
     if (runId !== aiRunId) return
     const data = res.data || {}
     if (!String(data.content || '').trim()) throw new Error('AI 没有返回正文，请稍后重试')
+    aiThinking.value = false
+    aiWriterOpen.value = false
     form.title = data.title || idea
     form.summary = data.summary || ''
     form.tags = data.tags || ''
@@ -288,11 +311,13 @@ async function generateFromAi() {
     toast('AI 草稿已写入，请检查后继续编辑')
   } catch (e) {
     if (runId !== aiRunId || e.name === 'CanceledError' || e.name === 'AbortError' || e.code === 'ERR_CANCELED') return
+    aiThinking.value = false
     aiWriterError.value = e.message || 'AI 生成失败，请稍后重试'
     aiWriterOpen.value = true
   } finally {
     if (runId === aiRunId) {
       aiAbortController = null
+      aiThinking.value = false
       aiGenerating.value = false
       aiGenerationStatus.value = ''
     }
@@ -804,7 +829,7 @@ onMounted(async () => {
     </footer>
 
     <transition name="ai-orb">
-      <div v-if="aiGenerating" class="ai-gen-orb-wrap">
+      <div v-if="aiGenerating && !aiWriterOpen" class="ai-gen-orb-wrap">
         <div class="ai-gen-bubble">
           <strong>AI 正在写作</strong>
           <span>{{ aiGenerationStatus || '正在连接模型…' }}</span>
@@ -910,7 +935,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="aiWriterOpen" class="adm-modal-wrap ai-writer-mask" @click.self="aiWriterOpen = false">
+    <div v-if="aiWriterOpen" class="adm-modal-wrap ai-writer-mask" @click.self="closeAiWriter">
       <div class="adm-modal ai-writer-modal" role="dialog" aria-label="AI 写作">
         <div class="ai-writer-head">
           <div>
@@ -918,64 +943,92 @@ onMounted(async () => {
             <h2>用 AI 写一篇完整文章</h2>
             <p>描述主题、角度或想覆盖的内容，AI 会生成标题、摘要、标签和正文。</p>
           </div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiWriterOpen = false">×</button>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="aiThinking" @click="closeAiWriter">×</button>
         </div>
         <div class="ai-writer-body">
-          <label for="aiWriterInput">你想写点什么？</label>
-          <textarea
-            id="aiWriterInput"
-            v-model="aiWriterInput"
-            maxlength="2000"
-            placeholder="例如：写一篇给后端工程师看的 Spring Boot 自动更新实践，包含设计取舍、代码结构和回滚方案"
-            @keydown.ctrl.enter.prevent="generateFromAi"
-            @keydown.meta.enter.prevent="generateFromAi"
-          ></textarea>
-          <div class="ai-writer-meta">
-            <span>{{ aiWriterInput.length }} / 2000</span>
-            <span>Ctrl / ⌘ + Enter 快速生成</span>
-          </div>
-          <p class="ai-writer-note">生成会覆盖当前标题与正文。AI 草稿写入后仍可继续编辑，发布前请人工确认。</p>
-          <p v-if="aiWriterError" class="ai-writer-error">{{ aiWriterError }}</p>
+          <AiThinking
+            v-if="aiThinking"
+            class="adm-ai-thinking"
+            title="AI 正在构思文章"
+            :steps="aiWriterSteps"
+            note="模型返回后弹窗才会收起，正文会逐字写入编辑器。"
+          />
+          <template v-else>
+            <label for="aiWriterInput">你想写点什么？</label>
+            <textarea
+              id="aiWriterInput"
+              v-model="aiWriterInput"
+              maxlength="2000"
+              placeholder="例如：写一篇给后端工程师看的 Spring Boot 自动更新实践，包含设计取舍、代码结构和回滚方案"
+              @keydown.ctrl.enter.prevent="generateFromAi"
+              @keydown.meta.enter.prevent="generateFromAi"
+            ></textarea>
+            <div class="ai-writer-meta">
+              <span>{{ aiWriterInput.length }} / 2000</span>
+              <span>Ctrl / ⌘ + Enter 快速生成</span>
+            </div>
+            <p class="ai-writer-note">生成会覆盖当前标题与正文。AI 草稿写入后仍可继续编辑，发布前请人工确认。</p>
+            <p v-if="aiWriterError" class="ai-writer-error">{{ aiWriterError }}</p>
+          </template>
         </div>
         <footer class="ai-writer-foot">
-          <button class="btn btn-ghost" type="button" @click="aiWriterOpen = false">取消</button>
-          <button class="btn ai-writer-submit" type="button" :disabled="!aiWriterInput.trim()" @click="generateFromAi">
-            <span aria-hidden="true">✦</span> 生成
-          </button>
+          <template v-if="aiThinking">
+            <span class="ai-writer-thinking-hint">正在等待模型返回，期间不会关闭弹窗。</span>
+            <button class="btn btn-ghost" type="button" @click="stopAiGeneration()">停止思考</button>
+          </template>
+          <template v-else>
+            <button class="btn btn-ghost" type="button" @click="closeAiWriter">取消</button>
+            <button class="btn ai-writer-submit" type="button" :disabled="!aiWriterInput.trim()" @click="generateFromAi">
+              <span aria-hidden="true">✦</span> 生成
+            </button>
+          </template>
         </footer>
       </div>
     </div>
 
-    <div v-if="summaryPromptOpen" class="adm-modal-wrap" @click.self="summaryPromptOpen = false">
+    <div v-if="summaryPromptOpen" class="adm-modal-wrap" @click.self="closeSummaryPrompt">
       <div class="adm-modal is-wide">
         <div class="adm-modal-head">
           <div><span class="adm-card-kicker">AI SUMMARY</span><h2>AI 生成摘要</h2><p class="meta">默认读取站点设置中的 AI 摘要提示词，本次修改只影响这次生成。</p></div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="summaryPromptOpen = false">×</button>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="generating" @click="closeSummaryPrompt">×</button>
         </div>
-        <div class="field">
+        <AiThinking
+          v-if="generating"
+          title="AI 正在生成摘要"
+          :steps="['读取文章标题与正文', '提炼核心观点', '压缩成站点摘要', '等待模型返回']"
+          note="摘要生成后会直接写入表单，弹窗保持打开直到返回结果。"
+        />
+        <div v-else class="field">
           <label for="summaryPrompt">提示词</label>
           <textarea id="summaryPrompt" v-model="summaryPrompt" maxlength="4000" style="min-height: 150px"></textarea>
         </div>
         <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" :disabled="generating" @click="summaryPromptOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="generating" @click="generateSummary">{{ generating ? '生成中…' : '生成摘要' }}</button>
+          <button class="btn btn-ghost" type="button" :disabled="generating" @click="closeSummaryPrompt">取消</button>
+          <button class="btn" type="button" :disabled="generating" @click="generateSummary">{{ generating ? '思考中…' : '生成摘要' }}</button>
         </div>
       </div>
     </div>
 
-    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="aiReviewPromptOpen = false">
+    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="closeArticleReviewPrompt">
       <div class="adm-modal is-wide">
         <div class="adm-modal-head">
           <div><span class="adm-card-kicker">AI REVIEW</span><h2>AI 审核文章</h2><p class="meta">默认读取站点设置中的审核提示词，本次修改只影响这次审核。</p></div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiReviewPromptOpen = false">×</button>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="aiReviewLoading" @click="closeArticleReviewPrompt">×</button>
         </div>
-        <div class="field">
+        <AiThinking
+          v-if="aiReviewLoading"
+          tone="amber"
+          title="AI 正在审核文章"
+          :steps="['读取标题与正文', '检查事实、结构与表达', '评估风险与可读性', '整理修改建议']"
+          note="审核完成后会自动打开结果面板，弹窗不会提前消失。"
+        />
+        <div v-else class="field">
           <label for="articleReviewPrompt">审核提示词</label>
           <textarea id="articleReviewPrompt" v-model="aiReviewPrompt" maxlength="4000" style="min-height: 150px"></textarea>
         </div>
         <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" :disabled="aiReviewLoading" @click="aiReviewPromptOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="aiReviewLoading" @click="reviewArticle">{{ aiReviewLoading ? '审核中…' : '开始审核' }}</button>
+          <button class="btn btn-ghost" type="button" :disabled="aiReviewLoading" @click="closeArticleReviewPrompt">取消</button>
+          <button class="btn" type="button" :disabled="aiReviewLoading" @click="reviewArticle">{{ aiReviewLoading ? '思考中…' : '开始审核' }}</button>
         </div>
       </div>
     </div>
@@ -1471,6 +1524,9 @@ onMounted(async () => {
 .ai-writer-foot .btn { min-height: 34px; padding: 0 16px; border-radius: 7px; font-size: 12px; }
 .ai-writer-submit { display: inline-flex; align-items: center; gap: 6px; background: #2563eb; color: #fff; font-weight: 600; }
 .ai-writer-submit:hover:not(:disabled) { background: #1d4ed8; }
+.adm-ai-thinking { margin: 2px 0 10px; }
+.ai-writer-thinking-hint { margin-right: auto; color: #9ca3af; font-size: 10px; line-height: 1.5; }
+.is-dark .ai-writer-thinking-hint { color: #64748b; }
 
 /* AI 生成悬浮球 */
 .ai-gen-orb-wrap {

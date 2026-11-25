@@ -1,10 +1,10 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import http from './api'
 import { state, applyTheme, toast } from './state'
-import { detectMusicPlatform, platformMeta, playlistEmbedUrl, playlistOpenUrl } from './utils/music'
+import { detectMusicPlatform, isAudioUrl, platformMeta, playlistEmbedUrl, playlistOpenUrl } from './utils/music'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +14,11 @@ const musicPlaying = ref(false)
 const musicPanelOpen = ref(false)
 const musicCurrent = ref(0)
 const musicDuration = ref(0)
+const musicCloud = ref(null)
+const musicLoading = ref(false)
+const musicLoadError = ref('')
+const musicTrackIndex = ref(0)
+let musicRequestId = 0
 
 const isAdminArea = computed(() => route.path.startsWith('/admin'))
 const maintenanceMode = computed(() =>
@@ -33,23 +38,36 @@ const showPublicChrome = computed(() => state.setupRequired === false && !isAdmi
 const showFooter = computed(
   () => showPublicChrome.value && route.path !== '/login' && route.path !== '/register' && route.path !== '/setup'
 )
-const musicSource = computed(() => (state.site.musicSource === 'playlist' ? 'playlist' : 'audio'))
-const musicPlatform = computed(() => platformMeta(state.site.musicPlaylistPlatform || detectMusicPlatform(state.site.musicPlaylistUrl)))
-const musicPlaylistUrl = computed(() => state.site.musicPlaylistUrl || '')
-const musicEmbedUrl = computed(() => playlistEmbedUrl(state.site.musicPlaylistPlatform, state.site.musicPlaylistUrl))
-const musicOpenUrl = computed(() => playlistOpenUrl(state.site.musicPlaylistPlatform, state.site.musicPlaylistUrl))
-const musicTitle = computed(() => musicSource.value === 'playlist'
-  ? (state.site.musicPlaylistTitle || state.site.musicTitle || '站点歌单')
-  : (state.site.musicTitle || '站点音乐'))
-const musicSubtitle = computed(() => musicSource.value === 'playlist'
-  ? `${musicPlatform.value.label} · 分享歌单`
-  : (state.site.musicArtist || '单曲音频'))
-const musicTone = computed(() => musicSource.value === 'playlist' ? musicPlatform.value.tone : '#2f6fed')
+const musicLink = computed(() => String(state.site.musicPlaylistUrl || state.site.musicUrl || '').trim())
+const musicPlatform = computed(() => platformMeta(
+  musicCloud.value?.platform || state.site.musicPlaylistPlatform || detectMusicPlatform(musicLink.value)
+))
+const musicTracks = computed(() => Array.isArray(musicCloud.value?.tracks) ? musicCloud.value.tracks : [])
+const musicCurrentTrack = computed(() => musicTracks.value[musicTrackIndex.value] || null)
+const musicEmbedUrl = computed(() => musicPlatform.value.value === 'audio'
+  ? ''
+  : playlistEmbedUrl(musicPlatform.value.value, musicLink.value))
+const musicOpenUrl = computed(() => playlistOpenUrl(musicPlatform.value.value, musicLink.value))
+const musicTitle = computed(() => musicCloud.value?.title || state.site.musicPlaylistTitle || state.site.musicTitle || '站点歌单')
+const musicCover = computed(() => musicCloud.value?.cover || musicCurrentTrack.value?.cover || state.site.musicCover || '')
+const musicPlayableCount = computed(() => Number(musicCloud.value?.playableCount || 0))
+const musicLoadedCount = computed(() => Number(musicCloud.value?.loadedCount || musicTracks.value.length))
+const musicSubtitle = computed(() => {
+  if (musicLoading.value) return '正在读取云端歌单…'
+  if (musicTracks.value.length) {
+    const playable = musicPlayableCount.value
+    return `${musicPlatform.value.label} · ${playable > 0 ? `${playable} 首可播放` : '暂无可播曲目'}${musicLoadedCount.value > playable ? ` / 共 ${musicLoadedCount.value} 首` : ''}`
+  }
+  if (musicLoadError.value) return '云端歌单读取失败'
+  if (musicCloud.value?.available === false) return `${musicPlatform.value.label} · 官方播放器`
+  return `${musicPlatform.value.label} · 分享歌单`
+})
+const musicTone = computed(() => musicPlatform.value.tone)
 const musicProgress = computed(() => (musicDuration.value > 0 ? (musicCurrent.value / musicDuration.value) * 100 : 0))
 const showMusic = computed(
   () => showPublicChrome.value
     && state.site.musicEnabled === 'true'
-    && (musicSource.value === 'playlist' ? Boolean(musicPlaylistUrl.value) : Boolean(state.site.musicUrl))
+    && Boolean(musicLink.value)
 )
 
 function formatMusicTime(seconds) {
@@ -60,8 +78,129 @@ function formatMusicTime(seconds) {
   return `${min}:${sec}`
 }
 
+function directAudioFallback(link) {
+  let title = '云端音频'
+  try {
+    const pathname = new URL(link, window.location.origin).pathname
+    const fileName = pathname.split('/').pop() || ''
+    title = decodeURIComponent(fileName.replace(/\.(mp3|m4a|aac|wav|ogg|flac|opus)$/i, '')) || title
+  } catch {
+    /* 保留默认名称 */
+  }
+  return {
+    available: true,
+    platform: 'audio',
+    platformLabel: '云端音频',
+    url: link,
+    title,
+    cover: '',
+    loadedCount: 1,
+    playableCount: 1,
+    tracks: [{
+      id: link,
+      title,
+      artist: '音频直链',
+      album: '',
+      cover: '',
+      duration: 0,
+      url: link,
+      playable: true,
+      pageUrl: link
+    }]
+  }
+}
+
+async function loadCloudMusic(force = false) {
+  if (!musicLink.value) return
+  if (!force && musicCloud.value?.url === musicLink.value && !musicLoadError.value) return
+  const requestId = ++musicRequestId
+  musicLoading.value = true
+  musicLoadError.value = ''
+  try {
+    const res = await http.get('/music/playlist', {
+      params: { url: musicLink.value },
+      timeout: 30000
+    })
+    if (requestId !== musicRequestId) return
+    musicCloud.value = res.data || {}
+    const firstPlayable = (musicCloud.value.tracks || []).findIndex((track) => track.playable)
+    musicTrackIndex.value = firstPlayable >= 0 ? firstPlayable : 0
+    musicCurrent.value = 0
+    musicDuration.value = 0
+    await nextTick()
+    musicAudio.value?.load()
+  } catch (e) {
+    if (requestId !== musicRequestId) return
+    if (isAudioUrl(musicLink.value)) {
+      musicCloud.value = directAudioFallback(musicLink.value)
+      musicTrackIndex.value = 0
+      musicLoadError.value = ''
+    } else {
+      musicCloud.value = null
+      musicLoadError.value = e.message || '云端歌单读取失败，请检查链接'
+    }
+  } finally {
+    if (requestId === musicRequestId) musicLoading.value = false
+  }
+}
+
+function firstPlayableIndex(from = 0, step = 1) {
+  const tracks = musicTracks.value
+  if (!tracks.length) return -1
+  let index = ((from % tracks.length) + tracks.length) % tracks.length
+  for (let count = 0; count < tracks.length; count += 1) {
+    if (tracks[index]?.playable && tracks[index]?.url) return index
+    index = (index + step + tracks.length) % tracks.length
+  }
+  return -1
+}
+
+function selectMusicTrack(index, autoplay = true) {
+  const track = musicTracks.value[index]
+  if (!track) return
+  if (!track.playable || !track.url) {
+    toast('该曲目受版权限制，请在原平台打开收听', 'error')
+    return
+  }
+  musicTrackIndex.value = index
+  musicCurrent.value = 0
+  musicDuration.value = 0
+  musicPlaying.value = false
+  nextTick(() => {
+    const audio = musicAudio.value
+    if (!audio) return
+    audio.load()
+    if (autoplay) {
+      audio.play()
+        .then(() => { musicPlaying.value = true })
+        .catch(() => {
+          musicPlaying.value = false
+          toast('浏览器阻止了播放，请再点一次播放', 'error')
+        })
+    }
+  })
+}
+
+function stepMusic(delta, autoplay = true) {
+  if (!musicTracks.value.length) return
+  const index = firstPlayableIndex(
+    musicTrackIndex.value + delta,
+    delta >= 0 ? 1 : -1
+  )
+  if (index < 0) {
+    toast('这个歌单暂无可在线播放的曲目', 'error')
+    return
+  }
+  selectMusicTrack(index, autoplay)
+}
+
 function toggleMusicPanel() {
-  musicPanelOpen.value = !musicPanelOpen.value
+  if (musicPanelOpen.value) {
+    musicPanelOpen.value = false
+    return
+  }
+  musicPanelOpen.value = true
+  if (!musicCloud.value || musicCloud.value.url !== musicLink.value) loadCloudMusic()
 }
 
 function closeMusicPanel() {
@@ -69,15 +208,18 @@ function closeMusicPanel() {
 }
 
 function toggleMusicPlayback() {
-  if (musicSource.value === 'playlist') {
-    musicPanelOpen.value = true
+  if (musicLoading.value) return
+  if (!musicCurrentTrack.value) {
+    const index = firstPlayableIndex()
+    if (index >= 0) {
+      selectMusicTrack(index, true)
+      return
+    }
+    toast(musicLoadError.value || '暂无可播放曲目，请打开原歌单', 'error')
     return
   }
   const audio = musicAudio.value
-  if (!audio) {
-    toast('播放器还在加载，请稍后再试', 'error')
-    return
-  }
+  if (!audio) return
   if (audio.paused) {
     audio.play()
       .then(() => { musicPlaying.value = true })
@@ -93,13 +235,17 @@ function toggleMusicPlayback() {
 
 function onMusicError() {
   musicPlaying.value = false
-  toast('音频加载失败，请检查音乐地址', 'error')
+  toast('音频加载失败，可能是版权限制或链接已失效', 'error')
 }
 
-function onDocumentPointerDown(event) {
-  if (!musicPanelOpen.value) return
-  if (event.target?.closest?.('.site-music')) return
-  musicPanelOpen.value = false
+function onMusicEnded() {
+  musicPlaying.value = false
+  const next = firstPlayableIndex(musicTrackIndex.value + 1, 1)
+  if (next >= 0 && next !== musicTrackIndex.value) selectMusicTrack(next, true)
+}
+
+function onDocumentKeydown(event) {
+  if (event.key === 'Escape' && musicPanelOpen.value) musicPanelOpen.value = false
 }
 
 function onMusicTimeUpdate() {
@@ -125,11 +271,16 @@ function syncDocumentTitle() {
 
 watch(() => state.site.siteName, syncDocumentTitle)
 
-watch(() => [state.site.musicUrl, state.site.musicPlaylistUrl, state.site.musicSource], () => {
+watch(musicLink, () => {
+  musicRequestId += 1
   musicPlaying.value = false
   musicCurrent.value = 0
   musicDuration.value = 0
-  if (musicAudio.value) musicAudio.value.load()
+  musicTrackIndex.value = 0
+  musicCloud.value = null
+  musicLoadError.value = ''
+  if (musicAudio.value) musicAudio.value.pause()
+  if (musicPanelOpen.value && musicLink.value) loadCloudMusic()
 })
 
 function syncCustomHead(html) {
@@ -144,11 +295,13 @@ function syncCustomHead(html) {
 watch(() => state.site.customHead, (html) => syncCustomHead(html), { immediate: true })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown)
+  document.removeEventListener('keydown', onDocumentKeydown)
+  musicRequestId += 1
+  musicAudio.value?.pause()
 })
 
 onMounted(async () => {
-  document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('keydown', onDocumentKeydown)
   applyTheme(state.theme)
 
   // 首次启动：还没有管理员时，所有页面都先引导到初始化向导
@@ -252,90 +405,154 @@ onMounted(async () => {
     <div
       v-if="showMusic"
       class="site-music"
-      :class="{ playing: musicPlaying, expanded: musicPanelOpen, 'is-playlist': musicSource === 'playlist' }"
+      :class="{ playing: musicPlaying, expanded: musicPanelOpen }"
       :style="{ '--music-tone': musicTone }"
     >
       <audio
-        v-if="musicSource === 'audio'"
         ref="musicAudio"
-        :src="state.site.musicUrl"
-        preload="none"
-        loop
+        :src="musicCurrentTrack?.url || ''"
+        preload="metadata"
         @play="musicPlaying = true"
         @pause="musicPlaying = false"
         @timeupdate="onMusicTimeUpdate"
         @loadedmetadata="onMusicLoaded"
+        @ended="onMusicEnded"
         @error="onMusicError"
       ></audio>
 
       <transition name="music-panel">
         <aside v-if="musicPanelOpen" class="site-music-panel" aria-label="站点音乐播放器">
           <header class="site-music-head">
-            <span class="site-music-cover" :class="{ 'has-image': state.site.musicCover }">
-              <img v-if="state.site.musicCover" :src="state.site.musicCover" alt="" />
-              <template v-else>{{ musicSource === 'playlist' ? musicPlatform.mark : '♪' }}</template>
+            <span class="site-music-cover" :class="{ 'has-image': musicCover }">
+              <img v-if="musicCover" :src="musicCover" alt="" referrerpolicy="no-referrer" />
+              <template v-else>{{ musicPlatform.mark }}</template>
             </span>
             <div class="site-music-copy">
               <strong>{{ musicTitle }}</strong>
               <span>{{ musicSubtitle }}</span>
             </div>
-            <button type="button" class="site-music-close" aria-label="收起播放器" @click="closeMusicPanel">×</button>
-          </header>
-
-          <div v-if="musicSource === 'audio'" class="site-music-controls">
-            <button type="button" class="site-music-play" :aria-label="musicPlaying ? '暂停' : '播放'" @click="toggleMusicPlayback">
-              <svg v-if="musicPlaying" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M7 5v14M17 5v14" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="m8 5 11 7-11 7V5Z" />
+            <button type="button" class="site-music-close" aria-label="收起播放器" @click="closeMusicPanel">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="m6 9 6 6 6-6" />
               </svg>
             </button>
-            <div class="site-music-track">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="0.1"
-                :value="musicProgress"
-                aria-label="播放进度"
-                :style="{ '--music-progress': musicProgress + '%' }"
-                @input="seekMusic"
-              />
-              <div class="site-music-times">
-                <span>{{ formatMusicTime(musicCurrent) }}</span>
-                <span>{{ formatMusicTime(musicDuration) }}</span>
+          </header>
+
+          <div v-if="musicLoading" class="site-music-state">
+            <span class="site-music-loader" aria-hidden="true"><i></i><i></i><i></i></span>
+            <div>
+              <strong>正在读取云端歌单</strong>
+              <p>解析曲目与可播放状态，请稍候…</p>
+            </div>
+          </div>
+
+          <div v-else-if="musicCurrentTrack" class="site-music-cloud">
+            <div class="site-music-controls">
+              <button type="button" class="site-music-step" aria-label="上一首" @click="stepMusic(-1)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M6 5v14M18 5 9 12l9 7V5Z" />
+                </svg>
+              </button>
+              <button type="button" class="site-music-play" :aria-label="musicPlaying ? '暂停' : '播放'" @click="toggleMusicPlayback">
+                <svg v-if="musicPlaying" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M7 5v14M17 5v14" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m8 5 11 7-11 7V5Z" />
+                </svg>
+              </button>
+              <button type="button" class="site-music-step" aria-label="下一首" @click="stepMusic(1)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M18 5v14M6 5l9 7-9 7V5Z" />
+                </svg>
+              </button>
+              <div class="site-music-track">
+                <div class="site-music-now">
+                  <strong>{{ musicCurrentTrack.title }}</strong>
+                  <span>{{ musicCurrentTrack.artist || '未知歌手' }}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  :value="musicProgress"
+                  aria-label="播放进度"
+                  :style="{ '--music-progress': musicProgress + '%' }"
+                  @input="seekMusic"
+                />
+                <div class="site-music-times">
+                  <span>{{ formatMusicTime(musicCurrent) }}</span>
+                  <span>{{ formatMusicTime(musicDuration || musicCurrentTrack.duration) }}</span>
+                </div>
               </div>
             </div>
-            <span class="site-music-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+
+            <div class="site-music-tracklist" role="list" aria-label="歌单曲目">
+              <button
+                v-for="(track, index) in musicTracks"
+                :key="track.id + '-' + index"
+                type="button"
+                role="listitem"
+                class="site-music-track-row"
+                :class="{ active: index === musicTrackIndex, unavailable: !track.playable }"
+                @click="selectMusicTrack(index)"
+              >
+                <span class="site-music-track-index">
+                  <span v-if="index === musicTrackIndex && musicPlaying" class="site-music-mini-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+                  <template v-else>{{ String(index + 1).padStart(2, '0') }}</template>
+                </span>
+                <span class="site-music-track-copy">
+                  <strong>{{ track.title }}</strong>
+                  <small>{{ track.artist || '未知歌手' }}<template v-if="!track.playable"> · 版权限制</template></small>
+                </span>
+                <span class="site-music-track-time">{{ track.duration ? formatMusicTime(track.duration) : '—' }}</span>
+              </button>
+            </div>
+
+            <div class="site-music-list-foot">
+              <span>{{ musicLoadedCount }} 首 · {{ musicPlayableCount }} 首可在线播放</span>
+              <a v-if="musicOpenUrl" :href="musicOpenUrl" target="_blank" rel="noopener">打开原歌单 ↗</a>
+            </div>
           </div>
 
           <div v-else class="site-music-playlist">
-            <iframe
-              v-if="musicEmbedUrl"
-              :src="musicEmbedUrl"
-              class="site-music-frame"
-              loading="lazy"
-              allow="autoplay; encrypted-media"
-              referrerpolicy="no-referrer-when-downgrade"
-              title="平台歌单播放器"
-            ></iframe>
-            <div v-else class="site-music-external">
-              <span class="site-music-external-orb">{{ musicPlatform.mark }}</span>
+            <div v-if="musicLoadError" class="site-music-external is-error">
+              <span class="site-music-external-orb">!</span>
               <div>
-                <strong>{{ musicTitle }}</strong>
-                <p>{{ musicPlatform.label }}歌单不支持内嵌播放，点击下方按钮前往原平台收听。</p>
+                <strong>歌单暂时无法读取</strong>
+                <p>{{ musicLoadError }}</p>
               </div>
             </div>
-            <a class="site-music-open" :href="musicOpenUrl" target="_blank" rel="noopener">
+            <template v-else>
+              <p class="site-music-hint">点击歌单中的曲目开始播放，也可以前往原平台收听。</p>
+              <iframe
+                v-if="musicEmbedUrl"
+                :src="musicEmbedUrl"
+                class="site-music-frame"
+                loading="lazy"
+                allow="autoplay; encrypted-media"
+                referrerpolicy="no-referrer-when-downgrade"
+                title="平台歌单播放器"
+              ></iframe>
+              <div v-else class="site-music-external">
+                <span class="site-music-external-orb">{{ musicPlatform.mark }}</span>
+                <div>
+                  <strong>{{ musicTitle }}</strong>
+                  <p>{{ musicCloud?.message || `${musicPlatform.label}歌单暂不支持站内播放，点击下方按钮前往原平台收听。` }}</p>
+                </div>
+              </div>
+            </template>
+            <a v-if="musicOpenUrl" class="site-music-open" :href="musicOpenUrl" target="_blank" rel="noopener">
               在{{ musicPlatform.short }}打开歌单
               <span>↗</span>
             </a>
+            <button v-if="musicLoadError" type="button" class="site-music-retry" @click="loadCloudMusic(true)">重新读取</button>
           </div>
 
           <footer class="site-music-foot">
-            <span>悬浮播放器</span>
-            <span v-if="musicSource === 'audio'">{{ musicPlaying ? '正在播放' : '已暂停' }}</span>
+            <span>{{ musicTracks.length ? '云端播放器' : '悬浮播放器' }}</span>
+            <span v-if="musicPlaying">正在播放</span>
             <span v-else>{{ musicPlatform.label }}</span>
           </footer>
         </aside>
@@ -343,8 +560,8 @@ onMounted(async () => {
 
       <button type="button" class="site-music-btn" :aria-label="musicPanelOpen ? '收起站点音乐' : '打开站点音乐'" :title="musicPanelOpen ? '收起播放器（音乐继续播放）' : '打开站点音乐'" @click="toggleMusicPanel">
         <span class="site-music-fab-art">
-          <img v-if="state.site.musicCover" :src="state.site.musicCover" alt="" />
-          <template v-else>{{ musicSource === 'playlist' ? musicPlatform.mark : '♪' }}</template>
+          <img v-if="musicCover" :src="musicCover" alt="" referrerpolicy="no-referrer" />
+          <template v-else>{{ musicPlatform.mark }}</template>
         </span>
         <span class="site-music-fab-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
         <span class="site-music-fab-glow" aria-hidden="true"></span>

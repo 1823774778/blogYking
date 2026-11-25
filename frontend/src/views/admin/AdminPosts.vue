@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import http from '../../api'
 import { toast } from '../../state'
 import { formatDate, formatDateTime } from '../../utils'
+import AiThinking from '../../components/AiThinking.vue'
 
 const route = useRoute()
 const activeTab = computed(() => String(route.query.tab || 'all'))
@@ -119,6 +120,11 @@ function openAiReview(post) {
   aiReviewTarget.value = post
   aiReviewPrompt.value = aiReviewPrompt.value || aiReviewPromptDefault.value
   aiReviewPromptOpen.value = true
+}
+
+function closePostReviewPrompt() {
+  if (aiReviewLoadingId.value) return
+  aiReviewPromptOpen.value = false
 }
 
 async function reviewWithAi(post) {
@@ -291,19 +297,26 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="aiReviewPromptOpen = false">
+    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="closePostReviewPrompt">
       <div class="adm-modal is-wide">
         <div class="adm-modal-head">
           <div><span class="adm-card-kicker">AI REVIEW</span><h2>AI 审核文章</h2><p class="meta">审核《{{ aiReviewTarget?.title }}》。提示词默认读取站点设置，本次修改只影响这次审核。</p></div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiReviewPromptOpen = false">×</button>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="Boolean(aiReviewLoadingId)" @click="closePostReviewPrompt">×</button>
         </div>
-        <div class="field">
+        <AiThinking
+          v-if="aiReviewLoadingId"
+          tone="amber"
+          title="AI 正在审核文章"
+          :steps="['读取文章标题与正文', '检查事实、结构与表达', '评估风险与可读性', '整理审核结论']"
+          note="审核完成后才会打开结果面板，弹窗期间显示思考过程。"
+        />
+        <div v-else class="field">
           <label for="postReviewPrompt">审核提示词</label>
           <textarea id="postReviewPrompt" v-model="aiReviewPrompt" maxlength="4000" style="min-height: 150px"></textarea>
         </div>
         <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" :disabled="Boolean(aiReviewLoadingId)" @click="aiReviewPromptOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="Boolean(aiReviewLoadingId)" @click="reviewWithAi(aiReviewTarget)">{{ aiReviewLoadingId ? '审核中…' : '开始审核' }}</button>
+          <button class="btn btn-ghost" type="button" :disabled="Boolean(aiReviewLoadingId)" @click="closePostReviewPrompt">取消</button>
+          <button class="btn" type="button" :disabled="Boolean(aiReviewLoadingId)" @click="reviewWithAi(aiReviewTarget)">{{ aiReviewLoadingId ? '思考中…' : '开始审核' }}</button>
         </div>
       </div>
     </div>

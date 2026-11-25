@@ -755,8 +755,15 @@ h3,
 }
 
 .markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
   margin: 1.6em auto;
   border-radius: 2px;
+}
+
+.markdown img.md-image {
+  box-shadow: 0 10px 30px rgba(15, 35, 30, 0.08);
 }
 
 .markdown blockquote {

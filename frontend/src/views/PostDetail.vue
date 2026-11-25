@@ -5,6 +5,7 @@ import http from '../api'
 import { state, toast } from '../state'
 import { formatDate, formatCount, initialOf, markdownHeadings, readingMinutes, splitTags } from '../utils'
 import MarkdownBody from '../components/MarkdownBody.vue'
+import AiThinking from '../components/AiThinking.vue'
 import CommentSection from '../components/CommentSection.vue'
 import coverDesk from '../assets/cover-desk.webp'
 import coverKey from '../assets/cover-key.webp'
@@ -275,16 +276,18 @@ watch(
         <header class="ff-ai-head">
           <div>
             <span class="ff-ai-kicker">AI · 文章总览</span>
-            <h3 id="ff-ai-title">{{ aiOverview ? '这篇文章讲了什么' : '要交给 AI 阅读吗？' }}</h3>
+            <h3 id="ff-ai-title">{{ aiLoading ? 'AI 正在阅读这篇文章' : aiOverview ? '这篇文章讲了什么' : '要交给 AI 阅读吗？' }}</h3>
           </div>
           <button class="ff-ai-close" type="button" :disabled="aiLoading" aria-label="关闭" @click="closeAiOverview">×</button>
         </header>
 
-        <div v-if="aiLoading" class="ff-ai-state">
-          <span class="ff-ai-spinner" aria-hidden="true"></span>
-          <p>AI 正在通读全文，整理主旨与要点…</p>
-          <span class="meta">通常需要 5–20 秒</span>
-        </div>
+        <AiThinking
+          v-if="aiLoading"
+          class="ff-ai-thinking"
+          title="AI 正在通读全文"
+          :steps="['读取文章标题与正文', '提炼一句话主旨', '整理三到五条核心要点', '判断适合谁阅读']"
+          note="生成后会留在当前弹窗，不会提前关闭；通常需要 5–20 秒。"
+        />
 
         <div v-else-if="aiOverview" class="ff-ai-overview">
           <div class="ff-ai-result-copy"><MarkdownBody :content="aiOverview" /></div>
@@ -391,7 +394,9 @@ watch(
   cursor: pointer;
 }
 .ff-ai-close:hover { background: rgba(127, 127, 127, .1); }
-.ff-ai-confirm, .ff-ai-overview, .ff-ai-state { padding: 20px 24px; overflow-y: auto; }
+.ff-ai-close:disabled { opacity: .45; cursor: not-allowed; }
+.ff-ai-confirm, .ff-ai-overview { padding: 20px 24px; overflow-y: auto; }
+.ff-ai-thinking { margin: 20px 24px; overflow-y: auto; }
 .ff-ai-confirm p { margin: 0 0 12px; line-height: 1.75; }
 .ff-ai-confirm ul { margin: 0 0 14px; padding-left: 18px; color: var(--muted, #6b7280); font-size: 13px; line-height: 1.8; }
 .ff-ai-error {
@@ -404,17 +409,6 @@ watch(
   font-size: 13px;
   line-height: 1.6;
 }
-.ff-ai-state { display: grid; justify-items: center; gap: 12px; padding: 44px 24px; text-align: center; }
-.ff-ai-state p { margin: 0; font-weight: 600; }
-.ff-ai-spinner {
-  width: 30px;
-  height: 30px;
-  border: 2px solid rgba(37, 99, 235, .18);
-  border-top-color: #2563eb;
-  border-radius: 50%;
-  animation: ff-ai-spin .8s linear infinite;
-}
-@keyframes ff-ai-spin { to { transform: rotate(360deg); } }
 .ff-ai-result-copy { font-size: 14px; line-height: 1.85; }
 .ff-ai-result-copy :deep(.markdown h1),
 .ff-ai-result-copy :deep(.markdown h2),
@@ -435,6 +429,7 @@ watch(
   .ff-ai-modal { max-height: 84vh; border-radius: 16px 16px 0 0; }
   .ff-ai-head { padding: 18px 18px 14px; }
   .ff-ai-confirm, .ff-ai-overview { padding: 16px 18px; }
+  .ff-ai-thinking { margin: 16px 18px; }
   .ff-ai-actions { padding: 12px 18px 16px; }
 }
 </style>

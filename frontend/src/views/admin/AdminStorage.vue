@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import http from '../../api'
 import { toast } from '../../state'
+import { formatDateTime } from '../../utils'
 
 const overview = ref(null)
 const config = ref({})
@@ -18,6 +19,10 @@ const providerOptions = [
   { value: 'webdav', label: 'WebDAV' },
   { value: 'openlist', label: 'OpenList' }
 ]
+
+function formatFileTime(value) {
+  return formatDateTime(value) || '—'
+}
 
 const providerMeta = {
   local: { label: '本地存储', kicker: 'LOCAL' },
@@ -332,17 +337,26 @@ onBeforeUnmount(() => {
                   <img v-if="isImage(file)" class="adm-storage-thumb" :src="file.url" :alt="file.originalName" loading="lazy" />
                   <span v-else class="adm-storage-file">{{ file.type || 'FILE' }}</span>
                 </td>
-                <td class="adm-file-name storage-file-name">
-                  <b :title="file.originalName">{{ file.originalName }}</b>
-                  <small>{{ file.categoryLabel }} / {{ file.path }}</small>
+                <td class="storage-file-name">
+                  <div class="storage-cell-stack">
+                    <b :title="file.originalName">{{ file.originalName }}</b>
+                    <small>{{ file.categoryLabel }} / {{ file.path }}</small>
+                  </div>
                 </td>
                 <td><span class="storage-type-pill">{{ file.typeLabel }}</span></td>
                 <td class="storage-uploader">
-                  <b>{{ file.uploaderName }}</b>
-                  <small v-if="file.uploaderUsername && file.uploaderUsername !== file.uploaderName">@{{ file.uploaderUsername }}</small>
+                  <div class="storage-cell-stack">
+                    <b>{{ file.uploaderName }}</b>
+                    <small v-if="file.uploaderUsername && file.uploaderUsername !== file.uploaderName">@{{ file.uploaderUsername }}</small>
+                  </div>
                 </td>
-                <td>{{ formatBytes(file.size) }}</td>
-                <td class="storage-time">{{ file.uploadedAt }}<small v-if="file.modifiedAt !== file.uploadedAt">修改 {{ file.modifiedAt }}</small></td>
+                <td class="storage-size">{{ formatBytes(file.size) }}</td>
+                <td class="storage-time">
+                  <div class="storage-cell-stack">
+                    <span>{{ formatFileTime(file.uploadedAt) }}</span>
+                    <small v-if="file.modifiedAt !== file.uploadedAt">修改 {{ formatFileTime(file.modifiedAt) }}</small>
+                  </div>
+                </td>
                 <td>
                   <a class="btn-text" :href="file.url" target="_blank" rel="noopener noreferrer">打开</a>
                   <button class="btn-text" type="button" @click="copyUrl(file)">复制</button>

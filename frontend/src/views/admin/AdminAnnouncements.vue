@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import http from '../../api'
 import { toast } from '../../state'
 import MarkdownBody from '../../components/MarkdownBody.vue'
+import AiThinking from '../../components/AiThinking.vue'
 
 const form = reactive({ title: '站点公告', content: '', link: '', enabled: false })
 const config = ref({})
@@ -72,6 +73,11 @@ function openAi() {
   }
   if (!aiIdea.value.trim()) aiIdea.value = form.content.trim()
   aiOpen.value = true
+}
+
+function closeAnnAi() {
+  if (aiLoading.value) return
+  aiOpen.value = false
 }
 
 async function generate() {
@@ -224,35 +230,43 @@ onMounted(load)
 
     <input ref="fileInput" type="file" accept="image/*" hidden @change="uploadImage" />
 
-    <div v-if="aiOpen" class="adm-modal-wrap" @click.self="!aiLoading && (aiOpen = false)">
+    <div v-if="aiOpen" class="adm-modal-wrap" @click.self="closeAnnAi">
       <div class="adm-modal ann-ai-modal">
         <div class="adm-modal-head">
           <div><span class="adm-card-kicker">AI ANNOUNCEMENT</span><h3>AI 生成公告</h3></div>
-          <button class="adm-icon-btn" type="button" :disabled="aiLoading" @click="aiOpen = false">×</button>
+          <button class="adm-icon-btn" type="button" :disabled="aiLoading" @click="closeAnnAi">×</button>
         </div>
         <div class="adm-modal-body">
-          <div class="field">
-            <label>公告要点</label>
-            <textarea v-model="aiIdea" rows="4" placeholder="例如：本周六晚 22:00–23:00 迁移服务器，期间可能短暂无法访问；评论审核会延迟。"></textarea>
-          </div>
-          <div class="field">
-            <label>语气</label>
-            <select v-model="aiTone">
-              <option value="natural">自然、友好</option>
-              <option value="brief">极简，一两句话</option>
-              <option value="serious">正式、克制</option>
-              <option value="festival">轻松、有节日气氛</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>本次提示词 <span class="meta">可编辑，仅本次生效</span></label>
-            <textarea v-model="aiPrompt" rows="3" placeholder="留空使用站点设置中的默认提示词"></textarea>
-          </div>
-          <div class="ann-tip">生成结果会覆盖左侧公告正文；保存并勾选“前台展示”后才真正上线。</div>
+          <AiThinking
+            v-if="aiLoading"
+            title="AI 正在起草公告"
+            :steps="['读取公告要点与语气', '判断需要保留的关键信息', '控制篇幅与表达方式', '生成公告正文']"
+            note="生成完成后会写入左侧公告正文，弹窗不会提前关闭。"
+          />
+          <template v-else>
+            <div class="field">
+              <label>公告要点</label>
+              <textarea v-model="aiIdea" rows="4" placeholder="例如：本周六晚 22:00–23:00 迁移服务器，期间可能短暂无法访问；评论审核会延迟。"></textarea>
+            </div>
+            <div class="field">
+              <label>语气</label>
+              <select v-model="aiTone">
+                <option value="natural">自然、友好</option>
+                <option value="brief">极简，一两句话</option>
+                <option value="serious">正式、克制</option>
+                <option value="festival">轻松、有节日气氛</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>本次提示词 <span class="meta">可编辑，仅本次生效</span></label>
+              <textarea v-model="aiPrompt" rows="3" placeholder="留空使用站点设置中的默认提示词"></textarea>
+            </div>
+            <div class="ann-tip">生成结果会覆盖左侧公告正文；保存并勾选“前台展示”后才真正上线。</div>
+          </template>
         </div>
         <div class="adm-modal-foot">
-          <button class="btn btn-ghost btn-sm" type="button" :disabled="aiLoading" @click="aiOpen = false">取消</button>
-          <button class="btn btn-sm" type="button" :disabled="aiLoading" @click="generate">{{ aiLoading ? '生成中…' : '生成公告' }}</button>
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="aiLoading" @click="closeAnnAi">取消</button>
+          <button class="btn btn-sm" type="button" :disabled="aiLoading" @click="generate">{{ aiLoading ? '思考中…' : '生成公告' }}</button>
         </div>
       </div>
     </div>
@@ -490,4 +504,36 @@ onMounted(load)
   .ann-preview { min-height: 260px; }
   .ann-studio-foot { flex-direction: column; align-items: flex-start; }
 }
+
+[data-theme="dark"] .ann-status-pill.on {
+  border-color: rgba(18, 168, 102, .28);
+  background: rgba(18, 168, 102, .09);
+  color: #7ee2b3;
+}
+
+[data-theme="dark"] .ann-status-pill.on::before {
+  background: #42d392;
+  box-shadow: 0 0 0 3px rgba(66, 211, 146, .12);
+}
+
+[data-theme="dark"] .ai-btn {
+  border-color: rgba(96, 165, 250, .26);
+  background: rgba(37, 99, 235, .12);
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .ann-toggle-card.on {
+  border-color: rgba(18, 168, 102, .3);
+  background: rgba(18, 168, 102, .07);
+}
+
+[data-theme="dark"] .ann-ai-card.ok {
+  border-color: rgba(18, 168, 102, .28);
+  background: rgba(18, 168, 102, .07);
+}
+
+[data-theme="dark"] .ann-ai-card.ok .ann-ai-mark {
+  color: #7ee2b3;
+}
+
 </style>

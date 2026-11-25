@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import http from '../../api'
 import { toast } from '../../state'
 import { formatDateTime } from '../../utils'
+import AiThinking from '../../components/AiThinking.vue'
 
 const route = useRoute()
 const activeTab = computed(() => String(route.query.tab || 'all'))
@@ -116,6 +117,16 @@ function openAiReview(comment) {
   aiReviewTarget.value = comment
   aiReviewPrompt.value = aiReviewPrompt.value || defaultPrompts.review
   aiReviewPromptOpen.value = true
+}
+
+function closeCommentReviewPrompt() {
+  if (aiReviewLoading.value) return
+  aiReviewPromptOpen.value = false
+}
+
+function closeCommentSummaryPrompt() {
+  if (summaryLoading.value) return
+  summaryPromptOpen.value = false
 }
 
 async function reviewWithAi(comment) {
@@ -370,36 +381,49 @@ onMounted(() => {
       </div>
     </section>
 
-    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="aiReviewPromptOpen = false">
+    <div v-if="aiReviewPromptOpen" class="adm-modal-wrap" @click.self="closeCommentReviewPrompt">
       <div class="adm-modal is-wide">
         <div class="adm-modal-head">
           <div><span class="adm-card-kicker">AI COMMENT</span><h2>AI 审核评论</h2><p class="meta">提示词默认读取站点设置，本次修改只影响这次审核。</p></div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="aiReviewPromptOpen = false">×</button>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="aiReviewLoading" @click="closeCommentReviewPrompt">×</button>
         </div>
-        <div class="field">
+        <AiThinking
+          v-if="aiReviewLoading"
+          tone="amber"
+          title="AI 正在审核评论"
+          :steps="['读取评论与上下文', '检查广告、攻击与隐私风险', '判断是否适合公开展示', '整理审核结论']"
+          note="审核结果返回后才会打开结果面板，弹窗会保持思考状态。"
+        />
+        <div v-else class="field">
           <label for="commentReviewPrompt">审核提示词</label>
           <textarea id="commentReviewPrompt" v-model="aiReviewPrompt" maxlength="4000" style="min-height: 150px"></textarea>
         </div>
         <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" :disabled="aiReviewLoading" @click="aiReviewPromptOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="aiReviewLoading" @click="reviewWithAi(aiReviewTarget)">{{ aiReviewLoading ? '审核中…' : '开始审核' }}</button>
+          <button class="btn btn-ghost" type="button" :disabled="aiReviewLoading" @click="closeCommentReviewPrompt">取消</button>
+          <button class="btn" type="button" :disabled="aiReviewLoading" @click="reviewWithAi(aiReviewTarget)">{{ aiReviewLoading ? '思考中…' : '开始审核' }}</button>
         </div>
       </div>
     </div>
 
-    <div v-if="summaryPromptOpen" class="adm-modal-wrap" @click.self="summaryPromptOpen = false">
+    <div v-if="summaryPromptOpen" class="adm-modal-wrap" @click.self="closeCommentSummaryPrompt">
       <div class="adm-modal is-wide">
         <div class="adm-modal-head">
           <div><span class="adm-card-kicker">AI COMMENT</span><h2>AI 总结评论</h2><p class="meta">提示词默认读取站点设置。生成结果会保存到《{{ summaryTarget?.postTitle }}》并展示在文章评论区上方。</p></div>
-          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="summaryPromptOpen = false">×</button>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" :disabled="summaryLoading" @click="closeCommentSummaryPrompt">×</button>
         </div>
-        <div class="field">
+        <AiThinking
+          v-if="summaryLoading"
+          title="AI 正在总结评论"
+          :steps="['读取文章下的评论', '归纳主要观点与争议', '提炼共识与待回应问题', '生成评论区摘要']"
+          note="总结结果会自动保存到文章，返回后会打开结果面板。"
+        />
+        <div v-else class="field">
           <label for="commentSummaryPrompt">总结提示词</label>
           <textarea id="commentSummaryPrompt" v-model="summaryPrompt" maxlength="4000" style="min-height: 150px"></textarea>
         </div>
         <div class="adm-modal-actions">
-          <button class="btn btn-ghost" type="button" :disabled="summaryLoading" @click="summaryPromptOpen = false">取消</button>
-          <button class="btn" type="button" :disabled="summaryLoading" @click="summarizePost(summaryTarget)">{{ summaryLoading ? '生成中…' : '生成并保存' }}</button>
+          <button class="btn btn-ghost" type="button" :disabled="summaryLoading" @click="closeCommentSummaryPrompt">取消</button>
+          <button class="btn" type="button" :disabled="summaryLoading" @click="summarizePost(summaryTarget)">{{ summaryLoading ? '思考中…' : '生成并保存' }}</button>
         </div>
       </div>
     </div>

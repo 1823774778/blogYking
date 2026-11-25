@@ -54,7 +54,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/captcha", "/api/auth/register", "/api/auth/login", "/api/auth/logout",
                                 "/api/auth/email-code", "/api/auth/forgot-password", "/api/auth/reset-password",
-                                "/api/meta/**", "/api/system/**", "/api/setup/**").permitAll()
+                                "/api/meta/**", "/api/system/**", "/api/setup/**", "/api/music/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/comments/**",
                                 "/api/notifications/**", "/api/tags/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/posts/*/ai-overview").permitAll()

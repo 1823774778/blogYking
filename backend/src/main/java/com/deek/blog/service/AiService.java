@@ -200,7 +200,8 @@ public class AiService {
         }
         Map<String, String> config = requireConfig();
         requireFeature(config, "aiArticleEnabled", "AI 文章");
-        String systemPrompt = resolvePrompt(config, "aiArticleGeneratePrompt", customPrompt);
+        String systemPrompt = resolvePrompt(config, "aiArticleGeneratePrompt", customPrompt)
+                + "\n\n配图要求：不要编造图片 URL 或本地文件路径；用户没有提供图片时，不要在正文生成 Markdown 图片语法。";
         String lengthHint = switch (length == null ? "" : length) {
             case "short" -> "600-900 字";
             case "long" -> "2000-3000 字";
