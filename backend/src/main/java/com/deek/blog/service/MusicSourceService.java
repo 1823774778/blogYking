@@ -18,6 +18,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -40,8 +42,11 @@ public class MusicSourceService {
     private static final String USER_AGENT = "Mozilla/5.0 (compatible; DeekBlog/1.18; +https://github.com/1823774778/blogYking)";
     private static final int MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
     private static final int MAX_SEARCH_LIMIT = 30;
+    private static final int MAX_CHART_LIMIT = 30;
     private static final long RUNTIME_TTL_MILLIS = 30 * 60 * 1000L;
     private static final long SEARCH_TTL_MILLIS = 2 * 60 * 1000L;
+    private static final long CHART_TTL_MILLIS = 10 * 60 * 1000L;
+    private static final String CHART_FALLBACK_QUERY = "热门";
     private static final Set<String> QUALITIES = Set.of("128k", "320k", "flac");
     private static final Map<String, String> PLATFORM_LABELS = Map.of(
             "wy", "网易音乐",
@@ -61,8 +66,10 @@ public class MusicSourceService {
     private final HttpClient client;
     private final Map<String, RuntimeEntry> runtimes = new ConcurrentHashMap<>();
     private final Map<String, SearchEntry> searches = new HashMap<>();
+    private final Map<String, ChartEntry> charts = new HashMap<>();
     private final Object runtimeLock = new Object();
     private final Object searchLock = new Object();
+    private final Object chartLock = new Object();
 
     public MusicSourceService(SiteConfigService siteConfigService, ObjectMapper objectMapper) {
         this.siteConfigService = siteConfigService;
@@ -215,6 +222,266 @@ public class MusicSourceService {
         return data;
     }
 
+    /**
+     * 各平台热歌榜。网易云、QQ、酷狗使用平台公开榜单；酷我和咪咕缺少稳定公开榜单接口，
+     * 使用平台热门搜索兜底，并在响应中明确标记 fallback。
+     */
+    public Map<String, Object> charts(String platform, int limit) {
+        String code = String.valueOf(platform == null ? "" : platform).trim().toLowerCase(Locale.ROOT);
+        if (code.isBlank()) code = "wy";
+        if (!PLATFORM_LABELS.containsKey(code)) throw new BizException("不支持的平台");
+
+        int size = Math.max(1, Math.min(MAX_CHART_LIMIT, limit));
+        String cacheKey = code + ":" + size;
+        synchronized (chartLock) {
+            ChartEntry entry = charts.get(cacheKey);
+            if (entry != null && System.currentTimeMillis() - entry.createdAt < CHART_TTL_MILLIS) {
+                return entry.data;
+            }
+        }
+
+        String sourceUrl = requireSourceUrl();
+        LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        if (!runtime.platforms().containsKey(code)) {
+            throw new BizException(PLATFORM_LABELS.get(code) + "未包含在当前导入的音源中");
+        }
+
+        List<Map<String, Object>> tracks;
+        boolean fallback = false;
+        String chartTitle;
+        try {
+            switch (code) {
+                case "tx" -> {
+                    tracks = chartQq(size);
+                    chartTitle = "QQ 音乐热歌榜";
+                }
+                case "kg" -> {
+                    tracks = chartKugou(size);
+                    chartTitle = "酷狗音乐 TOP500";
+                }
+                case "kw" -> {
+                    tracks = chartKuwo(size);
+                    chartTitle = "酷我音乐热歌";
+                    fallback = true;
+                }
+                case "mg" -> {
+                    tracks = chartMigu(size);
+                    chartTitle = "咪咕音乐热歌";
+                    fallback = true;
+                }
+                default -> {
+                    tracks = chartNetease(size);
+                    chartTitle = "网易云音乐热歌榜";
+                }
+            }
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("获取平台热歌榜失败 platform={}: {}", code, e.toString());
+            throw new BizException("暂时无法获取" + PLATFORM_LABELS.get(code) + "热歌榜，请稍后重试");
+        }
+        if (tracks.isEmpty()) {
+            throw new BizException(PLATFORM_LABELS.get(code) + "暂时没有返回可用的热歌数据");
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("platform", code);
+        data.put("platformLabel", PLATFORM_LABELS.get(code));
+        data.put("chartTitle", chartTitle);
+        data.put("fallback", fallback);
+        data.put("updatedAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        data.put("total", tracks.size());
+        data.put("tracks", tracks);
+        synchronized (chartLock) {
+            if (charts.size() > 40) charts.clear();
+            charts.put(cacheKey, new ChartEntry(System.currentTimeMillis(), data));
+        }
+        return data;
+    }
+
+    private List<Map<String, Object>> chartNetease(int size) throws Exception {
+        JsonNode root = getJson("https://music.163.com/api/v6/playlist/detail?id=3778678&n=30&s=0");
+        JsonNode playlist = root.path("result").isObject() ? root.path("result") : root.path("playlist");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : playlist.path("tracks")) {
+            if (tracks.size() >= size) break;
+            String id = song.path("id").asText("").trim();
+            if (id.isBlank()) continue;
+            JsonNode artists = song.path("artists").isArray() ? song.path("artists") : song.path("ar");
+            JsonNode album = song.path("album").isObject() ? song.path("album") : song.path("al");
+            long durationMs = song.path("duration").asLong(song.path("dt").asLong(0));
+            tracks.add(chartTrack(
+                    "wy", id,
+                    song.path("name").asText("未命名歌曲"),
+                    joinArtists(artists),
+                    album.path("name").asText(""),
+                    album.path("picUrl").asText(""),
+                    durationMs / 1000,
+                    song.path("fee").asInt(0),
+                    "https://music.163.com/#/song?id=" + id
+            ));
+        }
+        return tracks;
+    }
+
+    private List<Map<String, Object>> chartQq(int size) throws Exception {
+        String url = "https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg?topid=26&format=json"
+                + "&page=detail&type=top&song_begin=0&song_num=" + size + "&platform=yqq.json";
+        JsonNode root = getJsonRaw(url, "https://y.qq.com/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode item : root.path("songlist")) {
+            JsonNode song = item.path("data");
+            String id = song.path("songmid").asText("").trim();
+            if (id.isBlank()) continue;
+            String albumMid = song.path("albummid").asText("");
+            String cover = albumMid.isBlank() ? "" : "https://y.gtimg.cn/music/photo_new/T002R300x300M000" + albumMid + ".jpg";
+            tracks.add(chartTrack(
+                    "tx", id,
+                    song.path("songname").asText("未命名歌曲"),
+                    joinArtists(song.path("singer")),
+                    song.path("albumname").asText(""),
+                    cover,
+                    song.path("interval").asLong(0),
+                    song.path("pay").path("payplay").asInt(0),
+                    "https://y.qq.com/n/ryqq/songDetail/" + id
+            ));
+        }
+        return tracks;
+    }
+
+    private List<Map<String, Object>> chartKugou(int size) throws Exception {
+        String url = "https://mobiles.kugou.com/api/v3/rank/song?rankid=8888&page=1&pagesize="
+                + size + "&plat=0&version=8000";
+        JsonNode root = getJsonRaw(url, "https://www.kugou.com/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : root.path("data").path("info")) {
+            String id = song.path("hash").asText("").trim();
+            if (id.isBlank()) continue;
+            tracks.add(chartTrack(
+                    "kg", id,
+                    song.path("songname").asText("未命名歌曲"),
+                    joinArtists(song.path("authors")),
+                    "",
+                    "",
+                    song.path("duration").asLong(0),
+                    song.path("pay_type").asInt(0),
+                    "https://www.kugou.com/song/#hash=" + id
+            ));
+        }
+        return tracks;
+    }
+
+    private List<Map<String, Object>> chartKuwo(int size) throws Exception {
+        String url = "https://search.kuwo.cn/r.s?client=kt&all="
+                + URLEncoder.encode("热歌", StandardCharsets.UTF_8)
+                + "&pn=0&rn=" + size
+                + "&uid=0&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1"
+                + "&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1";
+        JsonNode root = getJsonRaw(url, "https://www.kuwo.cn/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : root.path("abslist")) {
+            String rawId = song.path("MUSICRID").asText("").trim();
+            if (rawId.isBlank()) continue;
+            String id = rawId.replaceFirst("^MUSIC_", "");
+            String cover = "";
+            String shortCover = song.path("web_albumpic_short").asText("");
+            if (!shortCover.isBlank()) cover = "https://img1.kuwo.cn/star/albumcover/" + shortCover;
+            tracks.add(chartTrack(
+                    "kw", id,
+                    cleanKuwoText(song.path("SONGNAME").asText("未命名歌曲")),
+                    cleanKuwoText(song.path("ARTIST").asText("未知歌手")),
+                    cleanKuwoText(song.path("ALBUM").asText("")),
+                    cover,
+                    song.path("DURATION").asLong(0),
+                    song.path("PAY").asInt(0) > 0 ? 1 : 0,
+                    "https://www.kuwo.cn/play_detail/" + id
+            ));
+        }
+        return tracks;
+    }
+
+    private List<Map<String, Object>> chartMigu(int size) throws Exception {
+        String url = "https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/search_all.do"
+                + "?text=" + URLEncoder.encode(CHART_FALLBACK_QUERY, StandardCharsets.UTF_8)
+                + "&pageNo=1&pageSize=30&searchSwitch="
+                + URLEncoder.encode("{\"song\":1}", StandardCharsets.UTF_8);
+        JsonNode root = getJsonRaw(url, "https://music.migu.cn/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : root.path("songResultData").path("result")) {
+            if (tracks.size() >= size) break;
+            String title = song.path("name").asText("").trim();
+            String artist = joinArtists(song.path("singers"));
+            if (title.isBlank() || isMiguFiller(title, artist)) continue;
+            String id = song.path("copyrightId").asText("").trim();
+            if (id.isBlank()) id = song.path("contentId").asText("").trim();
+            if (id.isBlank()) continue;
+            String cover = "";
+            for (JsonNode image : song.path("imgItems")) {
+                if ("03".equals(image.path("imgSizeType").asText())) {
+                    cover = image.path("img").asText("");
+                    break;
+                }
+            }
+            if (cover.isBlank() && song.path("imgItems").size() > 0) {
+                cover = song.path("imgItems").path(0).path("img").asText("");
+            }
+            tracks.add(chartTrack(
+                    "mg", id,
+                    title,
+                    artist.isBlank() ? "未知歌手" : artist,
+                    song.path("albums").path(0).path("name").asText(""),
+                    cover,
+                    0,
+                    song.path("vipType").asInt(0),
+                    "https://music.migu.cn/v3/music/song/" + id
+            ));
+        }
+        return tracks;
+    }
+
+    private boolean isMiguFiller(String title, String artist) {
+        String text = title + " " + artist;
+        return text.contains("热歌榜") || text.contains("串烧") || text.contains("钢琴曲")
+                || text.contains("伴奏") || text.contains("纯享") || text.contains("DJ")
+                || text.contains("热歌推荐") || text.contains("热门歌曲");
+    }
+
+    private String cleanKuwoText(String value) {
+        String text = String.valueOf(value == null ? "" : value).trim();
+        return text.replaceAll("-《[^》]*》[^ ]*主题曲", "")
+                .replaceAll("-《[^》]*》[^ ]*片尾曲", "")
+                .replaceAll("-《[^》]*》[^ ]*插曲", "")
+                .trim();
+    }
+
+    private String joinArtists(JsonNode nodes) {
+        List<String> names = new ArrayList<>();
+        for (JsonNode node : nodes) {
+            String name = node.path("name").asText("");
+            if (name.isBlank()) name = node.path("author_name").asText("");
+            if (!name.isBlank()) names.add(name);
+        }
+        return names.isEmpty() ? "未知歌手" : String.join(" / ", names);
+    }
+
+    private Map<String, Object> chartTrack(String source, String id, String title, String artist,
+                                           String album, String cover, long duration, int fee,
+                                           String pageUrl) {
+        Map<String, Object> track = new LinkedHashMap<>();
+        track.put("id", id);
+        track.put("source", source);
+        track.put("platform", source);
+        track.put("title", title);
+        track.put("artist", artist);
+        track.put("album", album);
+        track.put("cover", secureUrl(cover));
+        track.put("duration", Math.max(0, duration));
+        track.put("fee", Math.max(0, fee));
+        track.put("vip", fee > 0);
+        track.put("pageUrl", pageUrl);
+        return track;
+    }
+
     private Map<String, Object> describe(LxSourceRuntime runtime, String url) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("url", url);
@@ -323,10 +590,22 @@ public class MusicSourceService {
     }
 
     private JsonNode getJson(String url) throws IOException, InterruptedException {
+        return getJson(url, "https://music.163.com/");
+    }
+
+    private JsonNode getJson(String url, String referer) throws IOException, InterruptedException {
+        JsonNode root = getJsonRaw(url, referer);
+        if (root.path("code").asInt(200) != 200) {
+            throw new IOException("API code " + root.path("code").asInt());
+        }
+        return root;
+    }
+
+    private JsonNode getJsonRaw(String url, String referer) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(12))
                 .header("User-Agent", USER_AGENT)
-                .header("Referer", "https://music.163.com/")
+                .header("Referer", referer)
                 .header("Accept", "application/json")
                 .GET()
                 .build();
@@ -334,11 +613,7 @@ public class MusicSourceService {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IOException("HTTP " + response.statusCode());
         }
-        JsonNode root = objectMapper.readTree(response.body());
-        if (root.path("code").asInt(200) != 200) {
-            throw new IOException("API code " + root.path("code").asInt());
-        }
-        return root;
+        return objectMapper.readTree(response.body());
     }
 
     private String requireSourceUrl() {
@@ -479,5 +754,8 @@ public class MusicSourceService {
     }
 
     private record SearchEntry(long createdAt, Map<String, Object> data) {
+    }
+
+    private record ChartEntry(long createdAt, Map<String, Object> data) {
     }
 }

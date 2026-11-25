@@ -93,7 +93,6 @@ public final class LxSourceRuntime implements AutoCloseable {
                 .allowCreateThread(false)
                 .allowCreateProcess(false)
                 .allowNativeAccess(false)
-                .option("engine.WarnInterpreterOnly", "false")
                 .build();
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(8))
@@ -104,9 +103,9 @@ public final class LxSourceRuntime implements AutoCloseable {
         try {
             bindHost(context, objectMapper, client, meta, platforms, alert);
             context.eval("js", rawScript);
-        } catch (RuntimeException e) {
+        } catch (Exception | LinkageError e) {
             closeQuietly(context);
-            throw new IllegalArgumentException("音源初始化失败：" + shortMessage(e), e);
+            throw new IllegalArgumentException("音源初始化失败：" + rootMessage(e), e);
         }
         if (platforms.isEmpty()) {
             closeQuietly(context);
@@ -457,6 +456,14 @@ public final class LxSourceRuntime implements AutoCloseable {
             }
         }
         return URI.create(base + "?" + builder);
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        String message = root.getMessage();
+        if (message == null || message.isBlank()) message = root.getClass().getSimpleName();
+        return message.length() > 240 ? message.substring(0, 240) : message;
     }
 
     private static String shortMessage(Throwable error) {

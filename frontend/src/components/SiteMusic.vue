@@ -11,6 +11,17 @@ const MODES = [
 ]
 const SUGGESTIONS = ['晴天', '起风了', '慢慢喜欢你', '后来', '夜曲', '稻香', '孤勇者', '光年之外']
 const STORAGE_KEY = 'deek.music.player.v1'
+const PANEL_POS_KEY = 'deek.music.panel.pos.v1'
+const FAB_OFFSET_KEY = 'deek.music.fab.offset.v1'
+const PLATFORM_META = {
+  wy: { label: '网易云', color: '#d33a3a' },
+  tx: { label: 'QQ', color: '#1f9f5f' },
+  kw: { label: '酷我', color: '#2c6df6' },
+  kg: { label: '酷狗', color: '#2b8cf0' },
+  mg: { label: '咪咕', color: '#e0538b' }
+}
+const CHART_PLATFORM_ORDER = ['wy', 'tx', 'kg', 'kw', 'mg']
+const CHART_TTL_MILLIS = 10 * 60 * 1000
 
 const audio = ref(null)
 const panelOpen = ref(false)
@@ -28,23 +39,59 @@ const searchResults = ref([])
 const searchLoading = ref(false)
 const searchError = ref('')
 const searchFocused = ref(false)
-const view = ref('queue')
+const view = ref('charts')
+const activePlatform = ref('wy')
+const chartData = ref({})
+const chartLoadedAt = ref({})
+const chartLoading = ref(false)
+const chartError = ref('')
+const chartSeq = ref(0)
+const panelPos = ref(null)
+const panelDragging = ref(false)
+const fabOffset = ref({ x: 0, y: 0 })
+const fabDragging = ref(false)
+const fabMoved = ref(false)
+const compactViewport = ref(false)
 const searchInput = ref(null)
+const chartBody = ref(null)
 const fab = ref(null)
 let searchTimer = null
 let searchSeq = 0
 let playSeq = 0
+let panelDrag = null
+let fabDrag = null
+let fabMoveTimer = null
 
 const sourceUrl = computed(() => String(state.site.musicSourceUrl || '').trim())
 const sourceName = computed(() => String(state.site.musicSourceName || 'LX 音源').trim())
 const sourceVersion = computed(() => String(state.site.musicSourceVersion || '').trim())
-const sourcePlatforms = computed(() => {
-  const labels = { wy: '网易云', tx: 'QQ', kw: '酷我', kg: '酷狗', mg: '咪咕' }
-  return String(state.site.musicSourcePlatforms || '')
-    .split(',')
-    .map((code) => code.trim())
-    .filter(Boolean)
-    .map((code) => labels[code] || code)
+const sourcePlatformCodes = computed(() => String(state.site.musicSourcePlatforms || '')
+  .split(',')
+  .map((code) => code.trim())
+  .filter(Boolean))
+const sourcePlatforms = computed(() => sourcePlatformCodes.value
+  .map((code) => PLATFORM_META[code]?.label || code))
+const chartPlatforms = computed(() => {
+  const available = sourcePlatformCodes.value.length ? sourcePlatformCodes.value : ['wy']
+  const ordered = CHART_PLATFORM_ORDER.filter((code) => available.includes(code))
+  const rest = available.filter((code) => !CHART_PLATFORM_ORDER.includes(code))
+  return [...ordered, ...rest].map((code) => ({
+    code,
+    label: PLATFORM_META[code]?.label || code,
+    color: PLATFORM_META[code]?.color || 'var(--accent)'
+  }))
+})
+const activeChart = computed(() => chartData.value[activePlatform.value] || null)
+const activeChartTracks = computed(() => Array.isArray(activeChart.value?.tracks) ? activeChart.value.tracks : [])
+const activePlatformLabel = computed(() => PLATFORM_META[activePlatform.value]?.label || activePlatform.value)
+const panelStyle = computed(() => {
+  if (!panelPos.value || compactViewport.value) return {}
+  return { left: `${panelPos.value.left}px`, top: `${panelPos.value.top}px`, right: 'auto', bottom: 'auto' }
+})
+const fabStyle = computed(() => {
+  const offset = fabOffset.value
+  if (!offset || (!offset.x && !offset.y)) return {}
+  return { transform: `translate(${offset.x}px, ${offset.y}px)` }
 })
 const sourceQualities = computed(() => String(state.site.musicSourceQualities || '128k,320k,flac')
   .split(',')
@@ -148,10 +195,9 @@ function apiErrorMessage(error, fallback) {
 function togglePanel() {
   panelOpen.value = !panelOpen.value
   if (panelOpen.value) {
-    if (!queue.value.length) view.value = 'search'
-    nextTick(() => {
-      if (!queue.value.length) searchInput.value?.focus()
-    })
+    view.value = 'charts'
+    resetChartScroll()
+    ensureCharts(activePlatform.value)
   } else {
     nextTick(() => fab.value?.focus())
   }
@@ -160,6 +206,286 @@ function togglePanel() {
 function closePanel() {
   panelOpen.value = false
   nextTick(() => fab.value?.focus())
+}
+
+function resetChartScroll() {
+  nextTick(() => {
+    if (chartBody.value) chartBody.value.scrollTop = 0
+  })
+}
+
+function showChartsView() {
+  view.value = 'charts'
+  resetChartScroll()
+  ensureCharts(activePlatform.value)
+}
+
+function preferredPlatform() {
+  const codes = sourcePlatformCodes.value
+  if (codes.includes('wy')) return 'wy'
+  return codes[0] || 'wy'
+}
+
+function ensureCharts(code = activePlatform.value) {
+  activePlatform.value = code
+  const cached = chartData.value[code]
+  const loadedAt = Number(chartLoadedAt.value[code] || 0)
+  if (cached && Date.now() - loadedAt < CHART_TTL_MILLIS) {
+    chartSeq.value += 1
+    chartLoading.value = false
+    chartError.value = ''
+    resetChartScroll()
+    return
+  }
+  loadCharts(code)
+}
+
+async function loadCharts(code = activePlatform.value, force = false) {
+  const platform = String(code || '').trim()
+  if (!platform) return
+  activePlatform.value = platform
+  if (!force && chartData.value[platform]
+      && Date.now() - Number(chartLoadedAt.value[platform] || 0) < CHART_TTL_MILLIS) {
+    return
+  }
+  const seq = ++chartSeq.value
+  chartLoading.value = true
+  chartError.value = ''
+  try {
+    const res = await http.get('/music/charts', {
+      params: { platform, limit: 20 },
+      timeout: 30000
+    })
+    if (seq !== chartSeq.value) return
+    const payload = res.data && typeof res.data === 'object' ? res.data : null
+    if (!payload) throw new Error('榜单数据为空')
+    chartData.value = { ...chartData.value, [platform]: payload }
+    chartLoadedAt.value = { ...chartLoadedAt.value, [platform]: Date.now() }
+    resetChartScroll()
+  } catch (e) {
+    if (seq !== chartSeq.value || platform !== activePlatform.value) return
+    chartError.value = apiErrorMessage(e, '热歌榜暂时不可用，请稍后重试')
+  } finally {
+    if (seq === chartSeq.value) chartLoading.value = false
+  }
+}
+
+function switchPlatform(code) {
+  if (code === activePlatform.value && activeChart.value) return
+  resetChartScroll()
+  ensureCharts(code)
+}
+
+function refreshChart() {
+  resetChartScroll()
+  loadCharts(activePlatform.value, true)
+}
+
+function addTrackToQueue(track) {
+  const source = track.source || 'wy'
+  const existingIndex = queue.value.findIndex((item) => item.id === String(track.id) && (item.source || 'wy') === source)
+  if (existingIndex >= 0) return existingIndex
+  queue.value.push({
+    ...track,
+    id: String(track.id),
+    source,
+    url: '',
+    urlError: '',
+    urlLoading: false
+  })
+  return queue.value.length - 1
+}
+
+function selectChartTrack(track) {
+  const index = addTrackToQueue(track)
+  view.value = 'queue'
+  playIndex(index, true)
+}
+
+function playChartAll() {
+  if (!activeChartTracks.value.length) return
+  let firstIndex = -1
+  for (const track of activeChartTracks.value) {
+    const index = addTrackToQueue(track)
+    if (firstIndex < 0) firstIndex = index
+  }
+  if (firstIndex < 0) return
+  view.value = 'queue'
+  playIndex(firstIndex, true)
+}
+
+function loadLayoutState() {
+  try {
+    const panel = JSON.parse(localStorage.getItem(PANEL_POS_KEY) || 'null')
+    if (panel && Number.isFinite(Number(panel.left)) && Number.isFinite(Number(panel.top))) {
+      panelPos.value = { left: Number(panel.left), top: Number(panel.top) }
+    }
+  } catch (e) {
+    /* 本地布局状态损坏时使用默认位置 */
+  }
+  try {
+    const offset = JSON.parse(localStorage.getItem(FAB_OFFSET_KEY) || 'null')
+    if (offset && Number.isFinite(Number(offset.x)) && Number.isFinite(Number(offset.y))) {
+      fabOffset.value = { x: Number(offset.x), y: Number(offset.y) }
+    }
+  } catch (e) {
+    /* 本地布局状态损坏时使用默认位置 */
+  }
+}
+
+function persistPanelPos() {
+  try {
+    if (panelPos.value) localStorage.setItem(PANEL_POS_KEY, JSON.stringify(panelPos.value))
+    else localStorage.removeItem(PANEL_POS_KEY)
+  } catch (e) {
+    /* 隐私模式下 localStorage 可能不可用 */
+  }
+}
+
+function persistFabOffset() {
+  try {
+    localStorage.setItem(FAB_OFFSET_KEY, JSON.stringify(fabOffset.value))
+  } catch (e) {
+    /* 隐私模式下 localStorage 可能不可用 */
+  }
+}
+
+function clampPanelPosition(left, top, width, height) {
+  const margin = 8
+  const maxLeft = Math.max(margin, window.innerWidth - width - margin)
+  const maxTop = Math.max(margin, window.innerHeight - height - margin)
+  return {
+    left: Math.min(maxLeft, Math.max(margin, left)),
+    top: Math.min(maxTop, Math.max(margin, top))
+  }
+}
+
+function beginPanelDrag(event) {
+  if (compactViewport.value) return
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (event.target.closest('button, input, a, textarea, select')) return
+  const panel = event.currentTarget.closest('.sm-panel')
+  if (!panel) return
+  const rect = panel.getBoundingClientRect()
+  panelPos.value = { left: rect.left, top: rect.top }
+  panelDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height
+  }
+  panelDragging.value = true
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+  window.addEventListener('pointermove', onPanelDragMove)
+  window.addEventListener('pointerup', endPanelDrag, { once: true })
+  window.addEventListener('pointercancel', endPanelDrag, { once: true })
+  event.preventDefault()
+}
+
+function onPanelDragMove(event) {
+  if (!panelDrag) return
+  const next = clampPanelPosition(
+    panelDrag.left + event.clientX - panelDrag.startX,
+    panelDrag.top + event.clientY - panelDrag.startY,
+    panelDrag.width,
+    panelDrag.height
+  )
+  panelPos.value = next
+}
+
+function endPanelDrag() {
+  if (!panelDrag) return
+  panelDrag = null
+  panelDragging.value = false
+  window.removeEventListener('pointermove', onPanelDragMove)
+  window.removeEventListener('pointerup', endPanelDrag)
+  window.removeEventListener('pointercancel', endPanelDrag)
+  persistPanelPos()
+}
+
+function beginFabDrag(event) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  const element = event.currentTarget
+  const rect = element.getBoundingClientRect()
+  fabDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: fabOffset.value.x,
+    offsetY: fabOffset.value.y,
+    rectLeft: rect.left - fabOffset.value.x,
+    rectTop: rect.top - fabOffset.value.y,
+    width: rect.width,
+    height: rect.height
+  }
+  fabDragging.value = true
+  element.setPointerCapture?.(event.pointerId)
+  window.addEventListener('pointermove', onFabDragMove)
+  window.addEventListener('pointerup', endFabDrag, { once: true })
+  window.addEventListener('pointercancel', endFabDrag, { once: true })
+}
+
+function onFabDragMove(event) {
+  if (!fabDrag) return
+  const dx = event.clientX - fabDrag.startX
+  const dy = event.clientY - fabDrag.startY
+  if (!fabMoved.value && Math.abs(dx) + Math.abs(dy) > 4) fabMoved.value = true
+  if (!fabMoved.value) return
+  const margin = 8
+  const minX = margin - fabDrag.rectLeft
+  const maxX = window.innerWidth - margin - fabDrag.rectLeft - fabDrag.width
+  const minY = margin - fabDrag.rectTop
+  const maxY = window.innerHeight - margin - fabDrag.rectTop - fabDrag.height
+  fabOffset.value = {
+    x: Math.min(maxX, Math.max(minX, fabDrag.offsetX + dx)),
+    y: Math.min(maxY, Math.max(minY, fabDrag.offsetY + dy))
+  }
+}
+
+function endFabDrag() {
+  if (!fabDrag) return
+  fabDrag = null
+  fabDragging.value = false
+  window.removeEventListener('pointermove', onFabDragMove)
+  window.removeEventListener('pointerup', endFabDrag)
+  window.removeEventListener('pointercancel', endFabDrag)
+  if (fabMoved.value) {
+    persistFabOffset()
+    if (fabMoveTimer) clearTimeout(fabMoveTimer)
+    fabMoveTimer = setTimeout(() => { fabMoved.value = false }, 260)
+  }
+}
+
+function onFabClick() {
+  if (fabMoved.value) return
+  togglePanel()
+}
+
+function onViewportResize() {
+  compactViewport.value = window.innerWidth <= 920
+  if (!compactViewport.value && panelPos.value) {
+    const panel = document.querySelector('.sm-panel')
+    const rect = panel?.getBoundingClientRect()
+    if (rect) panelPos.value = clampPanelPosition(panelPos.value.left, panelPos.value.top, rect.width, rect.height)
+  }
+  if (fabOffset.value.x || fabOffset.value.y) {
+    const element = fab.value
+    if (element) {
+      const rect = element.getBoundingClientRect()
+      const baseLeft = rect.left - fabOffset.value.x
+      const baseTop = rect.top - fabOffset.value.y
+      const margin = 8
+      fabOffset.value = {
+        x: Math.min(window.innerWidth - margin - baseLeft - rect.width,
+          Math.max(margin - baseLeft, fabOffset.value.x)),
+        y: Math.min(window.innerHeight - margin - baseTop - rect.height,
+          Math.max(margin - baseTop, fabOffset.value.y))
+      }
+    }
+  }
 }
 
 function setSearchKeyword(value) {
@@ -252,20 +578,38 @@ async function resolveAndPlay(track, autoplay = true) {
   }
   playing.value = false
   try {
-    const res = await http.get('/music/url', {
-      params: {
-        id: track.id,
-        source: track.source || 'wy',
-        quality: resolveQuality.value
-      },
-      timeout: 30000
-    })
+    const requested = resolveQuality.value
+    const qualities = requested === '128k' ? ['128k'] : [requested, '128k']
+    let lastError = new Error('播放地址为空')
+    let resolvedUrl = ''
+    let resolvedQuality = requested
+    for (const quality of qualities) {
+      try {
+        const res = await http.get('/music/url', {
+          params: {
+            id: track.id,
+            source: track.source || 'wy',
+            quality
+          },
+          timeout: 30000
+        })
+        if (seq !== playSeq) return
+        const url = res.data?.url
+        if (url) {
+          resolvedUrl = url
+          resolvedQuality = res.data?.quality || quality
+          break
+        }
+        lastError = new Error('播放地址为空')
+      } catch (e) {
+        lastError = e
+      }
+    }
     if (seq !== playSeq) return
+    if (!resolvedUrl) throw lastError
     if (currentIndex.value < 0 || queue.value[currentIndex.value]?.id !== track.id) return
-    const url = res.data?.url
-    if (!url) throw new Error('播放地址为空')
-    track.url = url
-    track.quality = res.data?.quality || resolveQuality.value
+    track.url = resolvedUrl
+    track.quality = resolvedQuality
     track.urlLoading = false
     loadingTrack.value = false
     await nextTick()
@@ -456,20 +800,29 @@ function onVisibilityChange() {
 
 onMounted(() => {
   loadPersistedState()
+  loadLayoutState()
+  compactViewport.value = window.innerWidth <= 920
+  activePlatform.value = preferredPlatform()
   if (audio.value) {
     audio.value.volume = volume.value
     audio.value.muted = muted.value
   }
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('resize', onViewportResize)
 })
 
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
+  if (fabMoveTimer) clearTimeout(fabMoveTimer)
   searchSeq += 1
   playSeq += 1
+  chartSeq.value += 1
+  endPanelDrag()
+  endFabDrag()
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('resize', onViewportResize)
   audio.value?.pause()
 })
 </script>
@@ -490,10 +843,12 @@ onBeforeUnmount(() => {
     ></audio>
 
     <transition name="sm-panel">
-      <aside v-if="panelOpen" class="sm-panel" aria-label="站点音乐播放器">
-        <header class="sm-head">
+      <aside v-if="panelOpen" class="sm-panel" :class="{ dragging: panelDragging }" :style="panelStyle" aria-label="站点音乐播放器">
+        <header class="sm-head" title="按住空白处可拖动播放器" @pointerdown="beginPanelDrag">
           <div class="sm-brand">
-            <span class="sm-brand-mark">♪</span>
+            <span class="sm-brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="4" cy="4" r="1.1" /><circle cx="8" cy="4" r="1.1" /><circle cx="12" cy="4" r="1.1" /><circle cx="4" cy="8" r="1.1" /><circle cx="8" cy="8" r="1.1" /><circle cx="12" cy="8" r="1.1" /><circle cx="4" cy="12" r="1.1" /><circle cx="8" cy="12" r="1.1" /><circle cx="12" cy="12" r="1.1" /></svg>
+            </span>
             <div>
               <strong>站点音乐</strong>
               <small>{{ sourceName }}<template v-if="sourceVersion"> · v{{ sourceVersion }}</template></small>
@@ -533,13 +888,91 @@ onBeforeUnmount(() => {
         </div>
 
         <nav class="sm-tabs" aria-label="播放器视图">
+          <button type="button" :class="{ on: view === 'charts' }" @click="showChartsView">热歌榜</button>
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
             播放列表 <em>{{ queue.length }}</em>
           </button>
           <button type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
         </nav>
 
-        <div v-if="view === 'queue'" class="sm-body sm-queue-body">
+        <div v-if="view === 'charts'" ref="chartBody" class="sm-body sm-chart-body">
+          <div class="sm-platform-tabs" role="tablist" aria-label="热歌榜平台">
+            <button
+              v-for="platform in chartPlatforms"
+              :key="platform.code"
+              type="button"
+              role="tab"
+              :aria-selected="activePlatform === platform.code"
+              :class="{ on: activePlatform === platform.code }"
+              @click="switchPlatform(platform.code)"
+            >
+              <i :style="{ background: platform.color }" aria-hidden="true"></i>{{ platform.label }}
+            </button>
+          </div>
+
+          <div class="sm-chart-head">
+            <div>
+              <span class="sm-chart-kicker">{{ activePlatformLabel }} · HOT</span>
+              <strong>{{ activeChart?.chartTitle || activePlatformLabel + '热歌榜' }}</strong>
+              <small v-if="activeChart?.fallback">平台热门推荐 · 点击歌曲加入队列</small>
+              <small v-else>每日更新 · 点击歌曲加入队列</small>
+            </div>
+            <div class="sm-chart-actions">
+              <button type="button" class="sm-text-btn" :disabled="chartLoading" @click="refreshChart">刷新</button>
+              <button v-if="activeChartTracks.length" type="button" class="sm-chart-playall" @click="playChartAll">
+                播放全部
+              </button>
+            </div>
+          </div>
+
+          <div v-if="chartLoading" class="sm-search-loading">
+            <span class="sm-spinner" aria-hidden="true"></span>
+            <p>正在加载{{ activePlatformLabel }}热歌榜…</p>
+          </div>
+
+          <div v-else-if="chartError" class="sm-search-error">
+            <span>!</span>
+            <div>
+              <strong>榜单暂时不可用</strong>
+              <p>{{ chartError }}</p>
+            </div>
+            <button type="button" class="sm-text-btn" @click="refreshChart">重试</button>
+          </div>
+
+          <div v-else-if="activeChartTracks.length" class="sm-chart-list" role="list" :aria-label="activePlatformLabel + '热歌榜'">
+            <button
+              v-for="(track, index) in activeChartTracks"
+              :key="track.source + '-' + track.id + '-' + index"
+              type="button"
+              class="sm-chart-row"
+              role="listitem"
+              @click="selectChartTrack(track)"
+            >
+              <span class="sm-chart-rank" :class="{ top: index < 3 }">{{ index + 1 }}</span>
+              <span class="sm-chart-cover" :class="{ image: track.cover }">
+                <img v-if="track.cover" :src="track.cover" alt="" referrerpolicy="no-referrer" loading="lazy" @error="$event.target.style.display = 'none'" />
+                <template v-else>{{ coverLetter(track) }}</template>
+              </span>
+              <span class="sm-chart-copy">
+                <strong>{{ track.title }}</strong>
+                <small>{{ track.artist }}<template v-if="track.album"> · {{ track.album }}</template></small>
+              </span>
+              <span v-if="track.fee > 0" class="sm-vip">VIP</span>
+              <span v-else class="sm-chart-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
+              <span class="sm-chart-play" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+              </span>
+            </button>
+          </div>
+
+          <div v-else class="sm-empty sm-chart-empty">
+            <span class="sm-empty-orb">♪</span>
+            <strong>暂无榜单数据</strong>
+            <p>换一个平台，或稍后刷新试试。</p>
+          </div>
+        </div>
+
+        <div v-else-if="view === 'queue'" class="sm-body sm-queue-body">
           <div v-if="currentTrack" class="sm-now">
             <div class="sm-now-cover">
               <img v-if="currentTrack.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
@@ -729,9 +1162,12 @@ onBeforeUnmount(() => {
         ref="fab"
         type="button"
         class="sm-fab"
+        :class="{ dragging: fabDragging }"
+        :style="fabStyle"
         :aria-label="panelOpen ? '收起播放器' : '打开站点音乐'"
-        :title="panelOpen ? '收起播放器（音乐继续播放）' : '打开站点音乐'"
-        @click="togglePanel"
+        :title="panelOpen ? '收起播放器（音乐继续播放）' : '打开站点音乐，按住可拖动'"
+        @pointerdown="beginFabDrag"
+        @click="onFabClick"
       >
         <span class="sm-fab-art">
           <img v-if="currentTrack?.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" />
@@ -758,6 +1194,9 @@ onBeforeUnmount(() => {
 }
 
 .sm-panel {
+  position: fixed;
+  right: 22px;
+  bottom: 90px;
   display: flex;
   flex-direction: column;
   width: 392px;
@@ -771,6 +1210,7 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(26px);
   pointer-events: auto;
 }
+.sm-panel.dragging { box-shadow: 0 34px 96px rgba(14, 35, 30, .3), inset 0 1px 0 rgba(255, 255, 255, .7); }
 
 .sm-head {
   display: flex;
@@ -778,7 +1218,11 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 14px 15px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
+.sm-panel.dragging .sm-head { cursor: grabbing; }
 
 .sm-brand {
   display: flex;
@@ -800,6 +1244,7 @@ onBeforeUnmount(() => {
   font-weight: 800;
   box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 24%, transparent);
 }
+.sm-brand-mark svg { width: 15px; height: 15px; opacity: .92; }
 .sm-brand > div { display: grid; gap: 2px; min-width: 0; }
 .sm-brand strong { color: var(--ink); font-size: 14px; letter-spacing: .01em; }
 .sm-brand small { overflow: hidden; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
@@ -885,6 +1330,90 @@ onBeforeUnmount(() => {
 }
 .sm-tabs button.on { background: var(--paper); color: var(--ink); box-shadow: 0 3px 10px rgba(17, 24, 39, .06); }
 .sm-tabs em { color: var(--accent-ink); font-size: 9px; font-style: normal; }
+
+.sm-chart-body { display: flex; flex-direction: column; gap: 9px; }
+.sm-platform-tabs, .sm-chart-head, .sm-chart-list, .sm-chart-empty { flex: 0 0 auto; }
+.sm-platform-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 1px 0 3px;
+  scrollbar-width: none;
+}
+.sm-platform-tabs::-webkit-scrollbar { display: none; }
+.sm-platform-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 90%, transparent);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+.sm-platform-tabs button:hover { border-color: var(--accent); color: var(--ink); }
+.sm-platform-tabs button.on {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
+  color: var(--ink);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.sm-platform-tabs button i { width: 6px; height: 6px; border-radius: 50%; opacity: .82; }
+.sm-platform-tabs button.on i { opacity: 1; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); }
+
+.sm-chart-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
+.sm-chart-head > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.sm-chart-kicker { color: var(--accent-ink); font-size: 8px; font-weight: 800; letter-spacing: .13em; }
+.sm-chart-head strong { overflow: hidden; color: var(--ink); font-size: 16px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.sm-chart-head small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-chart-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.sm-chart-actions .sm-text-btn:disabled { opacity: .45; cursor: default; text-decoration: none; }
+.sm-chart-playall {
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+  color: var(--accent-ink);
+  font-size: 9.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sm-chart-playall:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.sm-chart-list { display: flex; flex-direction: column; gap: 1px; padding-bottom: 3px; }
+.sm-chart-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.sm-chart-row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.sm-chart-row:hover .sm-chart-play { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sm-chart-rank { width: 18px; flex: 0 0 18px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: center; }
+.sm-chart-rank.top { color: var(--accent-ink); }
+.sm-chart-cover { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; overflow: hidden; border-radius: 9px; background: color-mix(in srgb, var(--accent) 12%, var(--paper)); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
+.sm-chart-cover.image { background: var(--paper); }
+.sm-chart-cover img { width: 100%; height: 100%; object-fit: cover; }
+.sm-chart-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.sm-chart-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sm-chart-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-chart-duration { flex: 0 0 auto; color: var(--muted); font-size: 8.5px; font-variant-numeric: tabular-nums; }
+.sm-chart-play { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
+.sm-chart-play svg { width: 13px; height: 13px; }
+.sm-chart-empty { padding-top: 20px; }
 
 .sm-body { min-height: 0; flex: 1; overflow-y: auto; padding: 12px 15px 4px; scrollbar-width: thin; }
 .sm-queue-body { display: flex; flex-direction: column; gap: 11px; }
@@ -1017,8 +1546,10 @@ onBeforeUnmount(() => {
 .sm-mini-play svg { width: 13px; height: 13px; }
 .sm-mini-eq { display: none; }
 
-.sm-fab { position: relative; display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 54px; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 50%; background: color-mix(in srgb, var(--paper) 88%, transparent); box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); backdrop-filter: blur(18px); cursor: pointer; pointer-events: auto; touch-action: manipulation; }
+.sm-fab { position: relative; display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 54px; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 50%; background: color-mix(in srgb, var(--paper) 88%, transparent); box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); backdrop-filter: blur(18px); cursor: grab; pointer-events: auto; touch-action: none; user-select: none; }
+.sm-fab.dragging { cursor: grabbing; transition: none; }
 .sm-fab:hover { transform: translateY(-3px) scale(1.03); border-color: var(--accent); box-shadow: 0 16px 36px rgba(20, 45, 40, .22), 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent); }
+.sm-fab.dragging:hover { transform: none; box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); }
 .sm-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .sm-fab-art { display: grid; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent)); color: #fff; font-size: 17px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
 .sm-fab-art img { width: 100%; height: 100%; object-fit: cover; }

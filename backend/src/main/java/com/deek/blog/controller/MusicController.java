@@ -39,6 +39,12 @@ public class MusicController {
         return ApiResponse.ok(musicSourceService.search(keyword, limit));
     }
 
+    @GetMapping("/charts")
+    public ApiResponse<Map<String, Object>> charts(@RequestParam(name = "platform", defaultValue = "wy") String platform,
+                                                   @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        return ApiResponse.ok(musicSourceService.charts(platform, limit));
+    }
+
     @GetMapping("/url")
     public ApiResponse<Map<String, Object>> url(@RequestParam(name = "id") String id,
                                                 @RequestParam(name = "source", defaultValue = "wy") String source,
