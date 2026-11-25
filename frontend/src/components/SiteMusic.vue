@@ -13,6 +13,13 @@ const SUGGESTIONS = ['晴天', '起风了', '慢慢喜欢你', '后来', '夜曲
 const STORAGE_KEY = 'deek.music.player.v1'
 const FAB_OFFSET_KEY = 'deek.music.fab.offset.v1'
 const CHART_TTL_MILLIS = 10 * 60 * 1000
+const FALLBACK_PLATFORM_LABELS = {
+  wy: '网易音乐',
+  tx: 'QQ 音乐',
+  kw: '酷我音乐',
+  kg: '酷狗音乐',
+  mg: '咪咕音乐'
+}
 
 function platformColor(code) {
   let hash = 0
@@ -44,7 +51,9 @@ const chartLoading = ref(false)
 const chartError = ref('')
 const chartSeq = ref(0)
 const sourceDetails = ref([])
+const sourceMeta = ref({})
 const sourceDetailsLoaded = ref(false)
+const sourceDetailsLoading = ref(false)
 const localTracks = ref([])
 const localLoading = ref(false)
 const localError = ref('')
@@ -65,6 +74,7 @@ let fabMoveTimer = null
 let fabHoverTimer = null
 let fabFocusTimer = null
 let platformInitialized = false
+let sourceDetailsSeq = 0
 
 const sourceUrl = computed(() => String(state.site.musicSourceUrl || '').trim())
 const hasSource = computed(() => Boolean(sourceUrl.value))
@@ -107,7 +117,7 @@ const sourcePlatforms = computed(() => {
       }).filter(Boolean)
     : sourcePlatformCodes.value.map((code) => ({
         code,
-        label: code.toUpperCase(),
+        label: FALLBACK_PLATFORM_LABELS[code] || code.toUpperCase(),
         actions: [],
         qualities: [],
         canPlay: true,
@@ -172,19 +182,35 @@ const fabStyle = computed(() => {
   if (!offset || (!offset.x && !offset.y)) return {}
   return { transform: `translate(${offset.x}px, ${offset.y}px)` }
 })
-const sourceQualities = computed(() => String(state.site.musicSourceQualities || '128k,320k,flac')
-  .split(',')
-  .map((item) => item.trim())
-  .filter(Boolean))
+const sourceQualities = computed(() => {
+  const fromSource = Array.isArray(sourceMeta.value?.qualities) ? sourceMeta.value.qualities : []
+  const qualities = fromSource.length ? fromSource : String(state.site.musicSourceQualities || '128k,320k,flac').split(',')
+  return qualities
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item, index, list) => list.indexOf(item) === index)
+})
+const qualityText = (quality) => {
+  const value = String(quality || '').trim()
+  const labels = { '128k': '128K', '320k': '320K', 'flac': 'FLAC', 'flac24': 'FLAC 24' }
+  return labels[value.toLowerCase()] || value.toUpperCase()
+}
+const sourceQualityText = computed(() => sourceQualities.value.map(qualityText).join(' · '))
 const resolveQuality = computed(() => sourceQualities.value.includes('320k') ? '320k' : (sourceQualities.value[0] || '128k'))
 const showPlayer = computed(() =>
   state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
 )
 const headerSourceLabel = computed(() => {
-  if (sourceActive.value && sourcePlatforms.value.length) return sourcePlatforms.value.map((platform) => platform.label).join(' · ')
+  if (sourceActive.value && sourcePlatforms.value.length) {
+    if (sourcePlatforms.value.length <= 2) return sourcePlatforms.value.map((platform) => platform.label).join(' · ')
+    return `${sourcePlatforms.value.length} 个平台`
+  }
   if (sourceActive.value && hasSource.value) return sourceName.value
   return localCount.value ? `本地音乐 ${localCount.value}` : '站点音乐'
 })
+const headerSourceTitle = computed(() => sourceActive.value
+  ? sourcePlatforms.value.map((platform) => platform.label).join(' · ')
+  : '')
 const footerSourceLabel = computed(() => {
   if (sourceActive.value) return sourceName.value + (sourceVersion.value ? ` v${sourceVersion.value}` : '')
   return localCount.value ? `本地音乐 · ${localCount.value} 首` : '站点音乐'
@@ -306,16 +332,26 @@ watch(sourcePlatformCodes, reconcileAvailableView)
 watch(sourceDetails, reconcileAvailableView, { deep: true })
 watch(sourceUrl, () => {
   platformInitialized = false
+  chartSeq.value += 1
+  chartData.value = {}
+  chartLoading.value = false
+  chartError.value = ''
+  sourceDetailsSeq += 1
   sourceDetails.value = []
+  sourceMeta.value = {}
   sourceDetailsLoaded.value = false
+  sourceDetailsLoading.value = false
   loadSourceCapabilities()
   reconcileAvailableView()
 })
 watch(contentMode, (mode) => {
   if (mode === 'source') loadSourceCapabilities()
   else {
+    sourceDetailsSeq += 1
     sourceDetails.value = []
+    sourceMeta.value = {}
     sourceDetailsLoaded.value = false
+    sourceDetailsLoading.value = false
   }
 })
 
@@ -334,18 +370,29 @@ function defaultView() {
 
 async function loadSourceCapabilities() {
   if (!sourceActive.value) {
+    sourceDetailsSeq += 1
     sourceDetails.value = []
+    sourceMeta.value = {}
     sourceDetailsLoaded.value = false
+    sourceDetailsLoading.value = false
     return
   }
+  const seq = ++sourceDetailsSeq
+  sourceDetailsLoading.value = true
   try {
     const res = await http.get('/music/platforms', { timeout: 20000 })
-    sourceDetails.value = Array.isArray(res.data?.platforms) ? res.data.platforms : []
+    if (seq !== sourceDetailsSeq) return
+    sourceMeta.value = res.data?.source && typeof res.data.source === 'object' ? res.data.source : {}
     sourceDetailsLoaded.value = true
+    sourceDetails.value = Array.isArray(res.data?.platforms) ? res.data.platforms : []
   } catch (e) {
+    if (seq !== sourceDetailsSeq) return
     // 接口不可用时保留已有平台代码兜底，不凭空补平台。
+    sourceMeta.value = {}
     sourceDetails.value = []
     sourceDetailsLoaded.value = false
+  } finally {
+    if (seq === sourceDetailsSeq) sourceDetailsLoading.value = false
   }
 }
 
@@ -1136,13 +1183,20 @@ onBeforeUnmount(() => {
               <small>{{ sourceActive ? sourceName + (sourceVersion ? ' · v' + sourceVersion : '') : '本地音乐' + (localCount ? ' · ' + localCount + ' 首' : '') }}</small>
             </div>
           </div>
-          <span class="sm-source-pill" :title="sourcePlatforms.map((platform) => platform.label).join(' / ')">
+          <span class="sm-source-pill" :title="headerSourceTitle || headerSourceLabel">
             {{ headerSourceLabel }}
           </span>
           <button type="button" class="sm-icon-btn sm-close" aria-label="收起播放器" @click="closePanel">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 9 6 6 6-6" /></svg>
           </button>
         </header>
+
+        <div v-if="sourceActive && (sourceQualityText || sourceDetailsLoading || sourceMeta.initAlert)" class="sm-source-meta">
+          <span v-if="sourceQualityText" class="sm-source-chip">音质 {{ sourceQualityText }}</span>
+          <span v-if="sourceDetailsLoading" class="sm-source-chip muted">读取音源能力…</span>
+          <span v-if="sourceMeta.initAlert" class="sm-source-chip warn">音源提示</span>
+        </div>
+        <p v-if="sourceActive && sourceMeta.initAlert" class="sm-source-alert">{{ sourceMeta.initAlert }}</p>
 
         <div v-if="hasSearch" class="sm-search">
           <span class="sm-search-icon" aria-hidden="true">
@@ -1245,9 +1299,10 @@ onBeforeUnmount(() => {
               role="tab"
               :aria-selected="activePlatform === platform.code"
               :class="{ on: activePlatform === platform.code }"
+              :title="platform.label"
               @click="switchPlatform(platform.code)"
             >
-              <i :style="{ background: platform.color }" aria-hidden="true"></i>{{ platform.label }}
+              <i :style="{ background: platform.color }" aria-hidden="true"></i><span>{{ platform.label }}</span>
             </button>
           </div>
 
@@ -1598,6 +1653,46 @@ onBeforeUnmount(() => {
 .sm-icon-btn:hover { color: var(--ink); border-color: var(--accent); }
 .sm-close svg { width: 17px; height: 17px; }
 
+.sm-source-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 15px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sm-source-meta::-webkit-scrollbar { display: none; }
+.sm-source-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--paper));
+  color: var(--muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.sm-source-chip.muted { opacity: .72; }
+.sm-source-chip.warn {
+  border-color: color-mix(in srgb, #b7791f 28%, var(--line));
+  background: color-mix(in srgb, #b7791f 8%, var(--paper));
+  color: #946215;
+}
+[data-theme="dark"] .sm-source-chip.warn { color: #e4b45f; }
+.sm-source-alert {
+  margin: 6px 15px 0;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, #b7791f 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #b7791f 6%, var(--paper));
+  color: #8a5b12;
+  font-size: 10px;
+  line-height: 1.5;
+}
+[data-theme="dark"] .sm-source-alert { color: #e4b45f; }
+
 .sm-search {
   display: flex;
   align-items: center;
@@ -1657,19 +1752,18 @@ onBeforeUnmount(() => {
 .sm-chart-body { display: flex; flex-direction: column; gap: 9px; }
 .sm-platform-tabs, .sm-chart-head, .sm-chart-list, .sm-chart-empty { flex: 0 0 auto; }
 .sm-platform-tabs {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 5px;
   padding: 1px 0 3px;
-  scrollbar-width: none;
 }
-.sm-platform-tabs::-webkit-scrollbar { display: none; }
 .sm-platform-tabs button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  flex: 0 0 auto;
-  padding: 6px 10px;
+  min-width: 0;
+  padding: 6px 8px;
   border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--paper) 90%, transparent);
@@ -1686,7 +1780,8 @@ onBeforeUnmount(() => {
   color: var(--ink);
   box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.sm-platform-tabs button i { width: 6px; height: 6px; border-radius: 50%; opacity: .82; }
+.sm-platform-tabs button i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; opacity: .82; }
+.sm-platform-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sm-platform-tabs button.on i { opacity: 1; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); }
 
 .sm-chart-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
@@ -1916,7 +2011,9 @@ onBeforeUnmount(() => {
 @media (max-width: 520px) {
   .sm-panel { left: 0; right: 0; bottom: 0; max-height: calc(100dvh - 10px); border-radius: 18px 18px 0 0; }
   .sm-head { padding: 12px 13px 10px; }
-  .sm-source-pill { max-width: 90px; }
+  .sm-source-pill { max-width: 94px; }
+  .sm-source-meta { margin: 7px 13px 0; }
+  .sm-foot { padding-bottom: calc(11px + env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab.playing .sm-fab-art, .sm-fab.playing .sm-fab-ring { animation: none; }

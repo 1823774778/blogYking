@@ -1121,6 +1121,74 @@ samp {
   to { transform: rotate(360deg); }
 }
 
+.ota-primary-action.is-checking,
+.ota-primary-action.is-checking:disabled {
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+.ota-primary-action.is-checking {
+  min-width: 150px;
+  color: #fff;
+  border-color: color-mix(in srgb, var(--adm-accent) 72%, #0a2b66);
+  background: var(--adm-accent) !important;
+  background-image: none !important;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--adm-accent) 22%, transparent) !important;
+  cursor: progress;
+}
+
+.ota-primary-action.is-checking::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(105deg, transparent 18%, rgba(255, 255, 255, 0.46) 48%, transparent 78%);
+  transform: translateX(-120%);
+  animation: ota-check-sheen 1.6s ease-in-out infinite;
+}
+
+[data-theme="dark"] .ota-primary-action.is-checking::before {
+  background: linear-gradient(105deg, transparent 18%, rgba(145, 190, 255, 0.22) 48%, transparent 78%);
+}
+
+.ota-btn-checking {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ota-check-spinner {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.ota-check-spinner svg {
+  width: 13px;
+  height: 13px;
+  animation: ota-check-rotate 1s linear infinite;
+}
+
+@keyframes ota-check-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ota-check-sheen {
+  0% { transform: translateX(-120%); }
+  70%, 100% { transform: translateX(120%); }
+}
+
 .ota-local-progress {
   border-radius: 10px;
   border-color: color-mix(in srgb, var(--adm-accent) 28%, var(--adm-line));
@@ -1281,7 +1349,9 @@ samp {
 
 @media (prefers-reduced-motion: reduce) {
   .ota-btn-progress::after,
-  .ota-btn-spinner {
+  .ota-btn-spinner,
+  .ota-primary-action.is-checking::before,
+  .ota-check-spinner svg {
     animation: none;
   }
 }

@@ -138,6 +138,8 @@ public class MusicSourceService {
         List<Map<String, Object>> platforms = new ArrayList<>();
         List<String> chartCodes = new ArrayList<>();
         List<String> searchCodes = new ArrayList<>();
+        List<String> allQualities = new ArrayList<>();
+        List<String> allActions = new ArrayList<>();
         boolean runtimeLoaded = false;
         String message = "";
         if (configured) {
@@ -164,6 +166,12 @@ public class MusicSourceService {
                     item.put("charts", charts);
                     item.put("search", search);
                     platforms.add(item);
+                    for (String quality : new ArrayList<>(info.qualities())) {
+                        if (!quality.isBlank() && !allQualities.contains(quality)) allQualities.add(quality);
+                    }
+                    for (String action : actions) {
+                        if (!action.isBlank() && !allActions.contains(action)) allActions.add(action);
+                    }
                     if (charts) chartCodes.add(code);
                     if (search) searchCodes.add(code);
                 }
@@ -189,14 +197,42 @@ public class MusicSourceService {
                 item.put("charts", charts);
                 item.put("search", search);
                 platforms.add(item);
+                for (String quality : split(cfg.getOrDefault("musicSourceQualities", ""))) {
+                    if (!allQualities.contains(quality)) allQualities.add(quality);
+                }
+                if (!allActions.contains("musicUrl")) allActions.add("musicUrl");
                 if (charts) chartCodes.add(normalized);
                 if (search) searchCodes.add(normalized);
             }
         }
+        Map<String, Object> source = new LinkedHashMap<>();
+        source.put("name", cfg.getOrDefault("musicSourceName", ""));
+        source.put("version", cfg.getOrDefault("musicSourceVersion", ""));
+        source.put("description", cfg.getOrDefault("musicSourceDescription", ""));
+        source.put("author", cfg.getOrDefault("musicSourceAuthor", ""));
+        source.put("homepage", cfg.getOrDefault("musicSourceHomepage", ""));
+        source.put("initAlert", "");
+        if (runtimeLoaded) {
+            Map<String, Object> described = describe(loadRuntime(url, false), url);
+            source.put("name", described.getOrDefault("name", source.get("name")));
+            source.put("version", described.getOrDefault("version", source.get("version")));
+            source.put("description", described.getOrDefault("description", source.get("description")));
+            source.put("author", described.getOrDefault("author", source.get("author")));
+            source.put("homepage", described.getOrDefault("homepage", source.get("homepage")));
+            source.put("initAlert", described.getOrDefault("initAlert", ""));
+        }
+        source.put("platformCount", platforms.size());
+        source.put("chartCount", chartCodes.size());
+        source.put("searchCount", searchCodes.size());
+        source.put("qualities", allQualities);
+        source.put("actions", allActions);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("configured", configured);
-        data.put("sourceName", cfg.getOrDefault("musicSourceName", ""));
-        data.put("sourceVersion", cfg.getOrDefault("musicSourceVersion", ""));
+        data.put("sourceName", source.get("name"));
+        data.put("sourceVersion", source.get("version"));
+        data.put("source", source);
+        data.put("qualities", allQualities);
+        data.put("actions", allActions);
         data.put("platforms", platforms);
         data.put("chartPlatforms", chartCodes);
         data.put("searchPlatforms", searchCodes);

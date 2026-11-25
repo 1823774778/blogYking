@@ -46,18 +46,21 @@ const pendingIsRollback = computed(() => {
   if (downloadJob.value?.mode === 'ROLLBACK') return true
   return compareVersions(ota.value.pending.version, ota.value.version) < 0
 })
+const isChecking = computed(() =>
+  releasesLoading.value && !releases.value?.updateAvailable && !ota.value?.pending
+)
 const primaryLabel = computed(() => {
   if (otaApplying.value) return '正在安装…'
   if (downloadStarting.value) return '开始下载…'
   if (jobRunning.value) return ''
   if (ota.value?.pending) return `安装 v${ota.value.pending.version}`
-  if (releasesLoading.value && !releases.value) return '检查更新中…'
+  if (isChecking.value) return '检查更新中…'
   if (releases.value?.updateAvailable) return '下载安装'
-  if (!releasesLoading.value && !releases.value?.latest) return '重新检查'
+  if (!releases.value?.latest) return '重新检查'
   return '检查更新'
 })
 const primaryDisabled = computed(() =>
-  otaApplying.value || jobRunning.value || downloadStarting.value || (releasesLoading.value && !releases.value)
+  otaApplying.value || jobRunning.value || downloadStarting.value || isChecking.value
 )
 const proxyConfigured = computed(() => Boolean(String(config.value.otaDownloadProxyPrefix || '').trim()))
 const versionSourceLabel = computed(() => ({
@@ -114,7 +117,7 @@ function toggleLatestContent() {
 }
 
 async function primaryAction() {
-  if (primaryDisabled.value) return
+  if (primaryDisabled.value || isChecking.value) return
   if (ota.value?.pending) {
     await applyOta()
     return
@@ -529,9 +532,10 @@ onBeforeUnmount(() => {
         </button>
         <button
           class="btn ota-primary-action"
-          :class="{ 'is-downloading': jobRunning || downloadStarting, 'is-idle': !releases?.updateAvailable && !ota?.pending }"
+          :class="{ 'is-downloading': jobRunning || downloadStarting, 'is-checking': isChecking, 'is-idle': !releases?.updateAvailable && !ota?.pending && !isChecking }"
           type="button"
           :disabled="primaryDisabled"
+          :aria-busy="isChecking || jobRunning || downloadStarting"
           :aria-label="jobRunning ? `正在下载 ${downloadPercentText}` : (downloadStarting ? '正在准备下载' : primaryLabel)"
           @click="primaryAction"
         >
@@ -549,6 +553,14 @@ onBeforeUnmount(() => {
             <span v-else-if="downloadStarting" class="ota-btn-progress-text">
               <span><i class="ota-btn-spinner" aria-hidden="true"></i>准备下载</span>
               <b>0%</b>
+            </span>
+            <span v-else-if="isChecking" class="ota-btn-checking">
+              <i class="ota-check-spinner" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M20 11a8 8 0 1 0-2.3 6.6M20 4v7h-7" />
+                </svg>
+              </i>
+              <span>{{ primaryLabel }}</span>
             </span>
             <template v-else>
               <svg v-if="!ota?.pending && !releases?.updateAvailable" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
