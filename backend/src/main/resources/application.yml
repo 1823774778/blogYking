@@ -8,6 +8,10 @@ server:
 spring:
   application:
     name: deek-blog
+  mvc:
+    # 音频代理使用流式响应，不能按普通接口的短超时中断长音频
+    async:
+      request-timeout: 1800000
   datasource:
     url: jdbc:h2:file:./data/blog;MODE=MySQL;DB_CLOSE_DELAY=-1
     username: sa

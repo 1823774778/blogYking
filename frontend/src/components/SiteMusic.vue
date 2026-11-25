@@ -11,7 +11,6 @@ const MODES = [
 ]
 const SUGGESTIONS = ['晴天', '起风了', '慢慢喜欢你', '后来', '夜曲', '稻香', '孤勇者', '光年之外']
 const STORAGE_KEY = 'deek.music.player.v1'
-const PANEL_POS_KEY = 'deek.music.panel.pos.v1'
 const FAB_OFFSET_KEY = 'deek.music.fab.offset.v1'
 const PLATFORM_META = {
   wy: { label: '网易云', color: '#d33a3a' },
@@ -20,7 +19,6 @@ const PLATFORM_META = {
   kg: { label: '酷狗', color: '#2b8cf0' },
   mg: { label: '咪咕', color: '#e0538b' }
 }
-const CHART_PLATFORM_ORDER = ['wy', 'tx', 'kg', 'kw', 'mg']
 const CHART_TTL_MILLIS = 10 * 60 * 1000
 
 const audio = ref(null)
@@ -50,8 +48,7 @@ const localTracks = ref([])
 const localLoading = ref(false)
 const localError = ref('')
 const localLoaded = ref(false)
-const panelPos = ref(null)
-const panelDragging = ref(false)
+const panelPlacement = ref(null)
 const fabOffset = ref({ x: 0, y: 0 })
 const fabDragging = ref(false)
 const fabMoved = ref(false)
@@ -62,9 +59,11 @@ const fab = ref(null)
 let searchTimer = null
 let searchSeq = 0
 let playSeq = 0
-let panelDrag = null
 let fabDrag = null
 let fabMoveTimer = null
+let fabHoverTimer = null
+let fabFocusTimer = null
+let platformInitialized = false
 
 const sourceUrl = computed(() => String(state.site.musicSourceUrl || '').trim())
 const hasSource = computed(() => Boolean(sourceUrl.value))
@@ -73,28 +72,64 @@ const sourceVersion = computed(() => String(state.site.musicSourceVersion || '')
 const localCount = computed(() => localTracks.value.length)
 const localEmpty = computed(() => localLoaded.value && !localTracks.value.length && !localLoading.value)
 const localPending = computed(() => localLoading.value || (!localLoaded.value && !localError.value))
-const sourcePlatformCodes = computed(() => String(state.site.musicSourcePlatforms || '')
-  .split(',')
-  .map((code) => code.trim())
-  .filter(Boolean))
-const sourcePlatforms = computed(() => sourcePlatformCodes.value
-  .map((code) => PLATFORM_META[code]?.label || code))
-const chartPlatforms = computed(() => {
-  const available = sourcePlatformCodes.value.length ? sourcePlatformCodes.value : ['wy']
-  const ordered = CHART_PLATFORM_ORDER.filter((code) => available.includes(code))
-  const rest = available.filter((code) => !CHART_PLATFORM_ORDER.includes(code))
-  return [...ordered, ...rest].map((code) => ({
+const sourcePlatformCodes = computed(() => {
+  const seen = new Set()
+  return String(state.site.musicSourcePlatforms || '')
+    .split(',')
+    .map((code) => code.trim().toLowerCase())
+    .filter((code) => {
+      if (!code || seen.has(code)) return false
+      seen.add(code)
+      return true
+    })
+})
+const contentMode = computed(() => String(state.site.musicContentMode || '').trim() === 'local' ? 'local' : 'source')
+const sourceActive = computed(() => hasSource.value && contentMode.value === 'source')
+const localActive = computed(() => contentMode.value === 'local' || !hasSource.value)
+const sourcePlatforms = computed(() => sourcePlatformCodes.value.map((code) => PLATFORM_META[code]?.label || code))
+// 平台顺序完全沿用音源声明。音源没有的平台不臆造，也不再把“热歌榜”写死成唯一内容。
+const chartPlatforms = computed(() => sourcePlatformCodes.value
+  .filter((code) => PLATFORM_META[code])
+  .map((code) => ({
     code,
     label: PLATFORM_META[code]?.label || code,
     color: PLATFORM_META[code]?.color || 'var(--accent)'
-  }))
-})
+  })))
+const hasCharts = computed(() => sourceActive.value && chartPlatforms.value.length > 0)
 const activeChart = computed(() => chartData.value[activePlatform.value] || null)
 const activeChartTracks = computed(() => Array.isArray(activeChart.value?.tracks) ? activeChart.value.tracks : [])
 const activePlatformLabel = computed(() => PLATFORM_META[activePlatform.value]?.label || activePlatform.value)
 const panelStyle = computed(() => {
-  if (!panelPos.value || compactViewport.value) return {}
-  return { left: `${panelPos.value.left}px`, top: `${panelPos.value.top}px`, right: 'auto', bottom: 'auto' }
+  const placement = panelPlacement.value
+  if (!placement) return {}
+  const style = {
+    '--sm-panel-x': placement.compact
+      ? (placement.mobileSide === 'left' ? '-24px' : '24px')
+      : (placement.horizontal === 'left' ? '12px' : '-12px'),
+    '--sm-panel-y': placement.compact ? '14px' : (placement.vertical === 'above' ? '12px' : '-12px'),
+    '--sm-panel-origin': placement.compact
+      ? `${placement.mobileSide === 'left' ? 'left' : 'right'} bottom`
+      : `${placement.horizontal === 'left' ? 'right' : 'left'} ${placement.vertical === 'above' ? 'bottom' : 'top'}`
+  }
+  if (!placement.compact) {
+    style.width = placement.width
+    style.maxHeight = placement.maxHeight
+    if (placement.horizontal === 'left') {
+      style.right = placement.right
+      style.left = 'auto'
+    } else {
+      style.left = placement.left
+      style.right = 'auto'
+    }
+    if (placement.vertical === 'above') {
+      style.bottom = placement.bottom
+      style.top = 'auto'
+    } else {
+      style.top = placement.top
+      style.bottom = 'auto'
+    }
+  }
+  return style
 })
 const fabStyle = computed(() => {
   const offset = fabOffset.value
@@ -110,12 +145,12 @@ const showPlayer = computed(() =>
   state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
 )
 const headerSourceLabel = computed(() => {
-  if (sourcePlatforms.value.length) return sourcePlatforms.value.join(' · ')
-  if (hasSource.value) return sourceName.value
+  if (sourceActive.value && sourcePlatforms.value.length) return sourcePlatforms.value.join(' · ')
+  if (sourceActive.value && hasSource.value) return sourceName.value
   return localCount.value ? `本地音乐 ${localCount.value}` : '站点音乐'
 })
 const footerSourceLabel = computed(() => {
-  if (hasSource.value) return sourceName.value + (sourceVersion.value ? ` v${sourceVersion.value}` : '')
+  if (sourceActive.value) return sourceName.value + (sourceVersion.value ? ` v${sourceVersion.value}` : '')
   return localCount.value ? `本地音乐 · ${localCount.value} 首` : '站点音乐'
 })
 const currentTrack = computed(() => queue.value[currentIndex.value] || null)
@@ -208,28 +243,118 @@ watch(muted, (value) => {
   if (audio.value) audio.value.muted = value
 })
 
+function reconcileAvailableView() {
+  if (chartPlatforms.value.length && !platformInitialized) {
+    // 只展示音源声明的平台；默认选中其中更稳定的解析通道。
+    activePlatform.value = preferredPlatform()
+    platformInitialized = true
+    if (view.value === 'charts') ensureCharts(activePlatform.value)
+  } else if (hasCharts.value && !chartPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
+    activePlatform.value = preferredPlatform()
+  }
+  if (!panelOpen.value) return
+  const allowed = [
+    ...(localActive.value ? ['local'] : []),
+    ...(hasCharts.value ? ['charts'] : []),
+    'queue',
+    ...(sourceActive.value ? ['search'] : [])
+  ]
+  if (allowed.includes(view.value)) return
+  view.value = defaultView()
+  if (view.value === 'charts') ensureCharts(activePlatform.value)
+  else if (view.value === 'local') loadLocalTracks(false)
+}
+
+watch([contentMode, hasSource, hasCharts, localActive], reconcileAvailableView)
+watch(sourcePlatformCodes, reconcileAvailableView)
+
 function apiErrorMessage(error, fallback) {
   return error?.message || fallback
 }
 
-function togglePanel() {
-  panelOpen.value = !panelOpen.value
-  if (panelOpen.value) {
-    view.value = hasSource.value ? 'charts' : 'local'
-    if (hasSource.value) {
-      resetChartScroll()
-      ensureCharts(activePlatform.value)
-    } else {
-      loadLocalTracks()
+function defaultView() {
+  if (sourceActive.value) return hasCharts.value ? 'charts' : 'search'
+  return 'local'
+}
+
+function computePanelPlacement() {
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const margin = 12
+  const gap = 12
+  const compact = viewportWidth <= 920
+  const baseRight = compact ? 12 : 22
+  const baseBottom = compact ? 84 : 22
+  const fallbackRect = {
+    left: viewportWidth - baseRight - 54 + fabOffset.value.x,
+    top: viewportHeight - baseBottom - 54 + fabOffset.value.y,
+    right: viewportWidth - baseRight + fabOffset.value.x,
+    bottom: viewportHeight - baseBottom + fabOffset.value.y,
+    width: 54,
+    height: 54
+  }
+  // 面板展开后悬浮球会隐藏；窗口尺寸变化时用偏移量还原它最后的位置。
+  const rect = fab.value?.getBoundingClientRect() || fallbackRect
+  if (compact) {
+    panelPlacement.value = {
+      compact: true,
+      mobileSide: rect.left + rect.width / 2 < viewportWidth / 2 ? 'left' : 'right'
     }
-  } else {
-    nextTick(() => fab.value?.focus())
+    return
+  }
+  const panelWidth = Math.min(392, viewportWidth - margin * 2)
+  const leftSpace = Math.max(0, rect.left - gap - margin)
+  const rightSpace = Math.max(0, viewportWidth - rect.right - gap - margin)
+  let horizontal = 'left'
+  if (leftSpace >= panelWidth && rightSpace < panelWidth) horizontal = 'left'
+  else if (rightSpace >= panelWidth && leftSpace < panelWidth) horizontal = 'right'
+  else horizontal = leftSpace >= rightSpace ? 'left' : 'right'
+  const availableWidth = horizontal === 'left' ? leftSpace : rightSpace
+  const finalWidth = Math.min(panelWidth, Math.max(260, availableWidth))
+  const topSpace = Math.max(0, rect.top - gap - margin)
+  const bottomSpace = Math.max(0, viewportHeight - rect.bottom - gap - margin)
+  let vertical = rect.top + rect.height / 2 > viewportHeight / 2 ? 'above' : 'below'
+  if (vertical === 'above' && topSpace < 320 && bottomSpace > topSpace) vertical = 'below'
+  if (vertical === 'below' && bottomSpace < 320 && topSpace > bottomSpace) vertical = 'above'
+  const availableHeight = vertical === 'above' ? topSpace : bottomSpace
+  const maxHeight = Math.min(690, Math.max(240, availableHeight))
+  panelPlacement.value = {
+    compact: false,
+    horizontal,
+    vertical,
+    width: `${Math.round(finalWidth)}px`,
+    maxHeight: `${Math.round(maxHeight)}px`,
+    right: horizontal === 'left' ? `${Math.round(viewportWidth - rect.left + gap)}px` : 'auto',
+    left: horizontal === 'right' ? `${Math.round(rect.right + gap)}px` : 'auto',
+    bottom: vertical === 'above' ? `${Math.round(viewportHeight - rect.top + gap)}px` : 'auto',
+    top: vertical === 'below' ? `${Math.round(rect.bottom + gap)}px` : 'auto'
+  }
+}
+
+function openPanel() {
+  if (panelOpen.value) return
+  if (fabFocusTimer) clearTimeout(fabFocusTimer)
+  computePanelPlacement()
+  const target = defaultView()
+  panelOpen.value = true
+  view.value = target
+  if (target === 'charts') {
+    resetChartScroll()
+    ensureCharts(activePlatform.value)
+  } else if (target === 'local') {
+    loadLocalTracks()
   }
 }
 
 function closePanel() {
   panelOpen.value = false
-  nextTick(() => fab.value?.focus())
+  if (fabFocusTimer) clearTimeout(fabFocusTimer)
+  fabFocusTimer = setTimeout(() => fab.value?.focus({ preventScroll: true }), 190)
+}
+
+function togglePanel() {
+  if (panelOpen.value) closePanel()
+  else openPanel()
 }
 
 function resetChartScroll() {
@@ -239,8 +364,13 @@ function resetChartScroll() {
 }
 
 function showChartsView() {
-  if (!hasSource.value) {
-    showLocalView()
+  if (!hasCharts.value) {
+    if (sourceActive.value) {
+      view.value = 'search'
+      nextTick(() => searchInput.value?.focus())
+    } else {
+      showLocalView()
+    }
     return
   }
   view.value = 'charts'
@@ -263,6 +393,13 @@ async function loadLocalTracks(silent = true) {
 }
 
 function showLocalView() {
+  if (!localActive.value) {
+    if (sourceActive.value) {
+      view.value = hasCharts.value ? 'charts' : 'search'
+      if (hasCharts.value) ensureCharts(activePlatform.value)
+    }
+    return
+  }
   view.value = 'local'
   loadLocalTracks(false)
 }
@@ -290,16 +427,20 @@ function playAllLocal() {
 }
 
 function openSearchOrLocal() {
-  if (hasSource.value) {
+  if (sourceActive.value) {
     view.value = 'search'
+    nextTick(() => searchInput.value?.focus())
     return
   }
   showLocalView()
 }
 
 function preferredPlatform() {
-  const codes = sourcePlatformCodes.value
+  const codes = chartPlatforms.value.map((platform) => platform.code)
+  // 音源可能声明了平台但解析通道并不可用。默认优先选择实测最稳定的网易云 / QQ，
+  // 其余平台仍按音源声明展示，由用户主动切换。
   if (codes.includes('wy')) return 'wy'
+  if (codes.includes('tx')) return 'tx'
   return codes[0] || 'wy'
 }
 
@@ -341,13 +482,14 @@ async function loadCharts(code = activePlatform.value, force = false) {
     resetChartScroll()
   } catch (e) {
     if (seq !== chartSeq.value || platform !== activePlatform.value) return
-    chartError.value = apiErrorMessage(e, '热歌榜暂时不可用，请稍后重试')
+    chartError.value = apiErrorMessage(e, '榜单暂时不可用，请稍后重试')
   } finally {
     if (seq === chartSeq.value) chartLoading.value = false
   }
 }
 
 function switchPlatform(code) {
+  platformInitialized = true
   if (code === activePlatform.value && activeChart.value) return
   resetChartScroll()
   ensureCharts(code)
@@ -393,29 +535,12 @@ function playChartAll() {
 
 function loadLayoutState() {
   try {
-    const panel = JSON.parse(localStorage.getItem(PANEL_POS_KEY) || 'null')
-    if (panel && Number.isFinite(Number(panel.left)) && Number.isFinite(Number(panel.top))) {
-      panelPos.value = { left: Number(panel.left), top: Number(panel.top) }
-    }
-  } catch (e) {
-    /* 本地布局状态损坏时使用默认位置 */
-  }
-  try {
     const offset = JSON.parse(localStorage.getItem(FAB_OFFSET_KEY) || 'null')
     if (offset && Number.isFinite(Number(offset.x)) && Number.isFinite(Number(offset.y))) {
       fabOffset.value = { x: Number(offset.x), y: Number(offset.y) }
     }
   } catch (e) {
     /* 本地布局状态损坏时使用默认位置 */
-  }
-}
-
-function persistPanelPos() {
-  try {
-    if (panelPos.value) localStorage.setItem(PANEL_POS_KEY, JSON.stringify(panelPos.value))
-    else localStorage.removeItem(PANEL_POS_KEY)
-  } catch (e) {
-    /* 隐私模式下 localStorage 可能不可用 */
   }
 }
 
@@ -427,64 +552,31 @@ function persistFabOffset() {
   }
 }
 
-function clampPanelPosition(left, top, width, height) {
-  const margin = 8
-  const maxLeft = Math.max(margin, window.innerWidth - width - margin)
-  const maxTop = Math.max(margin, window.innerHeight - height - margin)
-  return {
-    left: Math.min(maxLeft, Math.max(margin, left)),
-    top: Math.min(maxTop, Math.max(margin, top))
+function clearFabHoverTimer() {
+  if (fabHoverTimer) {
+    clearTimeout(fabHoverTimer)
+    fabHoverTimer = null
   }
 }
 
-function beginPanelDrag(event) {
-  if (compactViewport.value) return
-  if (event.pointerType === 'mouse' && event.button !== 0) return
-  if (event.target.closest('button, input, a, textarea, select')) return
-  const panel = event.currentTarget.closest('.sm-panel')
-  if (!panel) return
-  const rect = panel.getBoundingClientRect()
-  panelPos.value = { left: rect.left, top: rect.top }
-  panelDrag = {
-    pointerId: event.pointerId,
-    startX: event.clientX,
-    startY: event.clientY,
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height
-  }
-  panelDragging.value = true
-  event.currentTarget.setPointerCapture?.(event.pointerId)
-  window.addEventListener('pointermove', onPanelDragMove)
-  window.addEventListener('pointerup', endPanelDrag, { once: true })
-  window.addEventListener('pointercancel', endPanelDrag, { once: true })
-  event.preventDefault()
+function onFabPointerEnter() {
+  if (panelOpen.value || fabDrag) return
+  const hoverCapable = window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
+  if (!hoverCapable) return
+  clearFabHoverTimer()
+  fabHoverTimer = setTimeout(() => {
+    fabHoverTimer = null
+    if (!panelOpen.value && !fabDrag && !fabMoved.value) openPanel()
+  }, 420)
 }
 
-function onPanelDragMove(event) {
-  if (!panelDrag) return
-  const next = clampPanelPosition(
-    panelDrag.left + event.clientX - panelDrag.startX,
-    panelDrag.top + event.clientY - panelDrag.startY,
-    panelDrag.width,
-    panelDrag.height
-  )
-  panelPos.value = next
-}
-
-function endPanelDrag() {
-  if (!panelDrag) return
-  panelDrag = null
-  panelDragging.value = false
-  window.removeEventListener('pointermove', onPanelDragMove)
-  window.removeEventListener('pointerup', endPanelDrag)
-  window.removeEventListener('pointercancel', endPanelDrag)
-  persistPanelPos()
+function onFabPointerLeave() {
+  clearFabHoverTimer()
 }
 
 function beginFabDrag(event) {
   if (event.pointerType === 'mouse' && event.button !== 0) return
+  clearFabHoverTimer()
   const element = event.currentTarget
   const rect = element.getBoundingClientRect()
   fabDrag = {
@@ -543,11 +635,6 @@ function onFabClick() {
 
 function onViewportResize() {
   compactViewport.value = window.innerWidth <= 920
-  if (!compactViewport.value && panelPos.value) {
-    const panel = document.querySelector('.sm-panel')
-    const rect = panel?.getBoundingClientRect()
-    if (rect) panelPos.value = clampPanelPosition(panelPos.value.left, panelPos.value.top, rect.width, rect.height)
-  }
   if (fabOffset.value.x || fabOffset.value.y) {
     const element = fab.value
     if (element) {
@@ -563,6 +650,7 @@ function onViewportResize() {
       }
     }
   }
+  if (panelOpen.value) computePanelPlacement()
 }
 
 function setSearchKeyword(value) {
@@ -639,6 +727,7 @@ function playIndex(index, autoplay = true) {
   progress.value = 0
   duration.value = track.duration || 0
   if (track.url) {
+    track.urlRetried = false
     nextTick(() => startAudio(track, autoplay))
     return
   }
@@ -671,7 +760,7 @@ async function resolveAndPlay(track, autoplay = true) {
           timeout: 30000
         })
         if (seq !== playSeq) return
-        const url = res.data?.url
+        const url = res.data?.proxyUrl || res.data?.url
         if (url) {
           resolvedUrl = url
           resolvedQuality = res.data?.quality || quality
@@ -687,6 +776,7 @@ async function resolveAndPlay(track, autoplay = true) {
     if (currentIndex.value < 0 || queue.value[currentIndex.value]?.id !== track.id) return
     track.url = resolvedUrl
     track.quality = resolvedQuality
+    track.urlRetried = false
     track.urlLoading = false
     loadingTrack.value = false
     await nextTick()
@@ -709,11 +799,16 @@ function startAudio(track, autoplay = true) {
   element.muted = muted.value
   element.load()
   if (autoplay) {
-    element.play()
-      .catch(() => {
+    const attempt = element.play()
+    attempt?.catch((error) => {
+      if (error?.name === 'AbortError') return
+      if (error?.name === 'NotAllowedError') {
         playing.value = false
         toast('浏览器阻止了自动播放，请再点一次播放', 'error')
-      })
+        return
+      }
+      onAudioError()
+    })
   }
 }
 
@@ -723,9 +818,8 @@ function togglePlayback() {
   if (!track) {
     if (queue.value.length) playIndex(0, true)
     else {
+      if (!panelOpen.value) openPanel()
       openSearchOrLocal()
-      panelOpen.value = true
-      if (hasSource.value) nextTick(() => searchInput.value?.focus())
     }
     return
   }
@@ -736,9 +830,10 @@ function togglePlayback() {
   const element = audio.value
   if (!element) return
   if (element.paused) {
-    element.play().catch(() => {
-      playing.value = false
-      toast('播放失败，请再点一次', 'error')
+    track.urlRetried = false
+    element.play().catch((error) => {
+      if (error?.name === 'AbortError') return
+      onAudioError()
     })
   } else {
     element.pause()
@@ -860,9 +955,22 @@ function clearQueue() {
 }
 
 function onAudioError() {
-  if (!currentTrack.value?.url) return
+  const track = currentTrack.value
+  if (!track?.url) return
   playing.value = false
-  toast('音频加载失败，可能是版权限制或地址已失效', 'error')
+  if (track.source !== 'local' && !track.urlRetried) {
+    track.urlRetried = true
+    track.url = ''
+    track.urlError = ''
+    toast('播放地址已失效，正在重新获取…', 'info')
+    resolveAndPlay(track, true)
+    return
+  }
+  const message = track.source === 'local'
+    ? '本地音频加载失败，请确认文件仍在站内'
+    : '音乐无法播放，请稍后重试'
+  track.urlError = message
+  toast(message, 'error')
 }
 
 function onKeydown(event) {
@@ -880,7 +988,7 @@ onMounted(() => {
   loadLayoutState()
   compactViewport.value = window.innerWidth <= 920
   activePlatform.value = preferredPlatform()
-  view.value = sourceUrl.value ? 'charts' : 'local'
+  view.value = defaultView()
   loadLocalTracks(true)
   if (audio.value) {
     audio.value.volume = volume.value
@@ -895,10 +1003,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
   if (fabMoveTimer) clearTimeout(fabMoveTimer)
+  clearFabHoverTimer()
+  if (fabFocusTimer) clearTimeout(fabFocusTimer)
   searchSeq += 1
   playSeq += 1
   chartSeq.value += 1
-  endPanelDrag()
   endFabDrag()
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -909,7 +1018,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="showPlayer" class="sm-app" :class="{ expanded: panelOpen }">
+  <div v-if="showPlayer" class="sm-app" :class="{ expanded: panelOpen, playing }">
     <audio
       ref="audio"
       :src="currentTrack?.url || ''"
@@ -924,15 +1033,15 @@ onBeforeUnmount(() => {
     ></audio>
 
     <transition name="sm-panel">
-      <aside v-if="panelOpen" class="sm-panel" :class="{ dragging: panelDragging }" :style="panelStyle" aria-label="站点音乐播放器">
-        <header class="sm-head" title="按住空白处可拖动播放器" @pointerdown="beginPanelDrag">
+      <aside v-if="panelOpen" class="sm-panel" :style="panelStyle" aria-label="站点音乐播放器">
+        <header class="sm-head" title="拖动悬浮球可调整播放器展开方向">
           <div class="sm-brand">
             <span class="sm-brand-mark" aria-hidden="true">
               <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="4" cy="4" r="1.1" /><circle cx="8" cy="4" r="1.1" /><circle cx="12" cy="4" r="1.1" /><circle cx="4" cy="8" r="1.1" /><circle cx="8" cy="8" r="1.1" /><circle cx="12" cy="8" r="1.1" /><circle cx="4" cy="12" r="1.1" /><circle cx="8" cy="12" r="1.1" /><circle cx="12" cy="12" r="1.1" /></svg>
             </span>
             <div>
               <strong>站点音乐</strong>
-              <small>{{ hasSource ? sourceName + (sourceVersion ? ' · v' + sourceVersion : '') : '本地音乐' + (localCount ? ' · ' + localCount + ' 首' : '') }}</small>
+              <small>{{ sourceActive ? sourceName + (sourceVersion ? ' · v' + sourceVersion : '') : '本地音乐' + (localCount ? ' · ' + localCount + ' 首' : '') }}</small>
             </div>
           </div>
           <span class="sm-source-pill" :title="sourcePlatforms.join(' / ')">
@@ -943,7 +1052,7 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <div v-if="hasSource" class="sm-search">
+        <div v-if="sourceActive" class="sm-search">
           <span class="sm-search-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
           </span>
@@ -969,17 +1078,17 @@ onBeforeUnmount(() => {
         </div>
 
         <nav class="sm-tabs" aria-label="播放器视图">
-          <button type="button" :class="{ on: view === 'local' }" @click="showLocalView">
+          <button v-if="localActive" type="button" :class="{ on: view === 'local' }" @click="showLocalView">
             本地音乐 <em v-if="localCount">{{ localCount }}</em>
           </button>
-          <button v-if="hasSource" type="button" :class="{ on: view === 'charts' }" @click="showChartsView">热歌榜</button>
+          <button v-if="hasCharts" type="button" :class="{ on: view === 'charts' }" @click="showChartsView">榜单</button>
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
             播放列表 <em>{{ queue.length }}</em>
           </button>
-          <button v-if="hasSource" type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
+          <button v-if="sourceActive" type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
         </nav>
 
-        <div v-if="view === 'local'" class="sm-body sm-local-body">
+        <div v-if="view === 'local' && localActive" class="sm-body sm-local-body">
           <div class="sm-local-head">
             <div>
               <span class="sm-chart-kicker">LOCAL LIBRARY</span>
@@ -1031,12 +1140,12 @@ onBeforeUnmount(() => {
             <span class="sm-empty-orb">♪</span>
             <strong>还没有本地音乐</strong>
             <p>在管理后台“站点音乐 → 本地音乐”上传音频后，会出现在这里。</p>
-            <button type="button" class="sm-empty-action" @click="showChartsView" v-if="hasSource">去听热歌榜</button>
+            <button type="button" class="sm-empty-action" @click="showChartsView" v-if="hasCharts">去听榜单</button>
           </div>
         </div>
 
-        <div v-else-if="view === 'charts'" ref="chartBody" class="sm-body sm-chart-body">
-          <div class="sm-platform-tabs" role="tablist" aria-label="热歌榜平台">
+        <div v-else-if="view === 'charts' && hasCharts" ref="chartBody" class="sm-body sm-chart-body">
+          <div class="sm-platform-tabs" role="tablist" aria-label="音源榜单平台">
             <button
               v-for="platform in chartPlatforms"
               :key="platform.code"
@@ -1052,10 +1161,10 @@ onBeforeUnmount(() => {
 
           <div class="sm-chart-head">
             <div>
-              <span class="sm-chart-kicker">{{ activePlatformLabel }} · HOT</span>
-              <strong>{{ activeChart?.chartTitle || activePlatformLabel + '热歌榜' }}</strong>
-              <small v-if="activeChart?.fallback">平台热门推荐 · 点击歌曲加入队列</small>
-              <small v-else>每日更新 · 点击歌曲加入队列</small>
+              <span class="sm-chart-kicker">{{ activePlatformLabel }} · SOURCE</span>
+              <strong>{{ activeChart?.chartTitle || activePlatformLabel + '榜单' }}</strong>
+              <small v-if="activeChart?.fallback">音源可用内容 · 点击歌曲加入队列</small>
+              <small v-else>音源当前可用榜单 · 点击歌曲加入队列</small>
             </div>
             <div class="sm-chart-actions">
               <button type="button" class="sm-text-btn" :disabled="chartLoading" @click="refreshChart">刷新</button>
@@ -1067,7 +1176,7 @@ onBeforeUnmount(() => {
 
           <div v-if="chartLoading" class="sm-search-loading">
             <span class="sm-spinner" aria-hidden="true"></span>
-            <p>正在加载{{ activePlatformLabel }}热歌榜…</p>
+            <p>正在加载{{ activePlatformLabel }}榜单…</p>
           </div>
 
           <div v-else-if="chartError" class="sm-search-error">
@@ -1079,7 +1188,7 @@ onBeforeUnmount(() => {
             <button type="button" class="sm-text-btn" @click="refreshChart">重试</button>
           </div>
 
-          <div v-else-if="activeChartTracks.length" class="sm-chart-list" role="list" :aria-label="activePlatformLabel + '热歌榜'">
+          <div v-else-if="activeChartTracks.length" class="sm-chart-list" role="list" :aria-label="activePlatformLabel + '榜单'">
             <button
               v-for="(track, index) in activeChartTracks"
               :key="track.source + '-' + track.id + '-' + index"
@@ -1107,8 +1216,8 @@ onBeforeUnmount(() => {
 
           <div v-else class="sm-empty sm-chart-empty">
             <span class="sm-empty-orb">♪</span>
-            <strong>暂无榜单数据</strong>
-            <p>换一个平台，或稍后刷新试试。</p>
+            <strong>音源暂未返回榜单</strong>
+            <p>切换其他平台，或直接搜索想听的歌曲。</p>
           </div>
         </div>
 
@@ -1274,48 +1383,34 @@ onBeforeUnmount(() => {
         <footer class="sm-foot">
           <span>{{ footerSourceLabel }}</span>
           <span v-if="currentTrack">{{ playing ? '正在播放' : '已暂停' }} · {{ currentTrack.title }}</span>
-          <span v-else>本地音乐 / 搜索 / 队列 / 音量</span>
+          <span v-else>{{ sourceActive ? '榜单 / 搜索 / 队列 / 音量' : '本地音乐 / 队列 / 音量' }}</span>
         </footer>
       </aside>
     </transition>
 
-    <div class="sm-bottom-row">
-      <div v-if="!panelOpen && currentTrack" class="sm-mini">
-        <button type="button" class="sm-mini-main" aria-label="打开播放器" @click="togglePanel">
-          <span class="sm-mini-cover">
-            <img v-if="currentTrack.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" />
-            <template v-else>{{ coverLetter(currentTrack) }}</template>
+    <div class="sm-fab-slot" :style="fabStyle">
+      <transition name="sm-fab">
+        <button
+          v-if="!panelOpen"
+          ref="fab"
+          type="button"
+          class="sm-fab"
+          :class="{ dragging: fabDragging, playing }"
+          aria-label="打开站点音乐"
+          title="打开站点音乐；桌面端鼠标悬停展开，按住可拖动"
+          @pointerenter="onFabPointerEnter"
+          @pointerleave="onFabPointerLeave"
+          @pointerdown="beginFabDrag"
+          @click="onFabClick"
+        >
+          <span class="sm-fab-art">
+            <img v-if="currentTrack?.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" />
+            <template v-else>♪</template>
           </span>
-          <span class="sm-mini-copy">
-            <strong>{{ currentTrack.title }}</strong>
-            <small>{{ currentTrack.artist }}</small>
-          </span>
+          <span v-if="playing" class="sm-fab-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span class="sm-fab-ring" aria-hidden="true"></span>
         </button>
-        <button type="button" class="sm-mini-play" :aria-label="playing ? '暂停' : '播放'" @click="togglePlayback">
-          <svg v-if="playing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 5 11 7-11 7V5Z" /></svg>
-        </button>
-        <span class="sm-mini-eq" v-if="playing" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-      </div>
-
-      <button
-        ref="fab"
-        type="button"
-        class="sm-fab"
-        :class="{ dragging: fabDragging }"
-        :style="fabStyle"
-        :aria-label="panelOpen ? '收起播放器' : '打开站点音乐'"
-        :title="panelOpen ? '收起播放器（音乐继续播放）' : '打开站点音乐，按住可拖动'"
-        @pointerdown="beginFabDrag"
-        @click="onFabClick"
-      >
-        <span class="sm-fab-art">
-          <img v-if="currentTrack?.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" />
-          <template v-else>♪</template>
-        </span>
-        <span v-if="playing" class="sm-fab-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-        <span class="sm-fab-ring" aria-hidden="true"></span>
-      </button>
+      </transition>
     </div>
   </div>
 </template>
@@ -1350,7 +1445,6 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(26px);
   pointer-events: auto;
 }
-.sm-panel.dragging { box-shadow: 0 34px 96px rgba(14, 35, 30, .3), inset 0 1px 0 rgba(255, 255, 255, .7); }
 
 .sm-head {
   display: flex;
@@ -1358,11 +1452,8 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 14px 15px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
-  cursor: grab;
-  touch-action: none;
   user-select: none;
 }
-.sm-panel.dragging .sm-head { cursor: grabbing; }
 
 .sm-brand {
   display: flex;
@@ -1692,24 +1783,15 @@ onBeforeUnmount(() => {
 .sm-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 15px 11px; border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent); color: var(--muted); font-size: 8.5px; }
 .sm-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.sm-bottom-row { display: flex; align-items: center; gap: 8px; pointer-events: none; }
-.sm-mini { display: flex; align-items: center; gap: 3px; max-width: 265px; padding: 5px 6px 5px 5px; border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, var(--paper) 88%, transparent); box-shadow: 0 9px 24px rgba(14, 35, 30, .14); backdrop-filter: blur(18px); pointer-events: auto; }
-.sm-mini-main { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
-.sm-mini-cover { display: grid; place-items: center; width: 33px; height: 33px; flex: 0 0 33px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, var(--accent), #8d6bff); color: #fff; font-size: 13px; font-weight: 800; }
-.sm-mini-cover img { width: 100%; height: 100%; object-fit: cover; }
-.sm-mini-copy { display: grid; gap: 1px; min-width: 0; max-width: 148px; }
-.sm-mini-copy strong { overflow: hidden; font-size: 10.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.sm-mini-copy small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
-.sm-mini-play { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
-.sm-mini-play svg { width: 13px; height: 13px; }
-.sm-mini-eq { display: none; }
+.sm-fab-slot { display: flex; align-items: center; justify-content: flex-end; pointer-events: none; }
+.sm-fab-slot .sm-fab { pointer-events: auto; }
 
 .sm-fab { position: relative; display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 54px; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 50%; background: color-mix(in srgb, var(--paper) 88%, transparent); box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); backdrop-filter: blur(18px); cursor: grab; pointer-events: auto; touch-action: none; user-select: none; }
 .sm-fab.dragging { cursor: grabbing; transition: none; }
 .sm-fab:hover { transform: translateY(-3px) scale(1.03); border-color: var(--accent); box-shadow: 0 16px 36px rgba(20, 45, 40, .22), 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent); }
 .sm-fab.dragging:hover { transform: none; box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); }
 .sm-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.sm-fab-art { display: grid; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent)); color: #fff; font-size: 17px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
+.sm-fab-art { display: grid; will-change: transform; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent)); color: #fff; font-size: 17px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
 .sm-fab-art img { width: 100%; height: 100%; object-fit: cover; }
 .sm-fab-eq { position: absolute; right: 4px; bottom: 4px; display: flex; align-items: flex-end; gap: 2px; width: 18px; height: 18px; padding: 3px; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 28%, transparent); }
 .sm-fab-eq i { display: block; width: 2px; border-radius: 2px; background: #fff; animation: sm-bars 1s ease-in-out infinite alternate; }
@@ -1719,27 +1801,33 @@ onBeforeUnmount(() => {
 .sm-fab-eq i:nth-child(4) { height: 10px; animation-delay: .09s; }
 .sm-fab-ring { position: absolute; inset: -4px; border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); border-radius: 50%; opacity: 0; animation: sm-pulse 2.2s ease-in-out infinite; }
 .sm-app:not(.expanded) .sm-fab-ring { opacity: .32; }
+.sm-fab.playing .sm-fab-art { animation: sm-disc-spin 7s linear infinite; }
+.sm-fab.playing .sm-fab-ring { opacity: .72; border-style: dashed; animation: sm-disc-orbit 3.4s linear infinite; }
+.sm-fab.playing { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, .7); }
+.sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .18s ease, transform .24s cubic-bezier(.2, .85, .2, 1.1); }
+.sm-fab-enter-from, .sm-fab-leave-to { opacity: 0; transform: scale(.66) rotate(-12deg); }
 
-.sm-panel-enter-active, .sm-panel-leave-active { transition: opacity .22s ease, transform .22s ease; }
-.sm-panel-enter-from, .sm-panel-leave-to { opacity: 0; transform: translateY(10px) scale(.97); transform-origin: bottom right; }
+.sm-panel-enter-active { transition: opacity .24s ease, transform .3s cubic-bezier(.18, .9, .24, 1.08); }
+.sm-panel-leave-active { transition: opacity .17s ease, transform .2s ease; }
+.sm-panel-enter-from, .sm-panel-leave-to { opacity: 0; transform: translate(var(--sm-panel-x, 0px), var(--sm-panel-y, 10px)) scale(.965); transform-origin: var(--sm-panel-origin, bottom right); }
 
 @keyframes sm-bars { from { transform: scaleY(.55); opacity: .55; } to { transform: scaleY(1); opacity: 1; } }
 @keyframes sm-spin { to { transform: rotate(360deg); } }
+@keyframes sm-disc-spin { to { transform: rotate(360deg); } }
+@keyframes sm-disc-orbit { to { transform: rotate(360deg); } }
 @keyframes sm-pulse { 0%, 100% { transform: scale(1); opacity: .32; } 50% { transform: scale(1.16); opacity: .08; } }
 
 @media (max-width: 920px) {
   .sm-app { right: 12px; bottom: 84px; }
-  .sm-panel { position: fixed; left: 12px; right: 12px; bottom: 84px; width: auto; max-width: none; max-height: calc(100dvh - 160px); border-radius: 20px; }
-  .sm-mini { max-width: calc(100vw - 104px); }
-  .sm-mini-copy { max-width: calc(100vw - 190px); }
+  .sm-panel { position: fixed; left: 12px; right: 12px; bottom: 12px; width: auto; max-width: none; max-height: calc(100dvh - 24px); border-radius: 20px; }
 }
 @media (max-width: 520px) {
-  .sm-panel { left: 0; right: 0; bottom: 78px; max-height: calc(100dvh - 145px); border-radius: 18px 18px 0 0; }
+  .sm-panel { left: 0; right: 0; bottom: 0; max-height: calc(100dvh - 10px); border-radius: 18px 18px 0 0; }
   .sm-head { padding: 12px 13px 10px; }
   .sm-source-pill { max-width: 90px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i { animation: none; }
-  .sm-panel-enter-active, .sm-panel-leave-active { transition: opacity .12s linear; }
+  .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab.playing .sm-fab-art, .sm-fab.playing .sm-fab-ring { animation: none; }
+  .sm-panel-enter-active, .sm-panel-leave-active, .sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .12s linear; }
 }
 </style>

@@ -23,6 +23,7 @@ const sourceImportMs = ref(0)
 const sourceFileInput = ref(null)
 const sourceUploading = ref(false)
 const musicMode = ref('source')
+const musicModeSaving = ref(false)
 const localTracks = ref([])
 const localLoading = ref(false)
 const localUploading = ref(false)
@@ -363,11 +364,35 @@ async function load() {
   try {
     const data = (await http.get('/admin/config')).data || {}
     config.value = data
+    const savedMode = String(data.musicContentMode || '').trim()
+    if (savedMode === 'local' || savedMode === 'source') {
+      musicMode.value = savedMode
+    } else {
+      musicMode.value = (data.musicSourceUrl || data.musicSourceLocalFileName) ? 'source' : 'local'
+    }
     await loadLocalTracks()
   } catch (e) {
     toast(e.message, 'error')
   } finally {
     loading.value = false
+  }
+}
+
+async function selectMusicMode(mode) {
+  if (mode === musicMode.value || musicModeSaving.value) return
+  const previous = musicMode.value
+  musicMode.value = mode
+  musicModeSaving.value = true
+  try {
+    const res = await http.put('/admin/config', { musicContentMode: mode })
+    config.value.musicContentMode = String(res.data?.musicContentMode || mode)
+    await refreshPublicSite()
+    toast(mode === 'local' ? '前台已切换为本地音乐模式' : '前台已切换为音源模式')
+  } catch (e) {
+    musicMode.value = previous
+    toast(e.message, 'error')
+  } finally {
+    musicModeSaving.value = false
   }
 }
 
@@ -382,6 +407,7 @@ async function save() {
   }
   saving.value = true
   try {
+    config.value.musicContentMode = musicMode.value
     if (sourceType.value === 'url') config.value.musicSourceUrl = url
     const res = await http.put('/admin/config', config.value)
     config.value = res.data
@@ -548,7 +574,7 @@ onMounted(load)
             <div>
               <span class="adm-card-kicker">MUSIC</span>
               <h2>站点音乐</h2>
-              <p>两种音乐入口：本地音乐直接上传音频，音源导入解析在线歌曲与热歌榜。导入成功的脚本、地址与验证状态会永久保存在本站。</p>
+              <p>两种模式互斥：本地音乐模式前台只展示上传音频；音源导入模式前台只展示在线搜索与可用榜单。切换模式会立即保存并刷新前台，导入成功的脚本、地址与验证状态永久保留。</p>
             </div>
           </div>
 
@@ -564,12 +590,12 @@ onMounted(load)
           </div>
 
           <div class="music-source-switch">
-            <button type="button" :class="{ on: musicMode === 'local' }" @click="musicMode = 'local'">
+            <button type="button" :class="{ on: musicMode === 'local' }" :disabled="musicModeSaving" @click="selectMusicMode('local')">
               <span class="music-source-switch-icon">♪</span>
               <strong>本地音乐</strong>
               <small>上传音频，站点内直接播放</small>
             </button>
-            <button type="button" :class="{ on: musicMode === 'source' }" @click="musicMode = 'source'">
+            <button type="button" :class="{ on: musicMode === 'source' }" :disabled="musicModeSaving" @click="selectMusicMode('source')">
               <span class="music-source-switch-icon js">JS</span>
               <strong>音源导入</strong>
               <small>导入 LX 音源脚本，在线搜索与榜单</small>

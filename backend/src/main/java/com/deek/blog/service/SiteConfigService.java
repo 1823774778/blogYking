@@ -22,6 +22,7 @@ public class SiteConfigService {
             "musicSourceUrl", "musicSourceName", "musicSourceVersion", "musicSourceDescription",
             "musicSourcePlatforms", "musicSourceQualities", "musicSourceCheckedAt",
             "musicSourceType", "musicSourceStatus", "musicSourceVerifiedAt", "musicSourceLocalFileName",
+            "musicContentMode",
             "commentReview",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
             "registrationInviteEnabled", "registrationEmailAllowlist",
@@ -41,6 +42,7 @@ public class SiteConfigService {
             "musicSourcePlatforms", "musicSourceQualities", "musicSourceCheckedAt",
             "musicSourceType", "musicSourceStatus", "musicSourceVerifiedAt", "musicSourceLocalFileName",
             "musicSourceScriptPath", "musicSourceScriptHash",
+            "musicContentMode",
             "commentReview",
             "notifyCommentsEnabled", "notifyLikesEnabled", "notifyFavoritesEnabled",
             "notifyUpdatesEnabled", "notifyNewUsersEnabled", "notifyPendingCommentsOnly",
@@ -113,6 +115,7 @@ public class SiteConfigService {
         map.put("musicSourceLocalFileName", "");
         map.put("musicSourceScriptPath", "");
         map.put("musicSourceScriptHash", "");
+        map.put("musicContentMode", "source");
         map.put("commentReview", "false");
         map.put("notifyCommentsEnabled", "true");
         map.put("notifyLikesEnabled", "true");

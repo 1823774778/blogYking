@@ -971,8 +971,9 @@ public class MusicSourceService {
 
     private String secureUrl(String url) {
         String value = String.valueOf(url == null ? "" : url).trim();
+        // 保留平台原始协议。部分源站只开放 http，强行改成 https 会直接导致无法播放；
+        // 浏览器端统一通过本站 /api/music/audio 同源代理加载。
         if (value.startsWith("//")) return "https:" + value;
-        if (value.startsWith("http://")) return "https://" + value.substring(7);
         return value;
     }
 
