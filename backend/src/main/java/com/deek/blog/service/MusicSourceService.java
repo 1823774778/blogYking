@@ -280,7 +280,7 @@ public class MusicSourceService {
             throw new BizException("该歌曲暂时无法播放，可能受版权限制，换一首试试");
         }
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("url", secureUrl(audio));
+        data.put("url", playableUrl(audio));
         data.put("source", sourceCode);
         data.put("platform", sourceCode);
         data.put("quality", qualityCode);
@@ -768,7 +768,7 @@ public class MusicSourceService {
                         "id", "1883571160",
                         "title", "慢慢喜欢你",
                         "artist", "白青",
-                        "url", secureUrl(testUrl)
+                        "url", playableUrl(testUrl)
                 ));
             }
         } catch (RuntimeException e) {
@@ -971,8 +971,17 @@ public class MusicSourceService {
 
     private String secureUrl(String url) {
         String value = String.valueOf(url == null ? "" : url).trim();
-        // 保留平台原始协议。部分源站只开放 http，强行改成 https 会直接导致无法播放；
-        // 浏览器端统一通过本站 /api/music/audio 同源代理加载。
+        if (value.startsWith("//")) return "https:" + value;
+        if (value.startsWith("http://")) return "https://" + value.substring(7);
+        return value;
+    }
+
+    /**
+     * 音频地址保留源站协议。部分源站只开放 http，强行改成 https 会直接导致无法播放；
+     * 浏览器端统一通过本站 /api/music/audio 同源代理加载，不受混合内容限制。
+     */
+    private String playableUrl(String url) {
+        String value = String.valueOf(url == null ? "" : url).trim();
         if (value.startsWith("//")) return "https:" + value;
         return value;
     }
