@@ -127,7 +127,7 @@ public final class LxSourceRuntime implements AutoCloseable {
                     const payload = {
                       source: platform,
                       action: 'musicUrl',
-                      info: { type: quality, musicInfo: { songmid: String(id) } }
+                      info: { type: quality, musicInfo: { songmid: String(id), hash: String(id), mid: String(id), id: String(id), songId: String(id), musicid: String(id) } }
                     };
                     Promise.resolve(globalThis.__lxRequestHandler(payload))
                       .then(value => { globalThis.__lxResolveResult = JSON.stringify({ ok: true, data: value }); })

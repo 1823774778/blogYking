@@ -87,6 +87,7 @@ const sourceStatusText = computed(() => {
 const sourceTestText = computed(() => {
   if (sourceLoading.value || sourceUploading.value) return '校验中'
   if (sourceError.value) return '校验失败'
+  if (sourcePreview.value?.tested === false) return '播放测试未通过'
   if (sourceVerified.value) return '已验证'
   if (sourcePreview.value?.tested) return '播放测试通过'
   if (sourceReady.value) return '已初始化'
@@ -146,7 +147,11 @@ async function previewSource(force = false, silent = false) {
     config.value.musicSourceVerifiedAt = data.verifiedAt || new Date().toISOString()
     config.value.musicSourceStatus = 'verified'
     sourceImportMs.value = Math.round(performance.now() - started)
-    if (!silent) toast(data.tested ? '音源校验通过，已测试播放地址' : '音源已初始化并保存，可搜索播放')
+    if (!silent) {
+      toast(data.tested ? '音源校验通过，已测试播放地址'
+        : (data.testMessage || '音源已初始化并保存，播放地址待确认'),
+        data.tested ? 'success' : 'error')
+    }
     return true
   } catch (e) {
     if (seq !== sourceSeq) return false

@@ -825,7 +825,7 @@ function playIndex(index, autoplay = true) {
   resolveAndPlay(track, autoplay)
 }
 
-async function resolveAndPlay(track, autoplay = true) {
+async function resolveAndPlay(track, autoplay = true, retrying = false) {
   const seq = ++playSeq
   loadingTrack.value = true
   track.urlLoading = true
@@ -867,7 +867,7 @@ async function resolveAndPlay(track, autoplay = true) {
     if (currentIndex.value < 0 || queue.value[currentIndex.value]?.id !== track.id) return
     track.url = resolvedUrl
     track.quality = resolvedQuality
-    track.urlRetried = false
+    track.urlRetried = retrying
     track.urlLoading = false
     loadingTrack.value = false
     await nextTick()
@@ -1054,12 +1054,12 @@ function onAudioError() {
     track.url = ''
     track.urlError = ''
     toast('播放地址已失效，正在重新获取…', 'info')
-    resolveAndPlay(track, true)
+    resolveAndPlay(track, true, true)
     return
   }
   const message = track.source === 'local'
     ? '本地音频加载失败，请确认文件仍在站内'
-    : '音乐无法播放，请稍后重试'
+    : '音乐无法播放，请检查音源是否可用后重试'
   track.urlError = message
   toast(message, 'error')
 }

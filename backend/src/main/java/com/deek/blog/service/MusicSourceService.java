@@ -156,7 +156,7 @@ public class MusicSourceService {
                     boolean search = SEARCH_PLATFORM_CODES.contains(code);
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("code", code);
-                    item.put("label", String.valueOf(info.label() == null || info.label().isBlank() ? code : info.label()));
+                    item.put("label", displayPlatformLabel(code, info.label()));
                     item.put("name", item.get("label"));
                     item.put("actions", actions);
                     item.put("qualities", new ArrayList<>(info.qualities()));
@@ -181,7 +181,7 @@ public class MusicSourceService {
                 boolean search = SEARCH_PLATFORM_CODES.contains(normalized);
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("code", normalized);
-                item.put("label", PLATFORM_LABELS.getOrDefault(normalized, normalized.toUpperCase(Locale.ROOT)));
+                item.put("label", displayPlatformLabel(normalized, ""));
                 item.put("name", item.get("label"));
                 item.put("actions", List.of("musicUrl"));
                 item.put("qualities", split(cfg.getOrDefault("musicSourceQualities", "")));
@@ -334,7 +334,6 @@ public class MusicSourceService {
     public Map<String, Object> resolveUrl(String platform, String songId, String quality) {
         String sourceCode = String.valueOf(platform == null ? "" : platform).trim();
         if (sourceCode.isBlank()) sourceCode = "wy";
-        if (!PLATFORM_LABELS.containsKey(sourceCode)) throw new BizException("不支持的平台");
         String id = String.valueOf(songId == null ? "" : songId).trim();
         if (!id.matches("[0-9A-Za-z_-]{1,80}")) throw new BizException("歌曲 ID 不合法");
         String qualityCode = String.valueOf(quality == null ? "" : quality).trim().toLowerCase(Locale.ROOT);
@@ -342,6 +341,7 @@ public class MusicSourceService {
 
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        if (!runtime.platforms().containsKey(sourceCode)) throw new BizException("当前音源不支持该平台");
         String audio;
         String message = "";
         try {
@@ -646,8 +646,9 @@ public class MusicSourceService {
         for (LxSourceRuntime.PlatformInfo info : runtime.platforms().values()) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("code", info.code());
-            item.put("label", info.label());
-            item.put("name", info.label());
+            String label = displayPlatformLabel(info.code(), info.label());
+            item.put("label", label);
+            item.put("name", label);
             item.put("actions", info.actions());
             item.put("qualities", info.qualities());
             platforms.add(item);
@@ -844,18 +845,50 @@ public class MusicSourceService {
         }
         try {
             String testUrl = runtime.resolveMusicUrl("wy", "1883571160", "128k");
-            data.put("tested", !testUrl.isBlank());
-            data.put("testMessage", testUrl.isBlank() ? "音源已初始化，测试曲目未返回播放地址" : "音源播放地址测试通过");
-            if (!testUrl.isBlank()) {
-                data.put("testTrack", Map.of(
-                        "id", "1883571160",
-                        "title", "慢慢喜欢你",
-                        "artist", "白青",
-                        "url", playableUrl(testUrl)
-                ));
+            if (testUrl.isBlank()) {
+                data.put("tested", false);
+                data.put("testMessage", "音源已初始化，测试曲目未返回播放地址");
+                return;
             }
+            String playable = playableUrl(testUrl);
+            String probeError = probeAudioUrl(playable);
+            data.put("tested", probeError.isBlank());
+            data.put("testMessage", probeError.isBlank()
+                    ? "音源播放地址测试通过"
+                    : "音源已初始化，但测试音频地址不可用：" + probeError);
+            data.put("testTrack", Map.of(
+                    "id", "1883571160",
+                    "title", "慢慢喜欢你",
+                    "artist", "白青",
+                    "url", playable
+            ));
         } catch (RuntimeException e) {
             data.put("testMessage", "音源已初始化，但测试曲目未返回地址：" + shortMessage(e));
+        }
+    }
+
+    /** 导入时真实请求一小段音频，避免只拿到地址就误报“播放测试通过”。 */
+    private String probeAudioUrl(String url) {
+        if (url == null || url.isBlank()) return "播放地址为空";
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(8))
+                    .header("User-Agent", USER_AGENT)
+                    .header("Range", "bytes=0-0")
+                    .header("Accept", "audio/*,*/*")
+                    .GET()
+                    .build();
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            int status = response.statusCode();
+            try (InputStream body = response.body()) {
+                // 只探测可读性，不下载完整音频。
+            }
+            if (status >= 200 && status < 400) return "";
+            return "HTTP " + status;
+        } catch (java.net.http.HttpTimeoutException e) {
+            return "请求超时";
+        } catch (Exception e) {
+            return shortMessage(e);
         }
     }
 
@@ -1055,9 +1088,29 @@ public class MusicSourceService {
     private String platformLabel(LxSourceRuntime runtime, String code) {
         if (runtime != null) {
             LxSourceRuntime.PlatformInfo info = runtime.platforms().get(code);
-            if (info != null && info.label() != null && !info.label().isBlank()) return info.label();
+            if (info != null) return displayPlatformLabel(code, info.label());
         }
-        return PLATFORM_LABELS.getOrDefault(code, String.valueOf(code).toUpperCase(Locale.ROOT));
+        return displayPlatformLabel(code, "");
+    }
+
+    /**
+     * 音源有时把平台名写成 {@code kg音乐} / {@code tx音乐} 这类代码占位。
+     * 这类占位才换成站点已知的中文名；正常自定义名称（如“企鹅音乐”）原样保留。
+     */
+    private String displayPlatformLabel(String code, String rawLabel) {
+        String normalizedCode = String.valueOf(code == null ? "" : code).trim().toLowerCase(Locale.ROOT);
+        String canonical = PLATFORM_LABELS.getOrDefault(normalizedCode,
+                normalizedCode.isBlank() ? "" : normalizedCode.toUpperCase(Locale.ROOT));
+        String value = String.valueOf(rawLabel == null ? "" : rawLabel).trim();
+        if (value.isBlank()) return canonical;
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (lower.equals(normalizedCode)
+                || lower.equals(normalizedCode + "音乐")
+                || lower.equals(normalizedCode + "music")
+                || lower.equals(normalizedCode + " music")) {
+            return canonical;
+        }
+        return value;
     }
 
     private String secureUrl(String url) {
