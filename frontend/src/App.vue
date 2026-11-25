@@ -10,6 +10,20 @@ const route = useRoute()
 const router = useRouter()
 const year = new Date().getFullYear()
 
+const isAdminArea = computed(() => route.path.startsWith('/admin'))
+const maintenanceMode = computed(() =>
+  state.site.maintenanceEnabled === 'true'
+  && !isAdminArea.value
+  && !['/login', '/register', '/setup'].includes(route.path)
+)
+const readOnlyMode = computed(() => state.site.readOnlyMode === 'true' && !isAdminArea.value)
+const showPublicChrome = computed(() =>
+  !isAdminArea.value
+  && !state.setupRequired
+  && !maintenanceMode.value
+)
+const showFooter = computed(() => showPublicChrome.value)
+
 function syncDocumentTitle() {
   const name = state.site?.siteName || '墨记'
   document.title = route.meta?.title ? `${route.meta.title} · ${name}` : name

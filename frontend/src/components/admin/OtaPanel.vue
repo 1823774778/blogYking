@@ -599,6 +599,7 @@ onBeforeUnmount(() => {
 
     <section v-if="ota?.pending" class="panel ota-pending">
       <div class="ota-pending-head"><div><span class="badge on">已校验</span><strong>{{ ota.pending.fileName }}</strong></div><span class="meta">{{ formatBytes(ota.pending.size) }}</span></div>
+      <p class="ota-warn-text">安装后会短暂断站。独立运行模式会自动等待新版本健康检查，失败则回滚；更新完成后本页会自动恢复。</p>
       <div class="ota-pending-meta"><span>目标版本 <b>{{ ota.pending.version }}</b></span><span>来源 {{ ota.pending.source || '未知' }}</span><span>SHA-256 <code>{{ shortSha(ota.pending.sha256) }}</code></span></div>
       <div v-if="pendingIsRollback" class="ota-rollback-warning">
         <strong>回档风险</strong>
@@ -607,7 +608,6 @@ onBeforeUnmount(() => {
       <div class="ota-pending-actions">
         <button class="btn-text danger-text" type="button" :disabled="otaApplying" @click="cancelPending">取消待安装</button>
       </div>
-      <p class="ota-warn-text">安装后会短暂断站。独立运行模式会自动等待新版本健康检查，失败则回滚；更新完成后本页会自动恢复。</p>
     </section>
 
     <div v-if="otaApplying" class="ota-restarting"><span class="ota-spinner"></span><div><strong>正在安装并重启服务</strong><span>页面会自动重连并核对新版本，通常需要 10–40 秒。</span></div></div>

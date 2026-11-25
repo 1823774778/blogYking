@@ -2,20 +2,26 @@ package com.deek.blog.service;
 
 import com.deek.blog.common.BizException;
 import com.deek.blog.service.music.LxSourceRuntime;
+import com.deek.blog.service.storage.StoragePathResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -43,9 +49,11 @@ public class MusicSourceService {
     private static final int MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
     private static final int MAX_SEARCH_LIMIT = 30;
     private static final int MAX_CHART_LIMIT = 30;
-    private static final long RUNTIME_TTL_MILLIS = 30 * 60 * 1000L;
+    private static final long RUNTIME_TTL_MILLIS = 6 * 60 * 60 * 1000L;
     private static final long SEARCH_TTL_MILLIS = 2 * 60 * 1000L;
     private static final long CHART_TTL_MILLIS = 10 * 60 * 1000L;
+    private static final String SOURCE_CACHE_DIR = "music-sources";
+    private static final String LOCAL_SOURCE_PREFIX = "local://";
     private static final String CHART_FALLBACK_QUERY = "热门";
     private static final Set<String> QUALITIES = Set.of("128k", "320k", "flac");
     private static final Map<String, String> PLATFORM_LABELS = Map.of(
@@ -64,6 +72,7 @@ public class MusicSourceService {
     private final SiteConfigService siteConfigService;
     private final ObjectMapper objectMapper;
     private final HttpClient client;
+    private final Path sourceDir;
     private final Map<String, RuntimeEntry> runtimes = new ConcurrentHashMap<>();
     private final Map<String, SearchEntry> searches = new HashMap<>();
     private final Map<String, ChartEntry> charts = new HashMap<>();
@@ -71,13 +80,20 @@ public class MusicSourceService {
     private final Object searchLock = new Object();
     private final Object chartLock = new Object();
 
-    public MusicSourceService(SiteConfigService siteConfigService, ObjectMapper objectMapper) {
+    public MusicSourceService(SiteConfigService siteConfigService, ObjectMapper objectMapper,
+                              StoragePathResolver storagePaths) {
         this.siteConfigService = siteConfigService;
         this.objectMapper = objectMapper;
         this.client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(8))
                 .followRedirects(HttpClient.Redirect.ALWAYS)
                 .build();
+        this.sourceDir = storagePaths.root().resolve(SOURCE_CACHE_DIR).toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(sourceDir);
+        } catch (IOException e) {
+            throw new IllegalStateException("无法创建音源脚本缓存目录: " + sourceDir, e);
+        }
     }
 
     public String configuredSourceUrl() {
@@ -88,39 +104,90 @@ public class MusicSourceService {
         Map<String, String> cfg = siteConfigService.get();
         Map<String, Object> data = new LinkedHashMap<>();
         String url = String.valueOf(cfg.getOrDefault("musicSourceUrl", "")).trim();
-        data.put("configured", !url.isBlank());
-        data.put("url", url);
+        boolean local = isLocalSource(cfg);
+        boolean configured = local ? sourceScriptReady(cfg) : !url.isBlank();
+        data.put("configured", configured);
+        data.put("type", local ? "file" : (url.isBlank() ? "" : "url"));
+        data.put("url", local ? "" : url);
         data.put("name", cfg.getOrDefault("musicSourceName", ""));
         data.put("version", cfg.getOrDefault("musicSourceVersion", ""));
         data.put("description", cfg.getOrDefault("musicSourceDescription", ""));
         data.put("platforms", split(cfg.getOrDefault("musicSourcePlatforms", "")));
         data.put("qualities", split(cfg.getOrDefault("musicSourceQualities", "")));
         data.put("platformLabels", platformLabels());
+        data.put("status", cfg.getOrDefault("musicSourceStatus", ""));
+        data.put("verifiedAt", cfg.getOrDefault("musicSourceVerifiedAt", ""));
+        data.put("localFileName", cfg.getOrDefault("musicSourceLocalFileName", ""));
+        data.put("scriptReady", sourceScriptReady(cfg));
         return data;
     }
 
     public Map<String, Object> preview(String rawUrl, boolean refresh) {
         String url = normalizeSourceUrl(rawUrl);
-        LxSourceRuntime runtime = loadRuntime(url, refresh);
-        Map<String, Object> data = describe(runtime, url);
-        data.put("tested", false);
-        data.put("testMessage", "音源已初始化，尚未测试播放地址");
-        if (runtime.platforms().containsKey("wy")) {
-            try {
-                String testUrl = runtime.resolveMusicUrl("wy", "1883571160", "128k");
-                data.put("tested", !testUrl.isBlank());
-                data.put("testMessage", "音源播放地址测试通过");
-                data.put("testTrack", Map.of(
-                        "id", "1883571160",
-                        "title", "慢慢喜欢你",
-                        "artist", "白青",
-                        "url", secureUrl(testUrl)
-                ));
-            } catch (RuntimeException e) {
-                data.put("testMessage", "音源已初始化，但测试曲目未返回地址：" + shortMessage(e));
-            }
+        boolean sameVerified = !refresh && url.equals(currentVerifiedSourceKey());
+        RuntimeEntry entry = loadRuntimeEntry(url, refresh);
+        Map<String, Object> data = describe(entry.runtime, url);
+        data.put("type", "url");
+        data.put("localFileName", "");
+        if (sameVerified) {
+            data.put("tested", true);
+            data.put("testMessage", "沿用上次验证结果，已跳过重复测速");
+            data.put("verifiedAt", siteConfigService.get().getOrDefault("musicSourceVerifiedAt", ""));
+        } else {
+            testPlayback(entry.runtime, data);
         }
+        persistVerifiedSource(url, "url", "", data, entry.scriptPath, entry.hash);
+        data.put("verifiedAt", siteConfigService.get().getOrDefault("musicSourceVerifiedAt", ""));
         return data;
+    }
+
+    /** 上传本地 .js 音源脚本：校验、初始化、测试并立即持久化。 */
+    public Map<String, Object> previewUpload(MultipartFile file) {
+        if (file == null || file.isEmpty()) throw new BizException("请选择音源脚本文件");
+        String original = file.getOriginalFilename() == null ? "local-source.js" : file.getOriginalFilename().trim();
+        if (original.length() > 200) original = original.substring(0, 200);
+        if (!original.toLowerCase(Locale.ROOT).endsWith(".js")) {
+            throw new BizException("只支持上传 .js 格式的 LX 音源脚本");
+        }
+        if (file.getSize() > MAX_SCRIPT_BYTES) throw new BizException("音源脚本超过 2MB 限制");
+        String script;
+        try {
+            script = new String(file.getBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new BizException("读取音源脚本失败");
+        }
+        if (script.isBlank() || !script.contains("@name") || !script.contains("@version")) {
+            throw new BizException("这个文件不像 LX 音源脚本，缺少 @name 或 @version");
+        }
+        String hash;
+        try {
+            hash = sha256(script);
+        } catch (Exception e) {
+            throw new BizException("无法计算音源脚本校验值");
+        }
+        String fileName = "upload-" + hash.substring(0, 12) + ".js";
+        String key = LOCAL_SOURCE_PREFIX + fileName;
+        LxSourceRuntime runtime = null;
+        try {
+            runtime = createRuntimeWithTimeout(script);
+            String relativePath = writeScriptCache(fileName, script);
+            Map<String, Object> data = describe(runtime, key);
+            data.put("type", "file");
+            data.put("localFileName", original);
+            testPlayback(runtime, data);
+            persistVerifiedSource(key, "file", original, data, relativePath, hash);
+            registerRuntime(key, hash, runtime, relativePath);
+            data.put("verifiedAt", siteConfigService.get().getOrDefault("musicSourceVerifiedAt", ""));
+            return data;
+        } catch (RuntimeException e) {
+            if (runtime != null) runtime.close();
+            deleteScriptCache(fileName);
+            throw e;
+        } catch (Exception e) {
+            if (runtime != null) runtime.close();
+            deleteScriptCache(fileName);
+            throw new BizException("音源导入失败：" + shortMessage(e));
+        }
     }
 
     public Map<String, Object> search(String keyword, int limit) {
@@ -492,6 +559,7 @@ public class MusicSourceService {
         data.put("homepage", runtime.meta().homepage());
         data.put("initAlert", runtime.initAlert());
         List<Map<String, Object>> platforms = new ArrayList<>();
+        List<String> runtimeQualities = new ArrayList<>();
         for (LxSourceRuntime.PlatformInfo info : runtime.platforms().values()) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("code", info.code());
@@ -500,11 +568,15 @@ public class MusicSourceService {
             item.put("actions", info.actions());
             item.put("qualities", info.qualities());
             platforms.add(item);
+            for (String quality : info.qualities()) {
+                if (!runtimeQualities.contains(quality)) runtimeQualities.add(quality);
+            }
         }
         data.put("platforms", platforms);
         data.put("platformLabels", platformLabels());
-        data.put("qualities", split(siteConfigService.get().getOrDefault("musicSourceQualities",
-                "128k,320k,flac")));
+        data.put("qualities", runtimeQualities.isEmpty()
+                ? split(siteConfigService.get().getOrDefault("musicSourceQualities", "128k,320k,flac"))
+                : runtimeQualities);
         return data;
     }
 
@@ -623,29 +695,32 @@ public class MusicSourceService {
     }
 
     private LxSourceRuntime loadRuntime(String url, boolean refresh) {
+        return loadRuntimeEntry(url, refresh).runtime;
+    }
+
+    private RuntimeEntry loadRuntimeEntry(String url, boolean refresh) {
         synchronized (runtimeLock) {
             RuntimeEntry entry = runtimes.get(url);
             long now = System.currentTimeMillis();
             if (!refresh && entry != null && now - entry.createdAt < RUNTIME_TTL_MILLIS) {
-                return entry.runtime;
+                return entry;
             }
             try {
-                String script = downloadScript(url);
+                String cached = refresh ? null : readCachedScript(url);
+                String script = cached != null ? cached : downloadScript(url);
                 String hash = sha256(script);
-                if (!refresh && entry != null && entry.hash.equals(hash) && now - entry.createdAt < RUNTIME_TTL_MILLIS) {
-                    return entry.runtime;
+                if (!refresh && entry != null && entry.hash.equals(hash)
+                        && now - entry.createdAt < RUNTIME_TTL_MILLIS) {
+                    return entry;
                 }
-                if (entry != null) entry.runtime.close();
+                String fileName = "source-" + hash.substring(0, 12) + ".js";
+                String scriptPath = writeScriptCache(fileName, script);
                 LxSourceRuntime runtime = createRuntimeWithTimeout(script);
-                runtimes.put(url, new RuntimeEntry(hash, runtime, now));
-                if (runtimes.size() > 3) {
-                    String oldest = runtimes.keySet().iterator().next();
-                    if (!oldest.equals(url)) {
-                        RuntimeEntry old = runtimes.remove(oldest);
-                        if (old != null) old.runtime.close();
-                    }
-                }
-                return runtime;
+                if (entry != null) entry.runtime.close();
+                RuntimeEntry next = new RuntimeEntry(hash, runtime, now, scriptPath);
+                runtimes.put(url, next);
+                trimRuntimes(url);
+                return next;
             } catch (BizException e) {
                 throw e;
             } catch (Exception e) {
@@ -653,6 +728,154 @@ public class MusicSourceService {
                 throw new BizException("音源导入失败：" + shortMessage(e));
             }
         }
+    }
+
+    private void registerRuntime(String key, String hash, LxSourceRuntime runtime, String scriptPath) {
+        synchronized (runtimeLock) {
+            RuntimeEntry old = runtimes.put(key, new RuntimeEntry(hash, runtime,
+                    System.currentTimeMillis(), scriptPath));
+            if (old != null) old.runtime.close();
+            trimRuntimes(key);
+        }
+    }
+
+    private void trimRuntimes(String keepKey) {
+        while (runtimes.size() > 3) {
+            String oldest = runtimes.entrySet().stream()
+                    .filter(item -> !item.getKey().equals(keepKey))
+                    .min(java.util.Comparator.comparingLong(item -> item.getValue().createdAt))
+                    .map(Map.Entry::getKey)
+                    .orElse(null);
+            if (oldest == null) break;
+            RuntimeEntry old = runtimes.remove(oldest);
+            if (old != null) old.runtime.close();
+        }
+    }
+
+    private void testPlayback(LxSourceRuntime runtime, Map<String, Object> data) {
+        data.put("tested", false);
+        data.put("testMessage", "音源已初始化，尚未测试播放地址");
+        if (!runtime.platforms().containsKey("wy")) {
+            data.put("testMessage", "音源已初始化；未包含网易云测试平台");
+            return;
+        }
+        try {
+            String testUrl = runtime.resolveMusicUrl("wy", "1883571160", "128k");
+            data.put("tested", !testUrl.isBlank());
+            data.put("testMessage", testUrl.isBlank() ? "音源已初始化，测试曲目未返回播放地址" : "音源播放地址测试通过");
+            if (!testUrl.isBlank()) {
+                data.put("testTrack", Map.of(
+                        "id", "1883571160",
+                        "title", "慢慢喜欢你",
+                        "artist", "白青",
+                        "url", secureUrl(testUrl)
+                ));
+            }
+        } catch (RuntimeException e) {
+            data.put("testMessage", "音源已初始化，但测试曲目未返回地址：" + shortMessage(e));
+        }
+    }
+
+    private String currentVerifiedSourceKey() {
+        Map<String, String> cfg = siteConfigService.get();
+        if (!"verified".equalsIgnoreCase(cfg.getOrDefault("musicSourceStatus", ""))) return "";
+        return String.valueOf(cfg.getOrDefault("musicSourceUrl", "")).trim();
+    }
+
+    private void persistVerifiedSource(String key, String type, String localFileName,
+                                       Map<String, Object> data, String scriptPath, String hash) {
+        String now = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        List<String> platformCodes = new ArrayList<>();
+        Object platforms = data.get("platforms");
+        if (platforms instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    Object code = map.get("code");
+                    if (code != null && !String.valueOf(code).isBlank()) platformCodes.add(String.valueOf(code));
+                }
+            }
+        }
+        List<String> qualities = new ArrayList<>();
+        Object qualityData = data.get("qualities");
+        if (qualityData instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null && !String.valueOf(item).isBlank()) qualities.add(String.valueOf(item));
+            }
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("musicSourceUrl", key);
+        values.put("musicSourceType", type);
+        values.put("musicSourceLocalFileName", localFileName == null ? "" : localFileName);
+        values.put("musicSourceName", String.valueOf(data.getOrDefault("name", "")));
+        values.put("musicSourceVersion", String.valueOf(data.getOrDefault("version", "")));
+        values.put("musicSourceDescription", String.valueOf(data.getOrDefault("description", "")));
+        values.put("musicSourcePlatforms", String.join(",", platformCodes));
+        values.put("musicSourceQualities", String.join(",", qualities));
+        values.put("musicSourceScriptPath", scriptPath == null ? "" : scriptPath);
+        values.put("musicSourceScriptHash", hash == null ? "" : hash);
+        values.put("musicSourceStatus", "verified");
+        values.put("musicSourceVerifiedAt", now);
+        values.put("musicSourceCheckedAt", now);
+        siteConfigService.update(values);
+    }
+
+    private boolean isLocalSource(Map<String, String> cfg) {
+        String type = cfg.getOrDefault("musicSourceType", "").trim();
+        String url = cfg.getOrDefault("musicSourceUrl", "").trim();
+        return "file".equals(type) || url.startsWith(LOCAL_SOURCE_PREFIX);
+    }
+
+    private boolean sourceScriptReady(Map<String, String> cfg) {
+        String path = cfg.getOrDefault("musicSourceScriptPath", "").trim();
+        if (path.isBlank()) return false;
+        try {
+            return Files.isRegularFile(resolveScriptPath(path));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String readCachedScript(String url) {
+        Map<String, String> cfg = siteConfigService.get();
+        String configured = cfg.getOrDefault("musicSourceUrl", "").trim();
+        if (url == null || !url.equals(configured)) return null;
+        String path = cfg.getOrDefault("musicSourceScriptPath", "").trim();
+        if (path.isBlank()) return null;
+        try {
+            Path file = resolveScriptPath(path);
+            if (!Files.isRegularFile(file)) return null;
+            return Files.readString(file, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            log.debug("读取音源缓存失败: {}", e.toString());
+            return null;
+        }
+    }
+
+    private String writeScriptCache(String fileName, String script) throws IOException {
+        if (fileName == null || !fileName.matches("[A-Za-z0-9._-]{1,120}")) {
+            throw new IOException("非法的音源缓存文件名");
+        }
+        Path target = sourceDir.resolve(fileName).normalize();
+        if (!target.startsWith(sourceDir)) throw new IOException("非法的音源缓存路径");
+        Files.writeString(target, script, StandardCharsets.UTF_8);
+        return SOURCE_CACHE_DIR + "/" + fileName;
+    }
+
+    private void deleteScriptCache(String fileName) {
+        try {
+            Path target = sourceDir.resolve(fileName).normalize();
+            if (target.startsWith(sourceDir)) Files.deleteIfExists(target);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private Path resolveScriptPath(String relativePath) {
+        String value = String.valueOf(relativePath == null ? "" : relativePath).trim().replace('\\', '/');
+        if (value.isBlank() || value.contains("..")) throw new IllegalArgumentException("非法音源脚本路径");
+        Path root = sourceDir.getParent();
+        Path target = root.resolve(value).normalize();
+        if (!target.startsWith(root)) throw new IllegalArgumentException("非法音源脚本路径");
+        return target;
     }
 
     private LxSourceRuntime createRuntimeWithTimeout(String script) throws Exception {
@@ -672,6 +895,14 @@ public class MusicSourceService {
     }
 
     private String downloadScript(String url) throws Exception {
+        if (url.startsWith(LOCAL_SOURCE_PREFIX)) {
+            String name = url.substring(LOCAL_SOURCE_PREFIX.length());
+            Path file = sourceDir.resolve(name).normalize();
+            if (!file.startsWith(sourceDir) || !Files.isRegularFile(file)) {
+                throw new IOException("本地音源脚本不存在");
+            }
+            return Files.readString(file, StandardCharsets.UTF_8);
+        }
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(20))
                 .header("User-Agent", USER_AGENT)
@@ -694,6 +925,13 @@ public class MusicSourceService {
 
     private String normalizeSourceUrl(String rawUrl) {
         String value = String.valueOf(rawUrl == null ? "" : rawUrl).trim();
+        if (value.startsWith(LOCAL_SOURCE_PREFIX)) {
+            String name = value.substring(LOCAL_SOURCE_PREFIX.length());
+            if (!name.matches("[A-Za-z0-9._-]{1,120}") || !Files.isRegularFile(sourceDir.resolve(name))) {
+                throw new BizException("本地音源脚本不存在，请重新导入");
+            }
+            return value;
+        }
         if (value.length() < 12 || value.length() > 2048) throw new BizException("请填写有效的音源脚本地址");
         if (!value.startsWith("http://") && !value.startsWith("https://")) value = "https://" + value;
         try {
@@ -750,7 +988,7 @@ public class MusicSourceService {
         runtimes.clear();
     }
 
-    private record RuntimeEntry(String hash, LxSourceRuntime runtime, long createdAt) {
+    private record RuntimeEntry(String hash, LxSourceRuntime runtime, long createdAt, String scriptPath) {
     }
 
     private record SearchEntry(long createdAt, Map<String, Object> data) {

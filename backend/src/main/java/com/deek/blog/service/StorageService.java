@@ -70,10 +70,15 @@ public class StorageService {
 
     public String store(MultipartFile file, Long uploaderId) {
         return storeFile(file, uploaderId, IMAGE_EXT, "image/", StorageCategory.IMAGE,
-                "只支持上传图片文件", "图片保存失败，请重试");
+                "只支持上传图片文件", "图片保存失败，请重试").getUrl();
     }
 
     public String storeAudio(MultipartFile file, Long uploaderId) {
+        return storeAudioFile(file, uploaderId).getUrl();
+    }
+
+    /** 保存音频并返回完整元数据，供本地音乐列表使用。 */
+    public StoredFile storeAudioFile(MultipartFile file, Long uploaderId) {
         if (file != null && file.getSize() > MAX_AUDIO_BYTES) {
             throw new BizException("音频不能超过 30MB");
         }
@@ -81,7 +86,28 @@ public class StorageService {
                 "只支持上传音频文件", "音频保存失败，请重试");
     }
 
-    private String storeFile(MultipartFile file, Long uploaderId, java.util.Set<String> allowedExt,
+    /** 删除已上传的本地文件；线上对象保留原文件，只删除站点元数据。 */
+    public void deleteAsset(StoredFile meta) {
+        if (meta == null) return;
+        if ("local".equals(meta.getProvider())) {
+            try {
+                localStore.delete(meta.getObjectKey());
+            } catch (Exception ignored) {
+                // 文件已不存在时仍允许清理元数据
+            }
+        }
+        storedFileRepository.findByProviderAndObjectKey(meta.getProvider(), meta.getObjectKey())
+                .ifPresent(storedFileRepository::delete);
+    }
+
+    /** 按存储键清理文件与元数据；线上对象不主动删除远端文件。 */
+    public void deleteByKey(String provider, String objectKey) {
+        if (provider == null || objectKey == null || objectKey.isBlank()) return;
+        storedFileRepository.findByProviderAndObjectKey(provider, objectKey)
+                .ifPresent(this::deleteAsset);
+    }
+
+    private StoredFile storeFile(MultipartFile file, Long uploaderId, java.util.Set<String> allowedExt,
                              String contentTypePrefix, StorageCategory category,
                              String typeError, String saveError) {
         if (file == null || file.isEmpty()) {
@@ -145,7 +171,7 @@ public class StorageService {
         meta.setUrl(url);
         applyUploader(meta, uploaderId);
         storedFileRepository.save(meta);
-        return url;
+        return meta;
     }
 
     public boolean isOnline() {

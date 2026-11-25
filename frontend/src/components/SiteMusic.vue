@@ -46,6 +46,10 @@ const chartLoadedAt = ref({})
 const chartLoading = ref(false)
 const chartError = ref('')
 const chartSeq = ref(0)
+const localTracks = ref([])
+const localLoading = ref(false)
+const localError = ref('')
+const localLoaded = ref(false)
 const panelPos = ref(null)
 const panelDragging = ref(false)
 const fabOffset = ref({ x: 0, y: 0 })
@@ -63,8 +67,12 @@ let fabDrag = null
 let fabMoveTimer = null
 
 const sourceUrl = computed(() => String(state.site.musicSourceUrl || '').trim())
+const hasSource = computed(() => Boolean(sourceUrl.value))
 const sourceName = computed(() => String(state.site.musicSourceName || 'LX 音源').trim())
 const sourceVersion = computed(() => String(state.site.musicSourceVersion || '').trim())
+const localCount = computed(() => localTracks.value.length)
+const localEmpty = computed(() => localLoaded.value && !localTracks.value.length && !localLoading.value)
+const localPending = computed(() => localLoading.value || (!localLoaded.value && !localError.value))
 const sourcePlatformCodes = computed(() => String(state.site.musicSourcePlatforms || '')
   .split(',')
   .map((code) => code.trim())
@@ -98,7 +106,18 @@ const sourceQualities = computed(() => String(state.site.musicSourceQualities ||
   .map((item) => item.trim())
   .filter(Boolean))
 const resolveQuality = computed(() => sourceQualities.value.includes('320k') ? '320k' : (sourceQualities.value[0] || '128k'))
-const showPlayer = computed(() => state.site.musicEnabled === 'true' && Boolean(sourceUrl.value))
+const showPlayer = computed(() =>
+  state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
+)
+const headerSourceLabel = computed(() => {
+  if (sourcePlatforms.value.length) return sourcePlatforms.value.join(' · ')
+  if (hasSource.value) return sourceName.value
+  return localCount.value ? `本地音乐 ${localCount.value}` : '站点音乐'
+})
+const footerSourceLabel = computed(() => {
+  if (hasSource.value) return sourceName.value + (sourceVersion.value ? ` v${sourceVersion.value}` : '')
+  return localCount.value ? `本地音乐 · ${localCount.value} 首` : '站点音乐'
+})
 const currentTrack = computed(() => queue.value[currentIndex.value] || null)
 const currentDuration = computed(() => duration.value || currentTrack.value?.duration || 0)
 const progressPercent = computed(() => currentDuration.value > 0
@@ -138,7 +157,7 @@ function loadPersistedState() {
           duration: Number(track.duration) || 0,
           fee: Number(track.fee) || 0,
           pageUrl: track.pageUrl || '',
-          url: '',
+          url: track.source === 'local' ? String(track.url || '') : '',
           urlError: '',
           urlLoading: false
         }))
@@ -171,7 +190,8 @@ function persistState() {
         cover: track.cover,
         duration: track.duration,
         fee: track.fee,
-        pageUrl: track.pageUrl
+        pageUrl: track.pageUrl,
+        url: track.source === 'local' ? track.url : ''
       }))
     }))
   } catch (e) {
@@ -195,9 +215,13 @@ function apiErrorMessage(error, fallback) {
 function togglePanel() {
   panelOpen.value = !panelOpen.value
   if (panelOpen.value) {
-    view.value = 'charts'
-    resetChartScroll()
-    ensureCharts(activePlatform.value)
+    view.value = hasSource.value ? 'charts' : 'local'
+    if (hasSource.value) {
+      resetChartScroll()
+      ensureCharts(activePlatform.value)
+    } else {
+      loadLocalTracks()
+    }
   } else {
     nextTick(() => fab.value?.focus())
   }
@@ -215,9 +239,62 @@ function resetChartScroll() {
 }
 
 function showChartsView() {
+  if (!hasSource.value) {
+    showLocalView()
+    return
+  }
   view.value = 'charts'
   resetChartScroll()
   ensureCharts(activePlatform.value)
+}
+
+async function loadLocalTracks(silent = true) {
+  if (!silent) localLoading.value = true
+  localError.value = ''
+  try {
+    const res = await http.get('/music/local', { timeout: 20000 })
+    localTracks.value = Array.isArray(res.data) ? res.data : []
+    localLoaded.value = true
+  } catch (e) {
+    if (!silent) localError.value = apiErrorMessage(e, '本地音乐暂时不可用')
+  } finally {
+    if (!silent) localLoading.value = false
+  }
+}
+
+function showLocalView() {
+  view.value = 'local'
+  loadLocalTracks(false)
+}
+
+function onLocalMusicChanged() {
+  loadLocalTracks(true)
+}
+
+function selectLocalTrack(track) {
+  const index = addTrackToQueue(track)
+  view.value = 'queue'
+  playIndex(index, true)
+}
+
+function playAllLocal() {
+  if (!localTracks.value.length) return
+  let firstIndex = -1
+  for (const track of localTracks.value) {
+    const index = addTrackToQueue(track)
+    if (firstIndex < 0) firstIndex = index
+  }
+  if (firstIndex < 0) return
+  view.value = 'queue'
+  playIndex(firstIndex, true)
+}
+
+function openSearchOrLocal() {
+  if (hasSource.value) {
+    view.value = 'search'
+    return
+  }
+  showLocalView()
 }
 
 function preferredPlatform() {
@@ -289,7 +366,7 @@ function addTrackToQueue(track) {
     ...track,
     id: String(track.id),
     source,
-    url: '',
+    url: source === 'local' ? String(track.url || '') : '',
     urlError: '',
     urlLoading: false
   })
@@ -646,9 +723,9 @@ function togglePlayback() {
   if (!track) {
     if (queue.value.length) playIndex(0, true)
     else {
-      view.value = 'search'
+      openSearchOrLocal()
       panelOpen.value = true
-      nextTick(() => searchInput.value?.focus())
+      if (hasSource.value) nextTick(() => searchInput.value?.focus())
     }
     return
   }
@@ -803,6 +880,8 @@ onMounted(() => {
   loadLayoutState()
   compactViewport.value = window.innerWidth <= 920
   activePlatform.value = preferredPlatform()
+  view.value = sourceUrl.value ? 'charts' : 'local'
+  loadLocalTracks(true)
   if (audio.value) {
     audio.value.volume = volume.value
     audio.value.muted = muted.value
@@ -810,6 +889,7 @@ onMounted(() => {
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('resize', onViewportResize)
+  window.addEventListener('deek:music-local-changed', onLocalMusicChanged)
 })
 
 onBeforeUnmount(() => {
@@ -823,6 +903,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('resize', onViewportResize)
+  window.removeEventListener('deek:music-local-changed', onLocalMusicChanged)
   audio.value?.pause()
 })
 </script>
@@ -851,18 +932,18 @@ onBeforeUnmount(() => {
             </span>
             <div>
               <strong>站点音乐</strong>
-              <small>{{ sourceName }}<template v-if="sourceVersion"> · v{{ sourceVersion }}</template></small>
+              <small>{{ hasSource ? sourceName + (sourceVersion ? ' · v' + sourceVersion : '') : '本地音乐' + (localCount ? ' · ' + localCount + ' 首' : '') }}</small>
             </div>
           </div>
           <span class="sm-source-pill" :title="sourcePlatforms.join(' / ')">
-            {{ sourcePlatforms.length ? sourcePlatforms.join(' · ') : 'LX 音源' }}
+            {{ headerSourceLabel }}
           </span>
           <button type="button" class="sm-icon-btn sm-close" aria-label="收起播放器" @click="closePanel">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 9 6 6 6-6" /></svg>
           </button>
         </header>
 
-        <div class="sm-search">
+        <div v-if="hasSource" class="sm-search">
           <span class="sm-search-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
           </span>
@@ -888,14 +969,73 @@ onBeforeUnmount(() => {
         </div>
 
         <nav class="sm-tabs" aria-label="播放器视图">
-          <button type="button" :class="{ on: view === 'charts' }" @click="showChartsView">热歌榜</button>
+          <button type="button" :class="{ on: view === 'local' }" @click="showLocalView">
+            本地音乐 <em v-if="localCount">{{ localCount }}</em>
+          </button>
+          <button v-if="hasSource" type="button" :class="{ on: view === 'charts' }" @click="showChartsView">热歌榜</button>
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
             播放列表 <em>{{ queue.length }}</em>
           </button>
-          <button type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
+          <button v-if="hasSource" type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
         </nav>
 
-        <div v-if="view === 'charts'" ref="chartBody" class="sm-body sm-chart-body">
+        <div v-if="view === 'local'" class="sm-body sm-local-body">
+          <div class="sm-local-head">
+            <div>
+              <span class="sm-chart-kicker">LOCAL LIBRARY</span>
+              <strong>本地音乐</strong>
+              <small>{{ localCount ? `本站已上传 ${localCount} 首，点击即可播放` : '上传到本站的音频会显示在这里' }}</small>
+            </div>
+            <div class="sm-chart-actions">
+              <button type="button" class="sm-text-btn" :disabled="localLoading" @click="loadLocalTracks(false)">刷新</button>
+              <button v-if="localTracks.length" type="button" class="sm-chart-playall" @click="playAllLocal">播放全部</button>
+            </div>
+          </div>
+
+          <div v-if="localPending" class="sm-search-loading">
+            <span class="sm-spinner" aria-hidden="true"></span>
+            <p>正在读取本地音乐…</p>
+          </div>
+
+          <div v-else-if="localError" class="sm-search-error">
+            <span>!</span>
+            <div>
+              <strong>本地音乐暂时不可用</strong>
+              <p>{{ localError }}</p>
+            </div>
+            <button type="button" class="sm-text-btn" @click="loadLocalTracks(false)">重试</button>
+          </div>
+
+          <div v-else-if="localTracks.length" class="sm-local-list" role="list" aria-label="本地音乐">
+            <button
+              v-for="track in localTracks"
+              :key="track.id"
+              type="button"
+              class="sm-local-row"
+              role="listitem"
+              @click="selectLocalTrack(track)"
+            >
+              <span class="sm-local-cover">{{ coverLetter(track) }}</span>
+              <span class="sm-local-copy">
+                <strong>{{ track.title }}</strong>
+                <small>{{ track.artist || '未知歌手' }}<template v-if="track.album"> · {{ track.album }}</template></small>
+              </span>
+              <span class="sm-local-duration">{{ track.duration ? formatTime(track.duration) : '本地' }}</span>
+              <span class="sm-local-play" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+              </span>
+            </button>
+          </div>
+
+          <div v-else class="sm-empty sm-local-empty">
+            <span class="sm-empty-orb">♪</span>
+            <strong>还没有本地音乐</strong>
+            <p>在管理后台“站点音乐 → 本地音乐”上传音频后，会出现在这里。</p>
+            <button type="button" class="sm-empty-action" @click="showChartsView" v-if="hasSource">去听热歌榜</button>
+          </div>
+        </div>
+
+        <div v-else-if="view === 'charts'" ref="chartBody" class="sm-body sm-chart-body">
           <div class="sm-platform-tabs" role="tablist" aria-label="热歌榜平台">
             <button
               v-for="platform in chartPlatforms"
@@ -1082,8 +1222,8 @@ onBeforeUnmount(() => {
           <div v-if="quietEmpty" class="sm-empty">
             <span class="sm-empty-orb">♪</span>
             <strong>还没有播放队列</strong>
-            <p>搜索一首歌，或者从搜索结果里挑一首开始。</p>
-            <button type="button" class="sm-empty-action" @click="view = 'search'">去搜索</button>
+            <p>{{ hasSource ? '搜索一首歌，或者从搜索结果里挑一首开始。' : '从本地音乐里挑一首开始播放。' }}</p>
+            <button type="button" class="sm-empty-action" @click="openSearchOrLocal">{{ hasSource ? '去搜索' : '浏览本地音乐' }}</button>
           </div>
         </div>
 
@@ -1132,9 +1272,9 @@ onBeforeUnmount(() => {
         </div>
 
         <footer class="sm-foot">
-          <span>{{ sourceName }}<template v-if="sourceVersion"> v{{ sourceVersion }}</template></span>
+          <span>{{ footerSourceLabel }}</span>
           <span v-if="currentTrack">{{ playing ? '正在播放' : '已暂停' }} · {{ currentTrack.title }}</span>
-          <span v-else>搜索 / 队列 / 音量 / 播放模式</span>
+          <span v-else>本地音乐 / 搜索 / 队列 / 音量</span>
         </footer>
       </aside>
     </transition>
@@ -1185,7 +1325,7 @@ onBeforeUnmount(() => {
   position: fixed;
   right: 22px;
   bottom: 22px;
-  z-index: 82;
+  z-index: 110;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -1414,6 +1554,24 @@ onBeforeUnmount(() => {
 .sm-chart-play { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
 .sm-chart-play svg { width: 13px; height: 13px; }
 .sm-chart-empty { padding-top: 20px; }
+
+.sm-local-body { display: flex; flex-direction: column; gap: 10px; }
+.sm-local-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; flex: 0 0 auto; padding: 2px 2px 0; }
+.sm-local-head > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.sm-local-head strong { overflow: hidden; color: var(--ink); font-size: 16px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.sm-local-head small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-local-list { display: flex; flex-direction: column; gap: 2px; padding-bottom: 3px; }
+.sm-local-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 5px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.sm-local-row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.sm-local-row:hover .sm-local-play { border-color: var(--accent); background: var(--accent); color: #fff; }
+.sm-local-cover { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 18%, var(--paper)), color-mix(in srgb, #8d6bff 12%, var(--paper))); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
+.sm-local-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.sm-local-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sm-local-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-local-duration { flex: 0 0 auto; color: var(--muted); font-size: 8.5px; font-variant-numeric: tabular-nums; }
+.sm-local-play { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
+.sm-local-play svg { width: 13px; height: 13px; }
+.sm-local-empty { padding-top: 18px; }
 
 .sm-body { min-height: 0; flex: 1; overflow-y: auto; padding: 12px 15px 4px; scrollbar-width: thin; }
 .sm-queue-body { display: flex; flex-direction: column; gap: 11px; }

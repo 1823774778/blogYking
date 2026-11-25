@@ -1,6 +1,7 @@
 package com.deek.blog.controller;
 
 import com.deek.blog.common.ApiResponse;
+import com.deek.blog.service.LocalMusicService;
 import com.deek.blog.service.MusicPlaylistService;
 import com.deek.blog.service.MusicSourceService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -8,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -16,10 +18,14 @@ public class MusicController {
 
     private final MusicPlaylistService musicPlaylistService;
     private final MusicSourceService musicSourceService;
+    private final LocalMusicService localMusicService;
 
-    public MusicController(MusicPlaylistService musicPlaylistService, MusicSourceService musicSourceService) {
+    public MusicController(MusicPlaylistService musicPlaylistService,
+                           MusicSourceService musicSourceService,
+                           LocalMusicService localMusicService) {
         this.musicPlaylistService = musicPlaylistService;
         this.musicSourceService = musicSourceService;
+        this.localMusicService = localMusicService;
     }
 
     /** 旧版歌单接口保留，兼容已保存旧配置的站点。 */
@@ -31,6 +37,11 @@ public class MusicController {
     @GetMapping("/source")
     public ApiResponse<Map<String, Object>> source() {
         return ApiResponse.ok(musicSourceService.status());
+    }
+
+    @GetMapping("/local")
+    public ApiResponse<List<Map<String, Object>>> localTracks() {
+        return ApiResponse.ok(localMusicService.publicTracks());
     }
 
     @GetMapping("/search")
