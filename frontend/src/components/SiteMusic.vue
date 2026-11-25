@@ -13,6 +13,13 @@ const SUGGESTIONS = ['晴天', '起风了', '慢慢喜欢你', '后来', '夜曲
 const STORAGE_KEY = 'deek.music.player.v1'
 const FAB_OFFSET_KEY = 'deek.music.fab.offset.v1'
 const CHART_TTL_MILLIS = 10 * 60 * 1000
+const PLAYLIST_SUFFIX = {
+  wy: '热歌榜',
+  tx: '热歌榜',
+  kg: ' TOP500',
+  kw: '热歌',
+  mg: '热歌'
+}
 const FALLBACK_PLATFORM_LABELS = {
   wy: '网易音乐',
   tx: 'QQ 音乐',
@@ -134,9 +141,20 @@ const hasCharts = computed(() => sourceActive.value && chartPlatforms.value.leng
 const searchPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.search))
 const searchPlatformLabel = computed(() => searchPlatforms.value[0]?.label || '网易云')
 const hasSearch = computed(() => sourceActive.value && searchPlatforms.value.length > 0)
+const playlistCards = computed(() => chartPlatforms.value.map((platform, index) => ({
+  code: platform.code,
+  label: platform.label,
+  title: `${platform.label}${PLAYLIST_SUFFIX[platform.code] || '热歌榜'}`,
+  subtitle: platform.code === 'kw' || platform.code === 'mg' ? '热门聚合歌单' : '平台公开歌单',
+  color: platform.color,
+  cover: chartData.value[platform.code]?.tracks?.[0]?.cover || '',
+  trackCount: Number(chartData.value[platform.code]?.total || 20),
+  wide: index === chartPlatforms.value.length - 1 && chartPlatforms.value.length % 2 === 1
+})))
+const hasPlaylists = computed(() => sourceActive.value && playlistCards.value.length > 0)
 const sourceFeatureLabel = computed(() => {
   const features = []
-  if (hasCharts.value) features.push('榜单')
+  if (hasPlaylists.value) features.push('歌单')
   if (hasSearch.value) features.push('搜索')
   features.push('队列', '音量')
   return features.join(' / ')
@@ -145,6 +163,9 @@ const activeChart = computed(() => chartData.value[activePlatform.value] || null
 const activeChartTracks = computed(() => Array.isArray(activeChart.value?.tracks) ? activeChart.value.tracks : [])
 const activePlatformInfo = computed(() => sourcePlatforms.value.find((platform) => platform.code === activePlatform.value))
 const activePlatformLabel = computed(() => activePlatformInfo.value?.label || activePlatform.value)
+const activePlaylist = computed(() => playlistCards.value.find((item) => item.code === activePlatform.value) || null)
+const activePlaylistTitle = computed(() => activeChart.value?.chartTitle || activePlaylist.value?.title || `${activePlatformLabel.value}歌单`)
+const activePlaylistCover = computed(() => activeChartTracks.value[0]?.cover || activePlaylist.value?.cover || '')
 const panelStyle = computed(() => {
   const placement = panelPlacement.value
   if (!placement) return {}
@@ -201,6 +222,10 @@ const showPlayer = computed(() =>
   state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
 )
 const headerSourceLabel = computed(() => {
+  if (sourceActive.value && playlistCards.value.length) {
+    if (playlistCards.value.length <= 2) return playlistCards.value.map((item) => item.title).join(' · ')
+    return `${playlistCards.value.length} 个歌单`
+  }
   if (sourceActive.value && sourcePlatforms.value.length) {
     if (sourcePlatforms.value.length <= 2) return sourcePlatforms.value.map((platform) => platform.label).join(' · ')
     return `${sourcePlatforms.value.length} 个平台`
@@ -209,7 +234,9 @@ const headerSourceLabel = computed(() => {
   return localCount.value ? `本地音乐 ${localCount.value}` : '站点音乐'
 })
 const headerSourceTitle = computed(() => sourceActive.value
-  ? sourcePlatforms.value.map((platform) => platform.label).join(' · ')
+  ? (playlistCards.value.length
+      ? playlistCards.value.map((item) => item.title).join(' · ')
+      : sourcePlatforms.value.map((platform) => platform.label).join(' · '))
   : '')
 const footerSourceLabel = computed(() => {
   if (sourceActive.value) return sourceName.value + (sourceVersion.value ? ` v${sourceVersion.value}` : '')
@@ -307,24 +334,28 @@ watch(muted, (value) => {
 
 function reconcileAvailableView() {
   if (chartPlatforms.value.length && !platformInitialized) {
-    // 只展示音源声明的平台；默认选中其中更稳定的解析通道。
+    // 默认选中更稳定的解析通道；歌单宫格不预加载歌曲。
     activePlatform.value = preferredPlatform()
     platformInitialized = true
-    if (view.value === 'charts') ensureCharts(activePlatform.value)
   } else if (hasCharts.value && !chartPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
     activePlatform.value = preferredPlatform()
+  }
+  if (view.value === 'playlist' && !playlistCards.value.some((item) => item.code === activePlatform.value)) {
+    view.value = 'charts'
   }
   if (!panelOpen.value) return
   const allowed = [
     ...(localActive.value ? ['local'] : []),
-    ...(hasCharts.value ? ['charts'] : []),
+    ...(hasCharts.value ? ['charts', 'playlist'] : []),
     'queue',
     ...(hasSearch.value ? ['search'] : [])
   ]
-  if (allowed.includes(view.value)) return
+  if (allowed.includes(view.value)) {
+    if (view.value === 'playlist') ensureCharts(activePlatform.value)
+    return
+  }
   view.value = defaultView()
-  if (view.value === 'charts') ensureCharts(activePlatform.value)
-  else if (view.value === 'local') loadLocalTracks(false)
+  if (view.value === 'local') loadLocalTracks(false)
 }
 
 watch([contentMode, hasSource, hasCharts, hasSearch, localActive], reconcileAvailableView)
@@ -332,6 +363,7 @@ watch(sourcePlatformCodes, reconcileAvailableView)
 watch(sourceDetails, reconcileAvailableView, { deep: true })
 watch(sourceUrl, () => {
   platformInitialized = false
+  if (view.value === 'playlist') view.value = 'charts'
   chartSeq.value += 1
   chartData.value = {}
   chartLoading.value = false
@@ -459,7 +491,6 @@ function openPanel() {
   view.value = target
   if (target === 'charts') {
     resetChartScroll()
-    ensureCharts(activePlatform.value)
   } else if (target === 'search') {
     nextTick(() => searchInput.value?.focus())
   } else if (target === 'local') {
@@ -498,7 +529,6 @@ function showChartsView() {
   }
   view.value = 'charts'
   resetChartScroll()
-  ensureCharts(activePlatform.value)
 }
 
 async function loadLocalTracks(silent = true) {
@@ -520,7 +550,6 @@ function showLocalView() {
     if (sourceActive.value) {
       if (hasCharts.value) {
         view.value = 'charts'
-        ensureCharts(activePlatform.value)
       } else if (hasSearch.value) {
         view.value = 'search'
         nextTick(() => searchInput.value?.focus())
@@ -626,9 +655,10 @@ async function loadCharts(code = activePlatform.value, force = false) {
   }
 }
 
-function switchPlatform(code) {
+function openPlaylist(code) {
   platformInitialized = true
-  if (code === activePlatform.value && activeChart.value) return
+  activePlatform.value = code
+  view.value = 'playlist'
   resetChartScroll()
   ensureCharts(code)
 }
@@ -872,6 +902,120 @@ function playIndex(index, autoplay = true) {
   resolveAndPlay(track, autoplay)
 }
 
+async function requestPlaybackUrl(lookup, seq, requested = resolveQuality.value) {
+  const qualities = requested === '128k' ? ['128k'] : [requested, '128k']
+  let lastError = new Error('播放地址为空')
+  for (const quality of qualities) {
+    try {
+      const res = await http.get('/music/url', {
+        params: {
+          id: String(lookup.id),
+          source: lookup.source || 'wy',
+          quality
+        },
+        timeout: 30000
+      })
+      if (seq !== playSeq) return null
+      const url = res.data?.proxyUrl || res.data?.url
+      if (url) return { url, quality: res.data?.quality || quality }
+      lastError = new Error('播放地址为空')
+    } catch (e) {
+      lastError = e
+    }
+  }
+  throw lastError
+}
+
+function sourceLabelFor(code) {
+  const platform = sourcePlatforms.value.find((item) => item.code === code)
+  return platform?.label || FALLBACK_PLATFORM_LABELS[code] || String(code || '').toUpperCase()
+}
+
+async function fetchFallbackCandidates(track) {
+  if (!track || track.source === 'local') return []
+  try {
+    const res = await http.get('/music/fallback', {
+      params: {
+        title: track.title,
+        artist: track.artist || '',
+        source: track.source || ''
+      },
+      timeout: 30000
+    })
+    return Array.isArray(res.data?.candidates) ? res.data.candidates : []
+  } catch (e) {
+    return []
+  }
+}
+
+function applyFallbackCandidate(track, candidate) {
+  if (!track.fallbackOriginalSource) track.fallbackOriginalSource = track.source
+  track.source = String(candidate.source || track.source)
+  track.id = String(candidate.id || track.id)
+  track.album = candidate.album || track.album || ''
+  track.cover = candidate.cover || track.cover || ''
+  track.duration = Number(candidate.duration) || track.duration || 0
+  track.fee = Number(candidate.fee) || 0
+  track.pageUrl = candidate.pageUrl || ''
+  track.fallbackLabel = candidate.platformLabel || sourceLabelFor(track.source)
+}
+
+async function tryFallbackPlayback(track, autoplay = true, outerSeq = null) {
+  if (!track || track.source === 'local') return false
+  if (track.fallbackRunning) return false
+  const seq = outerSeq == null ? ++playSeq : outerSeq
+  if (seq !== playSeq) return false
+  track.fallbackRunning = true
+  loadingTrack.value = true
+  track.urlLoading = true
+  track.urlError = ''
+  playing.value = false
+  if (audio.value) audio.value.pause()
+  try {
+    if (!Array.isArray(track.fallbackCandidates)) {
+      toast('当前来源不可用，正在匹配歌名一致的其他来源…', 'info')
+      track.fallbackCandidates = await fetchFallbackCandidates(track)
+      track.fallbackIndex = 0
+    }
+    if (seq !== playSeq || queue.value[currentIndex.value] !== track) return false
+    const candidates = track.fallbackCandidates
+    if (!candidates.length) {
+      track.fallbackMessage = '没有找到歌名和歌手都一致的其他来源'
+      return false
+    }
+    while (Number(track.fallbackIndex || 0) < candidates.length) {
+      const candidate = candidates[Number(track.fallbackIndex || 0)]
+      track.fallbackIndex = Number(track.fallbackIndex || 0) + 1
+      if (!candidate?.id || !candidate?.source) continue
+      try {
+        const resolved = await requestPlaybackUrl(candidate, seq)
+        if (!resolved || seq !== playSeq || queue.value[currentIndex.value] !== track) return false
+        applyFallbackCandidate(track, candidate)
+        track.url = resolved.url
+        track.quality = resolved.quality
+        track.urlRetried = true
+        track.urlLoading = false
+        track.urlError = ''
+        loadingTrack.value = false
+        track.fallbackRunning = false
+        await nextTick()
+        if (seq !== playSeq || queue.value[currentIndex.value] !== track) return false
+        toast(`已切换到${track.fallbackLabel}继续播放`, 'info')
+        startAudio(track, autoplay)
+        return true
+      } catch (e) {
+        /* 继续尝试下一个平台的同名歌曲 */
+      }
+    }
+    track.fallbackMessage = '其他来源也没有可用的播放地址'
+    return false
+  } finally {
+    track.fallbackRunning = false
+    track.urlLoading = false
+    if (seq === playSeq) loadingTrack.value = false
+  }
+}
+
 async function resolveAndPlay(track, autoplay = true, retrying = false) {
   const seq = ++playSeq
   loadingTrack.value = true
@@ -882,38 +1026,11 @@ async function resolveAndPlay(track, autoplay = true, retrying = false) {
   }
   playing.value = false
   try {
-    const requested = resolveQuality.value
-    const qualities = requested === '128k' ? ['128k'] : [requested, '128k']
-    let lastError = new Error('播放地址为空')
-    let resolvedUrl = ''
-    let resolvedQuality = requested
-    for (const quality of qualities) {
-      try {
-        const res = await http.get('/music/url', {
-          params: {
-            id: track.id,
-            source: track.source || 'wy',
-            quality
-          },
-          timeout: 30000
-        })
-        if (seq !== playSeq) return
-        const url = res.data?.proxyUrl || res.data?.url
-        if (url) {
-          resolvedUrl = url
-          resolvedQuality = res.data?.quality || quality
-          break
-        }
-        lastError = new Error('播放地址为空')
-      } catch (e) {
-        lastError = e
-      }
-    }
-    if (seq !== playSeq) return
-    if (!resolvedUrl) throw lastError
-    if (currentIndex.value < 0 || queue.value[currentIndex.value]?.id !== track.id) return
-    track.url = resolvedUrl
-    track.quality = resolvedQuality
+    const resolved = await requestPlaybackUrl(track, seq)
+    if (!resolved || seq !== playSeq) return
+    if (queue.value[currentIndex.value] !== track) return
+    track.url = resolved.url
+    track.quality = resolved.quality
     track.urlRetried = retrying
     track.urlLoading = false
     loadingTrack.value = false
@@ -922,9 +1039,11 @@ async function resolveAndPlay(track, autoplay = true, retrying = false) {
     startAudio(track, autoplay)
   } catch (e) {
     if (seq !== playSeq) return
+    const switched = await tryFallbackPlayback(track, autoplay, seq)
+    if (seq !== playSeq || switched) return
     track.urlLoading = false
     loadingTrack.value = false
-    track.urlError = apiErrorMessage(e, '该歌曲暂时无法播放')
+    track.urlError = track.fallbackMessage || apiErrorMessage(e, '该歌曲暂时无法播放')
     playing.value = false
     toast(track.urlError, 'error')
   }
@@ -1096,19 +1215,30 @@ function onAudioError() {
   const track = currentTrack.value
   if (!track?.url) return
   playing.value = false
-  if (track.source !== 'local' && !track.urlRetried) {
-    track.urlRetried = true
-    track.url = ''
-    track.urlError = ''
-    toast('播放地址已失效，正在重新获取…', 'info')
-    resolveAndPlay(track, true, true)
+  if (track.source === 'local') {
+    const message = '本地音频加载失败，请确认文件仍在站内'
+    track.urlError = message
+    toast(message, 'error')
     return
   }
-  const message = track.source === 'local'
-    ? '本地音频加载失败，请确认文件仍在站内'
-    : '音乐无法播放，请检查音源是否可用后重试'
-  track.urlError = message
-  toast(message, 'error')
+  if (track.fallbackRunning) return
+  track.urlLoading = true
+  track.urlError = ''
+  tryFallbackPlayback(track, true).then((switched) => {
+    if (switched || currentTrack.value !== track) return
+    const message = track.fallbackMessage || '音乐无法播放，请检查音源是否可用后重试'
+    track.urlLoading = false
+    loadingTrack.value = false
+    track.urlError = message
+    playing.value = false
+    toast(message, 'error')
+  }).catch(() => {
+    if (currentTrack.value !== track) return
+    track.urlLoading = false
+    loadingTrack.value = false
+    track.urlError = '音乐无法播放，请检查音源是否可用后重试'
+    toast(track.urlError, 'error')
+  })
 }
 
 function onKeydown(event) {
@@ -1227,7 +1357,7 @@ onBeforeUnmount(() => {
           <button v-if="localActive" type="button" :class="{ on: view === 'local' }" @click="showLocalView">
             本地音乐 <em v-if="localCount">{{ localCount }}</em>
           </button>
-          <button v-if="hasCharts" type="button" :class="{ on: view === 'charts' }" @click="showChartsView">榜单</button>
+          <button v-if="hasCharts" type="button" :class="{ on: view === 'charts' || view === 'playlist' }" @click="showChartsView">歌单</button>
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
             播放列表 <em>{{ queue.length }}</em>
           </button>
@@ -1286,56 +1416,105 @@ onBeforeUnmount(() => {
             <span class="sm-empty-orb">♪</span>
             <strong>还没有本地音乐</strong>
             <p>在管理后台“站点音乐 → 本地音乐”上传音频后，会出现在这里。</p>
-            <button type="button" class="sm-empty-action" @click="showChartsView" v-if="hasCharts">去听榜单</button>
+            <button type="button" class="sm-empty-action" @click="showChartsView" v-if="hasCharts">去听歌单</button>
           </div>
         </div>
 
-        <div v-else-if="view === 'charts' && hasCharts" ref="chartBody" class="sm-body sm-chart-body">
-          <div class="sm-platform-tabs" role="tablist" aria-label="音源榜单平台">
+        <div v-else-if="view === 'charts' && hasCharts" class="sm-body sm-playlist-body">
+          <div class="sm-playlist-head">
+            <div>
+              <span class="sm-chart-kicker">PLAYLISTS</span>
+              <strong>歌单</strong>
+              <small>来自当前音源的 {{ playlistCards.length }} 个歌单，点击查看歌曲</small>
+            </div>
+          </div>
+
+          <div v-if="playlistCards.length" class="sm-playlist-grid" role="list" aria-label="歌单">
             <button
-              v-for="platform in chartPlatforms"
-              :key="platform.code"
+              v-for="playlist in playlistCards"
+              :key="playlist.code"
               type="button"
-              role="tab"
-              :aria-selected="activePlatform === platform.code"
-              :class="{ on: activePlatform === platform.code }"
-              :title="platform.label"
-              @click="switchPlatform(platform.code)"
+              class="sm-playlist-card"
+              :class="{ wide: playlist.wide }"
+              role="listitem"
+              :aria-label="`打开歌单 ${playlist.title}`"
+              @click="openPlaylist(playlist.code)"
             >
-              <i :style="{ background: platform.color }" aria-hidden="true"></i><span>{{ platform.label }}</span>
+              <span class="sm-playlist-cover" :style="{ '--sm-playlist-tone': playlist.color }">
+                <img
+                  v-if="playlist.cover"
+                  :src="playlist.cover"
+                  alt=""
+                  referrerpolicy="no-referrer"
+                  loading="lazy"
+                  @error="$event.target.style.display = 'none'"
+                />
+                <span v-else class="sm-playlist-glyph" aria-hidden="true">{{ playlist.label.slice(0, 1) }}</span>
+                <i class="sm-playlist-shine" aria-hidden="true"></i>
+                <span class="sm-playlist-count">{{ playlist.trackCount }} 首</span>
+              </span>
+              <span class="sm-playlist-copy">
+                <strong>{{ playlist.title }}</strong>
+                <small>{{ playlist.subtitle }}</small>
+              </span>
+              <span class="sm-playlist-arrow" aria-hidden="true">→</span>
             </button>
           </div>
 
-          <div class="sm-chart-head">
-            <div>
-              <span class="sm-chart-kicker">{{ activePlatformLabel }} · SOURCE</span>
-              <strong>{{ activeChart?.chartTitle || activePlatformLabel + '榜单' }}</strong>
-              <small v-if="activeChart?.fallback">音源可用内容 · 点击歌曲加入队列</small>
-              <small v-else>音源当前可用榜单 · 点击歌曲加入队列</small>
-            </div>
-            <div class="sm-chart-actions">
-              <button type="button" class="sm-text-btn" :disabled="chartLoading" @click="refreshChart">刷新</button>
-              <button v-if="activeChartTracks.length" type="button" class="sm-chart-playall" @click="playChartAll">
-                播放全部
-              </button>
+          <div v-else class="sm-empty sm-chart-empty">
+            <span class="sm-empty-orb">♪</span>
+            <strong>音源暂未提供歌单</strong>
+            <p>当前音源没有可用的歌单内容，试试直接搜索歌曲。</p>
+          </div>
+        </div>
+
+        <div v-else-if="view === 'playlist' && hasCharts" ref="chartBody" class="sm-body sm-chart-body">
+          <div class="sm-playlist-detail">
+            <button type="button" class="sm-playlist-back" @click="showChartsView">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg>
+              歌单
+            </button>
+
+            <div class="sm-playlist-hero">
+              <div class="sm-playlist-hero-cover" :style="{ '--sm-playlist-tone': activePlaylist?.color || 'var(--accent)' }">
+                <img
+                  v-if="activePlaylistCover"
+                  :src="activePlaylistCover"
+                  alt=""
+                  referrerpolicy="no-referrer"
+                  @error="$event.target.style.display = 'none'"
+                />
+                <span v-else aria-hidden="true">{{ (activePlaylist?.label || '歌').slice(0, 1) }}</span>
+              </div>
+              <div class="sm-playlist-hero-copy">
+                <span class="sm-chart-kicker">{{ activePlatformLabel }} · PLAYLIST</span>
+                <strong>{{ activePlaylistTitle }}</strong>
+                <small>{{ activeChartTracks.length ? `${activeChartTracks.length} 首 · 点击歌曲加入队列` : '正在整理歌单…' }}</small>
+              </div>
+              <div class="sm-chart-actions">
+                <button type="button" class="sm-text-btn" :disabled="chartLoading" @click="refreshChart">刷新</button>
+                <button v-if="activeChartTracks.length" type="button" class="sm-chart-playall" @click="playChartAll">
+                  播放全部
+                </button>
+              </div>
             </div>
           </div>
 
           <div v-if="chartLoading" class="sm-search-loading">
             <span class="sm-spinner" aria-hidden="true"></span>
-            <p>正在加载{{ activePlatformLabel }}榜单…</p>
+            <p>正在加载{{ activePlaylistTitle }}…</p>
           </div>
 
           <div v-else-if="chartError" class="sm-search-error">
             <span>!</span>
             <div>
-              <strong>榜单暂时不可用</strong>
+              <strong>歌单暂时不可用</strong>
               <p>{{ chartError }}</p>
             </div>
             <button type="button" class="sm-text-btn" @click="refreshChart">重试</button>
           </div>
 
-          <div v-else-if="activeChartTracks.length" class="sm-chart-list" role="list" :aria-label="activePlatformLabel + '榜单'">
+          <div v-else-if="activeChartTracks.length" class="sm-chart-list" role="list" :aria-label="activePlaylistTitle">
             <button
               v-for="(track, index) in activeChartTracks"
               :key="track.source + '-' + track.id + '-' + index"
@@ -1363,8 +1542,9 @@ onBeforeUnmount(() => {
 
           <div v-else class="sm-empty sm-chart-empty">
             <span class="sm-empty-orb">♪</span>
-            <strong>音源暂未返回榜单</strong>
-            <p>切换其他平台，或直接搜索想听的歌曲。</p>
+            <strong>这个歌单暂时没有歌曲</strong>
+            <p>刷新试试，或返回歌单看看其他内容。</p>
+            <button type="button" class="sm-empty-action" @click="showChartsView">返回歌单</button>
           </div>
         </div>
 
@@ -1750,54 +1930,167 @@ onBeforeUnmount(() => {
 .sm-tabs em { color: var(--accent-ink); font-size: 9px; font-style: normal; }
 
 .sm-chart-body { display: flex; flex-direction: column; gap: 9px; }
-.sm-platform-tabs, .sm-chart-head, .sm-chart-list, .sm-chart-empty { flex: 0 0 auto; }
-.sm-platform-tabs {
+.sm-playlist-body { display: flex; flex-direction: column; gap: 10px; }
+.sm-playlist-head { display: grid; gap: 2px; padding: 2px 2px 0; }
+.sm-playlist-head > div { display: grid; gap: 2px; min-width: 0; }
+.sm-playlist-head strong { color: var(--ink); font-size: 18px; letter-spacing: -.03em; }
+.sm-playlist-head small { color: var(--muted); font-size: 9px; line-height: 1.5; }
+.sm-chart-kicker { color: var(--accent-ink); font-size: 8px; font-weight: 800; letter-spacing: .13em; }
+
+.sm-playlist-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
-  gap: 5px;
-  padding: 1px 0 3px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding-bottom: 3px;
 }
-.sm-platform-tabs button {
+.sm-playlist-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.sm-playlist-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  box-shadow: 0 10px 24px -18px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.sm-playlist-card.wide { grid-column: span 2; }
+.sm-playlist-cover {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  aspect-ratio: 1.55;
+  overflow: hidden;
+  border-radius: 9px;
+  background:
+    radial-gradient(120% 90% at 82% 8%, color-mix(in srgb, var(--sm-playlist-tone) 34%, #fff) 0 12%, transparent 52%),
+    linear-gradient(135deg, color-mix(in srgb, var(--sm-playlist-tone) 72%, #0a1d36), color-mix(in srgb, var(--sm-playlist-tone) 54%, #dce9ff));
+}
+.sm-playlist-card.wide .sm-playlist-cover { aspect-ratio: 2.7; }
+.sm-playlist-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.sm-playlist-cover::after {
+  content: "";
+  position: absolute;
+  inset: 25% 0 0;
+  background: linear-gradient(180deg, transparent, rgba(4, 16, 34, .58));
+  pointer-events: none;
+}
+.sm-playlist-glyph {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 3px 9px;
+  color: rgba(255, 255, 255, .78);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, .22);
+}
+.sm-playlist-shine {
+  position: absolute;
+  top: -24%;
+  left: -36%;
+  width: 46%;
+  height: 150%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .2), transparent);
+  transform: rotate(18deg);
+  pointer-events: none;
+}
+.sm-playlist-count {
+  position: absolute;
+  z-index: 1;
+  left: 8px;
+  bottom: 7px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(5, 18, 38, .42);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 650;
+  backdrop-filter: blur(6px);
+}
+.sm-playlist-arrow {
+  position: absolute;
+  z-index: 2;
+  top: 13px;
+  right: 13px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, .32);
+  border-radius: 50%;
+  background: rgba(5, 18, 38, .24);
+  color: #fff;
+  font-size: 11px;
+  backdrop-filter: blur(6px);
+}
+.sm-playlist-copy { display: grid; gap: 2px; min-width: 0; padding: 0 2px 1px; }
+.sm-playlist-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.sm-playlist-copy small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+.sm-playlist-detail { display: grid; gap: 8px; flex: 0 0 auto; }
+.sm-playlist-back {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--paper) 90%, transparent);
+  align-self: flex-start;
+  gap: 3px;
+  padding: 2px 3px 2px 0;
+  border: 0;
+  background: transparent;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 9.5px;
   cursor: pointer;
-  transition: border-color .16s ease, background .16s ease, color .16s ease;
 }
-.sm-platform-tabs button:hover { border-color: var(--accent); color: var(--ink); }
-.sm-platform-tabs button.on {
-  border-color: color-mix(in srgb, var(--accent) 54%, var(--line));
-  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
-  color: var(--ink);
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 8%, transparent);
+.sm-playlist-back svg { width: 12px; height: 12px; }
+.sm-playlist-back:hover { color: var(--accent-ink); }
+.sm-playlist-hero {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 13%, var(--line));
+  border-radius: 13px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--paper)), var(--paper));
 }
-.sm-platform-tabs button i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; opacity: .82; }
-.sm-platform-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sm-platform-tabs button.on i { opacity: 1; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); }
-
-.sm-chart-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
-.sm-chart-head > div:first-child { display: grid; gap: 2px; min-width: 0; }
-.sm-chart-kicker { color: var(--accent-ink); font-size: 8px; font-weight: 800; letter-spacing: .13em; }
-.sm-chart-head strong { overflow: hidden; color: var(--ink); font-size: 16px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
-.sm-chart-head small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
-.sm-chart-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.sm-playlist-hero-cover {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
+  overflow: hidden;
+  border-radius: 11px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--sm-playlist-tone) 72%, #0a1d36), color-mix(in srgb, var(--sm-playlist-tone) 52%, #e2ecff));
+  color: #fff;
+  font-size: 23px;
+  font-weight: 800;
+  box-shadow: 0 8px 18px -14px color-mix(in srgb, var(--sm-playlist-tone) 55%, transparent);
+}
+.sm-playlist-hero-cover img { width: 100%; height: 100%; object-fit: cover; }
+.sm-playlist-hero-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.sm-playlist-hero-copy strong { overflow: hidden; color: var(--ink); font-size: 15px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.sm-playlist-hero-copy small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-chart-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 .sm-chart-actions .sm-text-btn:disabled { opacity: .45; cursor: default; text-decoration: none; }
 .sm-chart-playall {
-  padding: 5px 10px;
+  padding: 5px 9px;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 8%, var(--paper));
   color: var(--accent-ink);
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;

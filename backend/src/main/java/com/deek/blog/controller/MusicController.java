@@ -73,6 +73,13 @@ public class MusicController {
         return ApiResponse.ok(musicSourceService.charts(platform, limit));
     }
 
+    @GetMapping("/fallback")
+    public ApiResponse<Map<String, Object>> fallback(@RequestParam(name = "title") String title,
+                                                     @RequestParam(name = "artist", defaultValue = "") String artist,
+                                                     @RequestParam(name = "source", defaultValue = "") String source) {
+        return ApiResponse.ok(musicSourceService.fallbackCandidates(title, artist, source));
+    }
+
     @GetMapping("/url")
     public ApiResponse<Map<String, Object>> url(@RequestParam(name = "id") String id,
                                                 @RequestParam(name = "source", defaultValue = "wy") String source,

@@ -19,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -33,7 +34,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * LX 音源导入、歌曲搜索与播放地址解析。
@@ -367,6 +370,156 @@ public class MusicSourceService {
         }
     }
 
+    /**
+     * 为播放失败的歌曲寻找其他平台的同名歌曲。只返回歌名完全一致且歌手能对上的候选，
+     * 避免自动切源时播成同名但不是同一首歌。
+     */
+    public Map<String, Object> fallbackCandidates(String title, String artist, String source) {
+        String wantedTitle = String.valueOf(title == null ? "" : title).trim();
+        String wantedArtist = String.valueOf(artist == null ? "" : artist).trim();
+        if (wantedTitle.isBlank()) throw new BizException("缺少歌曲名称");
+        if (wantedTitle.length() > 100) wantedTitle = wantedTitle.substring(0, 100);
+        if (wantedArtist.length() > 100) wantedArtist = wantedArtist.substring(0, 100);
+        final String searchTitle = wantedTitle;
+        String exclude = String.valueOf(source == null ? "" : source).trim().toLowerCase(Locale.ROOT);
+
+        String sourceUrl = requireSourceUrl();
+        LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        String normalizedTitle = normalizeSongText(wantedTitle);
+        if (normalizedTitle.isBlank()) throw new BizException("歌曲名称不合法");
+
+        List<String> searched = new ArrayList<>();
+        List<CompletableFuture<List<Map<String, Object>>>> futures = new ArrayList<>();
+        for (Map.Entry<String, LxSourceRuntime.PlatformInfo> item : runtime.platforms().entrySet()) {
+            String code = String.valueOf(item.getKey() == null ? "" : item.getKey()).trim().toLowerCase(Locale.ROOT);
+            if (code.isBlank() || code.equals(exclude)) continue;
+            List<String> actions = item.getValue().actions();
+            boolean canPlay = actions.isEmpty()
+                    || actions.stream().anyMatch(action -> "musicUrl".equalsIgnoreCase(action));
+            if (!canPlay) continue;
+            searched.add(code);
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    return searchPlatformTracks(code, searchTitle, 20);
+                } catch (Exception e) {
+                    log.debug("跨源匹配搜索失败 platform={}: {}", code, e.toString());
+                    return List.of();
+                }
+            }));
+        }
+
+        List<Map<String, Object>> raw = new ArrayList<>();
+        for (CompletableFuture<List<Map<String, Object>>> future : futures) {
+            try {
+                raw.addAll(future.get(18, TimeUnit.SECONDS));
+            } catch (Exception e) {
+                log.debug("跨源匹配超时或失败: {}", e.toString());
+            }
+        }
+
+        List<Map<String, Object>> candidates = new ArrayList<>();
+        Map<String, Boolean> seen = new LinkedHashMap<>();
+        for (Map<String, Object> track : raw) {
+            String code = String.valueOf(track.getOrDefault("source", "")).trim().toLowerCase(Locale.ROOT);
+            String id = String.valueOf(track.getOrDefault("id", "")).trim();
+            String candidateArtist = String.valueOf(track.getOrDefault("artist", "")).trim();
+            if (code.isBlank() || id.isBlank()) continue;
+            String rawTitle = String.valueOf(track.getOrDefault("title", "")).trim();
+            if (!normalizeSongText(rawTitle).equals(normalizedTitle)) continue;
+            if (!artistCompatible(wantedArtist, candidateArtist)) continue;
+            String key = code + ":" + id;
+            if (seen.putIfAbsent(key, Boolean.TRUE) != null) continue;
+            Map<String, Object> candidate = new LinkedHashMap<>(track);
+            candidate.remove("matchTitle");
+            candidate.put("source", code);
+            candidate.put("platform", code);
+            candidate.put("platformLabel", platformLabel(runtime, code));
+            candidate.put("matchTitle", wantedTitle);
+            candidate.put("artistMatch", true);
+            candidates.add(candidate);
+            if (candidates.size() >= 8) break;
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("title", wantedTitle);
+        data.put("artist", wantedArtist);
+        data.put("exclude", exclude);
+        data.put("searched", searched);
+        data.put("candidates", candidates);
+        data.put("count", candidates.size());
+        data.put("message", candidates.isEmpty()
+                ? "没有找到歌名和歌手都一致的其他来源"
+                : "已找到歌名一致的其他来源");
+        return data;
+    }
+
+    private List<Map<String, Object>> searchPlatformTracks(String code, String text, int size) throws Exception {
+        return switch (code) {
+            case "wy" -> {
+                Map<String, Object> data = search(text, size);
+                Object tracks = data.get("tracks");
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> list = tracks instanceof List<?> ? (List<Map<String, Object>>) tracks : List.of();
+                yield list;
+            }
+            case "tx" -> searchQq(text, size);
+            case "kg" -> searchKugou(text, size);
+            case "kw" -> searchKuwo(text, size);
+            case "mg" -> searchMigu(text, size);
+            default -> List.of();
+        };
+    }
+
+    private String normalizeSongText(String value) {
+        String text = Normalizer.normalize(String.valueOf(value == null ? "" : value), Normalizer.Form.NFKC)
+                .toLowerCase(Locale.ROOT)
+                .trim();
+        return text.replaceAll("[\\p{Punct}\\p{Z}\\s，。！？、；：“”‘’（）《》【】〈〉「」『』…—·]", "");
+    }
+
+    private boolean artistCompatible(String requested, String candidate) {
+        String wanted = normalizeSongText(requested);
+        String actual = normalizeSongText(candidate);
+        if (wanted.isBlank() || actual.isBlank()) return false;
+        if (wanted.contains("未知歌手") || actual.contains("未知歌手")) return false;
+        if (wanted.equals(actual)) return true;
+
+        List<String> wantedParts = artistParts(requested);
+        List<String> actualParts = artistParts(candidate);
+        if (wantedParts.isEmpty() || actualParts.isEmpty()) return false;
+        if (wantedParts.size() == 1 && actualParts.size() == 1) {
+            String wantedPart = wantedParts.get(0);
+            String actualPart = actualParts.get(0);
+            return wantedPart.contains(actualPart) || actualPart.contains(wantedPart);
+        }
+        if (wantedParts.size() != actualParts.size()) return false;
+
+        List<String> remaining = new ArrayList<>(actualParts);
+        for (String wantedPart : wantedParts) {
+            boolean matched = false;
+            for (int i = 0; i < remaining.size(); i++) {
+                String actualPart = remaining.get(i);
+                if (wantedPart.contains(actualPart) || actualPart.contains(wantedPart)) {
+                    remaining.remove(i);
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) return false;
+        }
+        return remaining.isEmpty();
+    }
+
+    private List<String> artistParts(String value) {
+        List<String> parts = new ArrayList<>();
+        for (String raw : String.valueOf(value == null ? "" : value)
+                .split("[/、,，&]|\\bfeat\\.?\\b", -1)) {
+            String normalized = normalizeSongText(raw);
+            if (!normalized.isBlank()) parts.add(normalized);
+        }
+        return parts;
+    }
+
     public Map<String, Object> resolveUrl(String platform, String songId, String quality) {
         String sourceCode = String.valueOf(platform == null ? "" : platform).trim();
         if (sourceCode.isBlank()) sourceCode = "wy";
@@ -558,9 +711,13 @@ public class MusicSourceService {
     }
 
     private List<Map<String, Object>> chartKuwo(int size) throws Exception {
+        return searchKuwo(CHART_FALLBACK_QUERY, size);
+    }
+
+    private List<Map<String, Object>> searchKuwo(String text, int size) throws Exception {
         String url = "https://search.kuwo.cn/r.s?client=kt&all="
-                + URLEncoder.encode("热歌", StandardCharsets.UTF_8)
-                + "&pn=0&rn=" + size
+                + URLEncoder.encode(String.valueOf(text == null ? "" : text), StandardCharsets.UTF_8)
+                + "&pn=0&rn=" + Math.max(1, Math.min(MAX_SEARCH_LIMIT, size))
                 + "&uid=0&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1"
                 + "&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1";
         JsonNode root = getJsonRaw(url, "https://www.kuwo.cn/");
@@ -587,14 +744,18 @@ public class MusicSourceService {
     }
 
     private List<Map<String, Object>> chartMigu(int size) throws Exception {
+        return searchMigu(CHART_FALLBACK_QUERY, size);
+    }
+
+    private List<Map<String, Object>> searchMigu(String text, int size) throws Exception {
         String url = "https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/search_all.do"
-                + "?text=" + URLEncoder.encode(CHART_FALLBACK_QUERY, StandardCharsets.UTF_8)
+                + "?text=" + URLEncoder.encode(String.valueOf(text == null ? "" : text), StandardCharsets.UTF_8)
                 + "&pageNo=1&pageSize=30&searchSwitch="
                 + URLEncoder.encode("{\"song\":1}", StandardCharsets.UTF_8);
         JsonNode root = getJsonRaw(url, "https://music.migu.cn/");
         List<Map<String, Object>> tracks = new ArrayList<>();
         for (JsonNode song : root.path("songResultData").path("result")) {
-            if (tracks.size() >= size) break;
+            if (tracks.size() >= Math.max(1, Math.min(MAX_SEARCH_LIMIT, size))) break;
             String title = song.path("name").asText("").trim();
             String artist = joinArtists(song.path("singers"));
             if (title.isBlank() || isMiguFiller(title, artist)) continue;
@@ -621,6 +782,62 @@ public class MusicSourceService {
                     song.path("vipType").asInt(0),
                     "https://music.migu.cn/v3/music/song/" + id
             ));
+        }
+        return tracks;
+    }
+
+    private List<Map<String, Object>> searchQq(String text, int size) throws Exception {
+        String url = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w="
+                + URLEncoder.encode(String.valueOf(text == null ? "" : text), StandardCharsets.UTF_8)
+                + "&format=json&n=" + Math.max(1, Math.min(MAX_SEARCH_LIMIT, size)) + "&p=1&platform=yqq.json";
+        JsonNode root = getJsonRaw(url, "https://y.qq.com/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : root.path("data").path("song").path("list")) {
+            String id = song.path("songmid").asText("").trim();
+            if (id.isBlank()) id = song.path("media_mid").asText("").trim();
+            if (id.isBlank()) continue;
+            String albumMid = song.path("albummid").asText("");
+            String cover = albumMid.isBlank() ? "" : "https://y.gtimg.cn/music/photo_new/T002R300x300M000" + albumMid + ".jpg";
+            tracks.add(chartTrack(
+                    "tx", id,
+                    song.path("songname").asText("未命名歌曲"),
+                    joinArtists(song.path("singer")),
+                    song.path("albumname").asText(""),
+                    cover,
+                    song.path("interval").asLong(0),
+                    song.path("pay").path("payplay").asInt(0),
+                    "https://y.qq.com/n/ryqq/songDetail/" + id
+            ));
+        }
+        return tracks;
+    }
+
+    private List<Map<String, Object>> searchKugou(String text, int size) throws Exception {
+        String url = "https://songsearch.kugou.com/song_search_v2?keyword="
+                + URLEncoder.encode(String.valueOf(text == null ? "" : text), StandardCharsets.UTF_8)
+                + "&page=1&pagesize=" + Math.max(1, Math.min(MAX_SEARCH_LIMIT, size))
+                + "&platform=WebFilter&userid=-1&clientver=2000&iscorrection=1"
+                + "&privilege_filter=0&filter=10&area_code=101";
+        JsonNode root = getJsonRaw(url, "https://www.kugou.com/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : root.path("data").path("lists")) {
+            String id = song.path("FileHash").asText("").trim();
+            if (id.isBlank()) id = song.path("HQFileHash").asText("").trim();
+            if (id.isBlank()) continue;
+            String title = song.path("SongName").asText("未命名歌曲");
+            String originalTitle = song.path("OriSongName").asText("").trim();
+            Map<String, Object> track = chartTrack(
+                    "kg", id,
+                    title,
+                    song.path("SingerName").asText("未知歌手"),
+                    song.path("AlbumName").asText(""),
+                    "",
+                    song.path("Duration").asLong(0),
+                    song.path("PayType").asInt(0),
+                    "https://www.kugou.com/song/#hash=" + id
+            );
+            if (!originalTitle.isBlank()) track.put("matchTitle", originalTitle);
+            tracks.add(track);
         }
         return tracks;
     }
