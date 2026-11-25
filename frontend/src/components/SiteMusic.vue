@@ -12,14 +12,13 @@ const MODES = [
 const SUGGESTIONS = ['晴天', '起风了', '慢慢喜欢你', '后来', '夜曲', '稻香', '孤勇者', '光年之外']
 const STORAGE_KEY = 'deek.music.player.v1'
 const FAB_OFFSET_KEY = 'deek.music.fab.offset.v1'
-const PLATFORM_META = {
-  wy: { label: '网易云', color: '#d33a3a' },
-  tx: { label: 'QQ', color: '#1f9f5f' },
-  kw: { label: '酷我', color: '#2c6df6' },
-  kg: { label: '酷狗', color: '#2b8cf0' },
-  mg: { label: '咪咕', color: '#e0538b' }
-}
 const CHART_TTL_MILLIS = 10 * 60 * 1000
+
+function platformColor(code) {
+  let hash = 0
+  for (const char of String(code || '')) hash = (hash * 31 + char.charCodeAt(0)) % 360
+  return `hsl(${hash} 62% 48%)`
+}
 
 const audio = ref(null)
 const panelOpen = ref(false)
@@ -44,6 +43,8 @@ const chartLoadedAt = ref({})
 const chartLoading = ref(false)
 const chartError = ref('')
 const chartSeq = ref(0)
+const sourceDetails = ref([])
+const sourceDetailsLoaded = ref(false)
 const localTracks = ref([])
 const localLoading = ref(false)
 const localError = ref('')
@@ -86,19 +87,54 @@ const sourcePlatformCodes = computed(() => {
 const contentMode = computed(() => String(state.site.musicContentMode || '').trim() === 'local' ? 'local' : 'source')
 const sourceActive = computed(() => hasSource.value && contentMode.value === 'source')
 const localActive = computed(() => contentMode.value === 'local' || !hasSource.value)
-const sourcePlatforms = computed(() => sourcePlatformCodes.value.map((code) => PLATFORM_META[code]?.label || code))
-// 平台顺序完全沿用音源声明。音源没有的平台不臆造，也不再把“热歌榜”写死成唯一内容。
-const chartPlatforms = computed(() => sourcePlatformCodes.value
-  .filter((code) => PLATFORM_META[code])
-  .map((code) => ({
-    code,
-    label: PLATFORM_META[code]?.label || code,
-    color: PLATFORM_META[code]?.color || 'var(--accent)'
-  })))
+// 平台名称、actions、音质都来自当前音源；前端只在接口返回前用平台代码兜底。
+const sourcePlatforms = computed(() => {
+  const details = Array.isArray(sourceDetails.value) ? sourceDetails.value : []
+  const platforms = sourceDetailsLoaded.value
+    ? details.map((item) => {
+        const code = String(item?.code || '').trim().toLowerCase()
+        if (!code) return null
+        return {
+          code,
+          label: String(item?.label || item?.name || code).trim() || code,
+          actions: Array.isArray(item?.actions) ? item.actions : [],
+          qualities: Array.isArray(item?.qualities) ? item.qualities : [],
+          canPlay: item?.canPlay !== false,
+          charts: item?.charts === true,
+          search: item?.search === true,
+          color: platformColor(code)
+        }
+      }).filter(Boolean)
+    : sourcePlatformCodes.value.map((code) => ({
+        code,
+        label: code.toUpperCase(),
+        actions: [],
+        qualities: [],
+        canPlay: true,
+        charts: true,
+        search: code === 'wy',
+        color: platformColor(code)
+      }))
+  return platforms.filter((platform) => platform.canPlay)
+})
+// 榜单平台必须同时满足：音源声明了该平台，且本站有对应的榜单适配。
+const chartPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.charts))
 const hasCharts = computed(() => sourceActive.value && chartPlatforms.value.length > 0)
+// 搜索当前由网易云曲库承接；音源没有声明网易云时，搜索结果无法播放，所以整个搜索入口隐藏。
+const searchPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.search))
+const searchPlatformLabel = computed(() => searchPlatforms.value[0]?.label || '网易云')
+const hasSearch = computed(() => sourceActive.value && searchPlatforms.value.length > 0)
+const sourceFeatureLabel = computed(() => {
+  const features = []
+  if (hasCharts.value) features.push('榜单')
+  if (hasSearch.value) features.push('搜索')
+  features.push('队列', '音量')
+  return features.join(' / ')
+})
 const activeChart = computed(() => chartData.value[activePlatform.value] || null)
 const activeChartTracks = computed(() => Array.isArray(activeChart.value?.tracks) ? activeChart.value.tracks : [])
-const activePlatformLabel = computed(() => PLATFORM_META[activePlatform.value]?.label || activePlatform.value)
+const activePlatformInfo = computed(() => sourcePlatforms.value.find((platform) => platform.code === activePlatform.value))
+const activePlatformLabel = computed(() => activePlatformInfo.value?.label || activePlatform.value)
 const panelStyle = computed(() => {
   const placement = panelPlacement.value
   if (!placement) return {}
@@ -145,7 +181,7 @@ const showPlayer = computed(() =>
   state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
 )
 const headerSourceLabel = computed(() => {
-  if (sourceActive.value && sourcePlatforms.value.length) return sourcePlatforms.value.join(' · ')
+  if (sourceActive.value && sourcePlatforms.value.length) return sourcePlatforms.value.map((platform) => platform.label).join(' · ')
   if (sourceActive.value && hasSource.value) return sourceName.value
   return localCount.value ? `本地音乐 ${localCount.value}` : '站点音乐'
 })
@@ -257,7 +293,7 @@ function reconcileAvailableView() {
     ...(localActive.value ? ['local'] : []),
     ...(hasCharts.value ? ['charts'] : []),
     'queue',
-    ...(sourceActive.value ? ['search'] : [])
+    ...(hasSearch.value ? ['search'] : [])
   ]
   if (allowed.includes(view.value)) return
   view.value = defaultView()
@@ -265,16 +301,52 @@ function reconcileAvailableView() {
   else if (view.value === 'local') loadLocalTracks(false)
 }
 
-watch([contentMode, hasSource, hasCharts, localActive], reconcileAvailableView)
+watch([contentMode, hasSource, hasCharts, hasSearch, localActive], reconcileAvailableView)
 watch(sourcePlatformCodes, reconcileAvailableView)
+watch(sourceDetails, reconcileAvailableView, { deep: true })
+watch(sourceUrl, () => {
+  platformInitialized = false
+  sourceDetails.value = []
+  sourceDetailsLoaded.value = false
+  loadSourceCapabilities()
+  reconcileAvailableView()
+})
+watch(contentMode, (mode) => {
+  if (mode === 'source') loadSourceCapabilities()
+  else {
+    sourceDetails.value = []
+    sourceDetailsLoaded.value = false
+  }
+})
 
 function apiErrorMessage(error, fallback) {
   return error?.message || fallback
 }
 
 function defaultView() {
-  if (sourceActive.value) return hasCharts.value ? 'charts' : 'search'
+  if (sourceActive.value) {
+    if (hasCharts.value) return 'charts'
+    if (hasSearch.value) return 'search'
+    return 'queue'
+  }
   return 'local'
+}
+
+async function loadSourceCapabilities() {
+  if (!sourceActive.value) {
+    sourceDetails.value = []
+    sourceDetailsLoaded.value = false
+    return
+  }
+  try {
+    const res = await http.get('/music/platforms', { timeout: 20000 })
+    sourceDetails.value = Array.isArray(res.data?.platforms) ? res.data.platforms : []
+    sourceDetailsLoaded.value = true
+  } catch (e) {
+    // 接口不可用时保留已有平台代码兜底，不凭空补平台。
+    sourceDetails.value = []
+    sourceDetailsLoaded.value = false
+  }
 }
 
 function computePanelPlacement() {
@@ -341,6 +413,8 @@ function openPanel() {
   if (target === 'charts') {
     resetChartScroll()
     ensureCharts(activePlatform.value)
+  } else if (target === 'search') {
+    nextTick(() => searchInput.value?.focus())
   } else if (target === 'local') {
     loadLocalTracks()
   }
@@ -365,9 +439,11 @@ function resetChartScroll() {
 
 function showChartsView() {
   if (!hasCharts.value) {
-    if (sourceActive.value) {
+    if (hasSearch.value) {
       view.value = 'search'
       nextTick(() => searchInput.value?.focus())
+    } else if (sourceActive.value) {
+      view.value = 'queue'
     } else {
       showLocalView()
     }
@@ -395,8 +471,15 @@ async function loadLocalTracks(silent = true) {
 function showLocalView() {
   if (!localActive.value) {
     if (sourceActive.value) {
-      view.value = hasCharts.value ? 'charts' : 'search'
-      if (hasCharts.value) ensureCharts(activePlatform.value)
+      if (hasCharts.value) {
+        view.value = 'charts'
+        ensureCharts(activePlatform.value)
+      } else if (hasSearch.value) {
+        view.value = 'search'
+        nextTick(() => searchInput.value?.focus())
+      } else {
+        view.value = 'queue'
+      }
     }
     return
   }
@@ -427,12 +510,20 @@ function playAllLocal() {
 }
 
 function openSearchOrLocal() {
-  if (sourceActive.value) {
+  if (sourceActive.value && hasSearch.value) {
     view.value = 'search'
     nextTick(() => searchInput.value?.focus())
     return
   }
-  showLocalView()
+  if (sourceActive.value && hasCharts.value) {
+    showChartsView()
+    return
+  }
+  if (localActive.value) {
+    showLocalView()
+    return
+  }
+  view.value = 'queue'
 }
 
 function preferredPlatform() {
@@ -990,6 +1081,7 @@ onMounted(() => {
   activePlatform.value = preferredPlatform()
   view.value = defaultView()
   loadLocalTracks(true)
+  loadSourceCapabilities()
   if (audio.value) {
     audio.value.volume = volume.value
     audio.value.muted = muted.value
@@ -1044,7 +1136,7 @@ onBeforeUnmount(() => {
               <small>{{ sourceActive ? sourceName + (sourceVersion ? ' · v' + sourceVersion : '') : '本地音乐' + (localCount ? ' · ' + localCount + ' 首' : '') }}</small>
             </div>
           </div>
-          <span class="sm-source-pill" :title="sourcePlatforms.join(' / ')">
+          <span class="sm-source-pill" :title="sourcePlatforms.map((platform) => platform.label).join(' / ')">
             {{ headerSourceLabel }}
           </span>
           <button type="button" class="sm-icon-btn sm-close" aria-label="收起播放器" @click="closePanel">
@@ -1052,7 +1144,7 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <div v-if="sourceActive" class="sm-search">
+        <div v-if="hasSearch" class="sm-search">
           <span class="sm-search-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
           </span>
@@ -1085,7 +1177,7 @@ onBeforeUnmount(() => {
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
             播放列表 <em>{{ queue.length }}</em>
           </button>
-          <button v-if="sourceActive" type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
+          <button v-if="hasSearch" type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
         </nav>
 
         <div v-if="view === 'local' && localActive" class="sm-body sm-local-body">
@@ -1340,7 +1432,7 @@ onBeforeUnmount(() => {
           <div v-if="searchHintVisible" class="sm-search-hint">
             <span class="sm-search-hint-kicker">SEARCH</span>
             <strong>想听点什么？</strong>
-            <p>搜索网易云曲库，播放地址由 {{ sourceName }} 解析。</p>
+            <p>搜索{{ searchPlatformLabel }}曲库，播放地址由 {{ sourceName }} 解析。</p>
             <div class="sm-suggestions">
               <button v-for="item in SUGGESTIONS" :key="item" type="button" @click="searchSuggestion(item)">{{ item }}</button>
             </div>
@@ -1376,14 +1468,14 @@ onBeforeUnmount(() => {
                 <span class="sm-result-add" aria-hidden="true">＋</span>
               </button>
             </div>
-            <p class="sm-result-more">搜索由网易云曲库提供 · 点击歌曲加入播放队列</p>
+            <p class="sm-result-more">搜索由{{ searchPlatformLabel }}曲库提供 · 点击歌曲加入播放队列</p>
           </div>
         </div>
 
         <footer class="sm-foot">
           <span>{{ footerSourceLabel }}</span>
           <span v-if="currentTrack">{{ playing ? '正在播放' : '已暂停' }} · {{ currentTrack.title }}</span>
-          <span v-else>{{ sourceActive ? '榜单 / 搜索 / 队列 / 音量' : '本地音乐 / 队列 / 音量' }}</span>
+          <span v-else>{{ sourceActive ? sourceFeatureLabel : '本地音乐 / 队列 / 音量' }}</span>
         </footer>
       </aside>
     </transition>

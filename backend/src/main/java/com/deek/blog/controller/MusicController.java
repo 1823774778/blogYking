@@ -50,6 +50,12 @@ public class MusicController {
         return ApiResponse.ok(musicSourceService.status());
     }
 
+    /** 当前音源声明的平台与站点可用的前台能力，不返回固定平台列表。 */
+    @GetMapping("/platforms")
+    public ApiResponse<Map<String, Object>> platforms() {
+        return ApiResponse.ok(musicSourceService.platformCapabilities());
+    }
+
     @GetMapping("/local")
     public ApiResponse<List<Map<String, Object>>> localTracks() {
         return ApiResponse.ok(localMusicService.publicTracks());

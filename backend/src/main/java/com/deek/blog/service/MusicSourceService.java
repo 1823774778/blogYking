@@ -63,6 +63,10 @@ public class MusicSourceService {
             "kg", "酷狗音乐",
             "mg", "咪咕音乐"
     );
+    /** 本站已实现榜单适配的平台。平台是否出现在前台，仍由当前音源声明决定。 */
+    private static final Set<String> CHART_PLATFORM_CODES = PLATFORM_LABELS.keySet();
+    /** 站内搜索当前使用网易云公开曲库，只有音源包含网易云时搜索结果才能播放。 */
+    private static final Set<String> SEARCH_PLATFORM_CODES = Set.of("wy");
     private static final Map<String, String> QUALITY_LABELS = Map.of(
             "128k", "标准",
             "320k", "高品质",
@@ -119,6 +123,84 @@ public class MusicSourceService {
         data.put("verifiedAt", cfg.getOrDefault("musicSourceVerifiedAt", ""));
         data.put("localFileName", cfg.getOrDefault("musicSourceLocalFileName", ""));
         data.put("scriptReady", sourceScriptReady(cfg));
+        return data;
+    }
+
+    /**
+     * 当前音源实际支持的前台能力。平台名称、actions、音质均来自音源脚本，
+     * 本站只追加“是否有榜单适配 / 是否能承接站内搜索”这两项站点能力。
+     */
+    public Map<String, Object> platformCapabilities() {
+        Map<String, String> cfg = siteConfigService.get();
+        String url = String.valueOf(cfg.getOrDefault("musicSourceUrl", "")).trim();
+        boolean local = isLocalSource(cfg);
+        boolean configured = local ? sourceScriptReady(cfg) : !url.isBlank();
+        List<Map<String, Object>> platforms = new ArrayList<>();
+        List<String> chartCodes = new ArrayList<>();
+        List<String> searchCodes = new ArrayList<>();
+        boolean runtimeLoaded = false;
+        String message = "";
+        if (configured) {
+            try {
+                LxSourceRuntime runtime = loadRuntime(url, false);
+                runtimeLoaded = true;
+                for (LxSourceRuntime.PlatformInfo info : runtime.platforms().values()) {
+                    String code = String.valueOf(info.code() == null ? "" : info.code()).trim().toLowerCase(Locale.ROOT);
+                    if (code.isBlank()) continue;
+                    List<String> actions = new ArrayList<>(info.actions());
+                    // LX 音源没有声明 actions 时按可播放处理；声明了就必须具备 musicUrl。
+                    boolean canPlay = actions.isEmpty()
+                            || actions.stream().anyMatch(action -> "musicUrl".equalsIgnoreCase(action));
+                    if (!canPlay) continue;
+                    boolean charts = CHART_PLATFORM_CODES.contains(code);
+                    boolean search = SEARCH_PLATFORM_CODES.contains(code);
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("code", code);
+                    item.put("label", String.valueOf(info.label() == null || info.label().isBlank() ? code : info.label()));
+                    item.put("name", item.get("label"));
+                    item.put("actions", actions);
+                    item.put("qualities", new ArrayList<>(info.qualities()));
+                    item.put("canPlay", true);
+                    item.put("charts", charts);
+                    item.put("search", search);
+                    platforms.add(item);
+                    if (charts) chartCodes.add(code);
+                    if (search) searchCodes.add(code);
+                }
+            } catch (RuntimeException e) {
+                message = "音源平台信息读取失败：" + shortMessage(e);
+                log.warn("读取音源平台能力失败 url={}: {}", url, e.toString());
+            }
+        }
+        if (!runtimeLoaded && configured) {
+            // 脚本暂时读不到时，用已保存的平台代码兜底，前端仍不会凭空补平台。
+            for (String code : split(cfg.getOrDefault("musicSourcePlatforms", ""))) {
+                String normalized = code.trim().toLowerCase(Locale.ROOT);
+                if (normalized.isBlank()) continue;
+                boolean charts = CHART_PLATFORM_CODES.contains(normalized);
+                boolean search = SEARCH_PLATFORM_CODES.contains(normalized);
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("code", normalized);
+                item.put("label", PLATFORM_LABELS.getOrDefault(normalized, normalized.toUpperCase(Locale.ROOT)));
+                item.put("name", item.get("label"));
+                item.put("actions", List.of("musicUrl"));
+                item.put("qualities", split(cfg.getOrDefault("musicSourceQualities", "")));
+                item.put("canPlay", true);
+                item.put("charts", charts);
+                item.put("search", search);
+                platforms.add(item);
+                if (charts) chartCodes.add(normalized);
+                if (search) searchCodes.add(normalized);
+            }
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("configured", configured);
+        data.put("sourceName", cfg.getOrDefault("musicSourceName", ""));
+        data.put("sourceVersion", cfg.getOrDefault("musicSourceVersion", ""));
+        data.put("platforms", platforms);
+        data.put("chartPlatforms", chartCodes);
+        data.put("searchPlatforms", searchCodes);
+        data.put("message", message);
         return data;
     }
 
@@ -233,7 +315,7 @@ public class MusicSourceService {
             data.put("total", root.path("result").path("songCount").asInt(tracks.size()));
             data.put("loaded", tracks.size());
             data.put("platform", "wy");
-            data.put("platformLabel", "网易云音乐");
+            data.put("platformLabel", platformLabel(runtime, "wy"));
             data.put("source", describe(runtime, sourceUrl));
             data.put("tracks", tracks);
             synchronized (searches) {
@@ -309,8 +391,9 @@ public class MusicSourceService {
 
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        String platformLabel = platformLabel(runtime, code);
         if (!runtime.platforms().containsKey(code)) {
-            throw new BizException(PLATFORM_LABELS.get(code) + "未包含在当前导入的音源中");
+            throw new BizException(platformLabel + "未包含在当前导入的音源中");
         }
 
         List<Map<String, Object>> tracks;
@@ -320,40 +403,40 @@ public class MusicSourceService {
             switch (code) {
                 case "tx" -> {
                     tracks = chartQq(size);
-                    chartTitle = "QQ 音乐热歌榜";
+                    chartTitle = platformLabel + "热歌榜";
                 }
                 case "kg" -> {
                     tracks = chartKugou(size);
-                    chartTitle = "酷狗音乐 TOP500";
+                    chartTitle = platformLabel + " TOP500";
                 }
                 case "kw" -> {
                     tracks = chartKuwo(size);
-                    chartTitle = "酷我音乐热歌";
+                    chartTitle = platformLabel + "热歌";
                     fallback = true;
                 }
                 case "mg" -> {
                     tracks = chartMigu(size);
-                    chartTitle = "咪咕音乐热歌";
+                    chartTitle = platformLabel + "热歌";
                     fallback = true;
                 }
                 default -> {
                     tracks = chartNetease(size);
-                    chartTitle = "网易云音乐热歌榜";
+                    chartTitle = platformLabel + "热歌榜";
                 }
             }
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
             log.warn("获取平台热歌榜失败 platform={}: {}", code, e.toString());
-            throw new BizException("暂时无法获取" + PLATFORM_LABELS.get(code) + "热歌榜，请稍后重试");
+            throw new BizException("暂时无法获取" + platformLabel + "榜单，请稍后重试");
         }
         if (tracks.isEmpty()) {
-            throw new BizException(PLATFORM_LABELS.get(code) + "暂时没有返回可用的热歌数据");
+            throw new BizException(platformLabel + "暂时没有返回可用的热歌数据");
         }
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("platform", code);
-        data.put("platformLabel", PLATFORM_LABELS.get(code));
+        data.put("platformLabel", platformLabel);
         data.put("chartTitle", chartTitle);
         data.put("fallback", fallback);
         data.put("updatedAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
@@ -967,6 +1050,14 @@ public class MusicSourceService {
         StringBuilder builder = new StringBuilder(data.length * 2);
         for (byte item : data) builder.append(String.format("%02x", item));
         return builder.toString();
+    }
+
+    private String platformLabel(LxSourceRuntime runtime, String code) {
+        if (runtime != null) {
+            LxSourceRuntime.PlatformInfo info = runtime.platforms().get(code);
+            if (info != null && info.label() != null && !info.label().isBlank()) return info.label();
+        }
+        return PLATFORM_LABELS.getOrDefault(code, String.valueOf(code).toUpperCase(Locale.ROOT));
     }
 
     private String secureUrl(String url) {
