@@ -581,6 +581,6 @@ GH_REPO=1823774778/blogYking \
 - 没有 OAuth 第三方登录、全文检索引擎、定时发布。这些可以在此基础上继续加。
 - OTA 的自动回滚只在 `standalone` 下执行；systemd / Docker 依赖外部进程管理器重启，回滚需手动覆盖 `updates/backups/`。
 - Docker 容器内更新只对当前容器生效，`docker compose up --build` 重建容器后会回到镜像内版本。
-- OTA 上传上限 100MB；当前 fat jar 约 74MB，若引入大依赖需要同步调大 `spring.servlet.multipart.max-file-size` 与 Nginx 请求体。
+- OTA 上传上限 240MB；当前 fat jar 约 182MB（含 GraalJS），反向代理的 `client_max_body_size` 需同步放宽到 250MB 以上。
 - GitHub Release 读取默认只显示最近 12 个发布；未认证 API 每小时 60 次，共享 IP 可能限流，建议配置只读 `GITHUB_TOKEN`。
 - Release 更新内容是 GitHub 上填写的文本，不包含代码签名；下载 jar 后务必核对 Release 附带的 `blog.jar.sha256`，或在本机重新构建。

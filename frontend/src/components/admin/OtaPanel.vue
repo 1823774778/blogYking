@@ -672,7 +672,7 @@ onBeforeUnmount(() => {
             <strong>{{ localFileName }}</strong>
             <span class="meta">{{ localFileSize }}</span>
           </div>
-          <p v-else class="meta">只支持本博客的 Spring Boot 可执行 jar，最大 100 MB。</p>
+          <p v-else class="meta">只支持本博客的 Spring Boot 可执行 jar，最大 240 MB。</p>
         </div>
 
         <div v-if="localUploading" class="ota-local-progress" role="progressbar" :aria-valuenow="localProgress" aria-valuemin="0" aria-valuemax="100">

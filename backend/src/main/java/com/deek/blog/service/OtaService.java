@@ -56,7 +56,7 @@ import java.util.stream.Stream;
 public class OtaService {
 
     private static final Logger log = LoggerFactory.getLogger(OtaService.class);
-    private static final long MAX_JAR_BYTES = 100L * 1024 * 1024;
+    private static final long MAX_JAR_BYTES = 240L * 1024 * 1024;
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -242,7 +242,7 @@ public class OtaService {
             }
             long declared = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
             if (declared > MAX_JAR_BYTES) {
-                throw new BizException("Release 中的 jar 超过 100MB");
+                throw new BizException("Release 中的 jar 超过 240MB");
             }
             long copied = 0;
             try (InputStream in = response.body(); OutputStream out = Files.newOutputStream(temp)) {
@@ -251,7 +251,7 @@ public class OtaService {
                 while ((n = in.read(buffer)) > 0) {
                     copied += n;
                     if (copied > MAX_JAR_BYTES) {
-                        throw new BizException("Release 中的 jar 超过 100MB");
+                        throw new BizException("Release 中的 jar 超过 240MB");
                     }
                     out.write(buffer, 0, n);
                 }

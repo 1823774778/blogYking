@@ -34,7 +34,7 @@ import java.util.UUID;
 public class OtaDownloadService {
 
     private static final Logger log = LoggerFactory.getLogger(OtaDownloadService.class);
-    private static final long MAX_JAR_BYTES = 100L * 1024 * 1024;
+    private static final long MAX_JAR_BYTES = 240L * 1024 * 1024;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final OtaDownloadTaskRepository repository;
@@ -161,7 +161,7 @@ public class OtaDownloadService {
             }
             long declared = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
             if (declared > MAX_JAR_BYTES) {
-                throw new BizException("Release 中的 jar 超过 100MB");
+                throw new BizException("Release 中的 jar 超过 240MB");
             }
             long total = declared > 0 ? declared : Math.max(0, expectedBytes);
             task.setTotalBytes(total);
@@ -177,7 +177,7 @@ public class OtaDownloadService {
                 while ((n = in.read(buffer)) > 0) {
                     copied += n;
                     if (copied > MAX_JAR_BYTES) {
-                        throw new BizException("Release 中的 jar 超过 100MB");
+                        throw new BizException("Release 中的 jar 超过 240MB");
                     }
                     out.write(buffer, 0, n);
                     long now = System.currentTimeMillis();

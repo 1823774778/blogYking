@@ -13,7 +13,7 @@
 
     <groupId>com.deek</groupId>
     <artifactId>blog</artifactId>
-    <version>1.17.0</version>
+    <version>1.18.0</version>
     <name>deek-blog</name>
     <description>前后端分离的个人博客，前端打包进 jar 一体化部署</description>
 
@@ -94,6 +94,20 @@
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-jackson</artifactId>
             <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- LX 音源脚本宿主：GraalJS 社区版，仅在管理员导入音源时执行第三方脚本 -->
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>polyglot</artifactId>
+            <version>23.1.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>js-community</artifactId>
+            <version>23.1.2</version>
+            <type>pom</type>
             <scope>runtime</scope>
         </dependency>
 

@@ -18,7 +18,9 @@ public class SiteConfigService {
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
-            "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform", "commentReview",
+            "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform",
+            "musicSourceUrl", "musicSourceName", "musicSourceVersion", "musicSourceDescription",
+            "musicSourcePlatforms", "musicSourceQualities", "musicSourceCheckedAt", "commentReview",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
             "registrationInviteEnabled", "registrationEmailAllowlist",
             "registrationMinPasswordLength", "registrationMaxUsers",
@@ -32,7 +34,9 @@ public class SiteConfigService {
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
             "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
-            "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform", "commentReview",
+            "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform",
+            "musicSourceUrl", "musicSourceName", "musicSourceVersion", "musicSourceDescription",
+            "musicSourcePlatforms", "musicSourceQualities", "musicSourceCheckedAt", "commentReview",
             "notifyCommentsEnabled", "notifyLikesEnabled", "notifyFavoritesEnabled",
             "notifyUpdatesEnabled", "notifyNewUsersEnabled", "notifyPendingCommentsOnly",
             "registrationEnabled", "registrationVerifyEmail", "passwordResetEnabled",
@@ -91,6 +95,13 @@ public class SiteConfigService {
         map.put("musicPlaylistUrl", "");
         map.put("musicPlaylistTitle", "");
         map.put("musicPlaylistPlatform", "netease");
+        map.put("musicSourceUrl", "");
+        map.put("musicSourceName", "");
+        map.put("musicSourceVersion", "");
+        map.put("musicSourceDescription", "");
+        map.put("musicSourcePlatforms", "");
+        map.put("musicSourceQualities", "128k,320k,flac");
+        map.put("musicSourceCheckedAt", "");
         map.put("commentReview", "false");
         map.put("notifyCommentsEnabled", "true");
         map.put("notifyLikesEnabled", "true");

@@ -32,7 +32,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiResponse<Void>> handleUploadSize(MaxUploadSizeExceededException e) {
-        return ResponseEntity.badRequest().body(ApiResponse.error(400, "文件过大，最大 100MB"));
+        return ResponseEntity.badRequest().body(ApiResponse.error(400, "文件过大，最大 240MB"));
     }
 
     @ExceptionHandler(NoHandlerFoundException.class)

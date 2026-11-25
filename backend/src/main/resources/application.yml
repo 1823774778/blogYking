@@ -2,8 +2,8 @@ server:
   port: ${PORT:8080}
   forward-headers-strategy: framework
   tomcat:
-    max-http-form-post-size: 100MB
-    max-swallow-size: 100MB
+    max-http-form-post-size: 250MB
+    max-swallow-size: 250MB
 
 spring:
   application:
@@ -23,9 +23,9 @@ spring:
           time_zone: Asia/Shanghai
   servlet:
     multipart:
-      # OTA 上传完整 fat jar（当前约 63MB）
-      max-file-size: 100MB
-      max-request-size: 105MB
+      # OTA 上传完整 fat jar（1.18 含 GraalJS 约 182MB）
+      max-file-size: 240MB
+      max-request-size: 250MB
       file-size-threshold: 0
   mail:
     host: ${MAIL_HOST:}
