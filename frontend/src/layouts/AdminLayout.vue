@@ -54,13 +54,15 @@ const primarySections = computed(() => ['dashboard', 'profile']
   .filter(visibleSection))
 const canManageContent = computed(() =>
   hasPermission('system:posts') || hasPermission('system:comments'))
-const showMyPosts = computed(() => !hasPermission('system:posts') && hasPermission('system:my-posts'))
-const showMyComments = computed(() => !hasPermission('system:comments') && hasPermission('system:my-comments'))
+const showMyPosts = computed(() => hasPermission('system:my-posts')
+  && (state.user?.role === 'ADMIN' || !hasPermission('system:posts')))
+const showMyComments = computed(() => hasPermission('system:my-comments')
+  && (state.user?.role === 'ADMIN' || !hasPermission('system:comments')))
 const navGroups = computed(() => [
   {
     key: 'mine',
-    label: '我的内容',
-    hint: 'MY CONTENT',
+    label: '内容',
+    hint: 'CONTENT',
     icon: 'profile',
     items: [
       ...(showMyPosts.value ? [sectionByKey('my-posts')] : []),
