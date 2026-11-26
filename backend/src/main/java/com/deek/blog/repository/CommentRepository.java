@@ -21,6 +21,10 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
 
     long countByStatus(String status);
 
+    long countByUserId(Long userId);
+
+    long countByUserIdAndStatus(Long userId, String status);
+
     Page<Comment> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     @Query("""
@@ -34,6 +38,18 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     Page<Comment> adminSearch(@Param("status") String status,
                               @Param("keyword") String keyword,
                               Pageable pageable);
+
+    @Query("""
+            select c from Comment c
+            where c.userId = :userId
+              and (:status is null or c.status = :status)
+              and (:keyword is null or lower(c.content) like lower(concat('%', :keyword, '%')))
+            order by c.createdAt desc
+            """)
+    Page<Comment> adminSearchByUser(@Param("userId") Long userId,
+                                    @Param("status") String status,
+                                    @Param("keyword") String keyword,
+                                    Pageable pageable);
 
     void deleteByPostId(Long postId);
 }

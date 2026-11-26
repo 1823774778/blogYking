@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,9 +33,12 @@ public class RoleService {
             new PermissionView("system:users", "用户管理", "内容与用户"),
             new PermissionView("system:roles", "角色权限", "内容与用户"),
             new PermissionView("system:posts", "文章管理", "内容与用户"),
+            new PermissionView("system:my-posts", "我的文章", "内容与用户"),
             new PermissionView("system:comments", "评论管理", "内容与用户"),
+            new PermissionView("system:my-comments", "我的评论", "内容与用户"),
             new PermissionView("system:tags", "标签管理", "内容与用户"),
             new PermissionView("system:announcements", "公告管理", "站点"),
+            new PermissionView("system:navigation", "导航管理", "站点"),
             new PermissionView("system:site", "站点信息", "站点"),
             new PermissionView("system:settings", "站点设置", "站点"),
             new PermissionView("system:storage", "存储管理", "站点"),
@@ -43,6 +47,11 @@ public class RoleService {
 
     private static final String ADMIN_PERMISSIONS = CATALOG.stream()
             .map(PermissionView::code).collect(Collectors.joining(","));
+    private static final String USER_PERMISSIONS = String.join(",",
+            "system:admin", "system:dashboard", "system:profile", "system:my-posts", "system:my-comments");
+    private static final String EDITOR_PERMISSIONS = String.join(",",
+            "system:admin", "system:dashboard", "system:profile", "system:posts", "system:comments",
+            "system:tags", "system:my-posts", "system:my-comments");
 
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
@@ -61,17 +70,23 @@ public class RoleService {
     }
 
     public static List<String> defaultPermissions(String roleCode) {
-        return "ADMIN".equalsIgnoreCase(roleCode) ? Arrays.asList(ADMIN_PERMISSIONS.split(",")) : List.of();
+        if (roleCode == null) return List.of();
+        if ("ADMIN".equalsIgnoreCase(roleCode)) return Arrays.asList(ADMIN_PERMISSIONS.split(","));
+        if ("USER".equalsIgnoreCase(roleCode)) return Arrays.asList(USER_PERMISSIONS.split(","));
+        if ("EDITOR".equalsIgnoreCase(roleCode)) return Arrays.asList(EDITOR_PERMISSIONS.split(","));
+        return List.of();
     }
 
     @Transactional
     public void ensureDefaults() {
-        ensure("ADMIN", "管理员", "拥有后台全部权限", ADMIN_PERMISSIONS, true);
-        ensure("USER", "普通用户", "可阅读、评论、投稿文章", "", true);
-        ensure("EDITOR", "编辑", "可管理文章、评论与标签", "system:posts,system:comments,system:tags", false);
+        ensure("ADMIN", "管理员", "拥有后台全部权限", ADMIN_PERMISSIONS, true, true);
+        // 普通用户已有自定义权限时保留；空权限（旧版本默认）则补上读写自己内容的默认权限。
+        ensure("USER", "普通用户", "可阅读、评论、投稿文章，并管理自己的文章与评论", USER_PERMISSIONS, true, false);
+        ensure("EDITOR", "编辑", "可管理文章、评论与标签", EDITOR_PERMISSIONS, false, true);
     }
 
-    private void ensure(String code, String name, String description, String permissions, boolean builtin) {
+    private void ensure(String code, String name, String description, String permissions,
+                        boolean builtin, boolean resetPermissions) {
         Role role = roleRepository.findByCode(code).orElseGet(Role::new);
         if (role.getId() == null) {
             role.setCode(code);
@@ -79,7 +94,13 @@ public class RoleService {
         }
         role.setName(name);
         role.setDescription(description);
-        role.setPermissions(permissions);
+        if (resetPermissions || role.getId() == null || role.getPermissions() == null
+                || role.getPermissions().isBlank()) {
+            role.setPermissions(permissions);
+        } else if ("USER".equals(code)) {
+            // 老站点里的 USER 角色可能已有少量权限，补齐新版默认入口但保留站长额外授予的权限。
+            role.setPermissions(merge(role.getPermissions(), permissions));
+        }
         role.setEnabled(true);
         role.setUpdatedAt(LocalDateTime.now());
         roleRepository.save(role);
@@ -189,6 +210,12 @@ public class RoleService {
             if (permission != null && allCodes().contains(permission.trim())) valid.add(permission.trim());
         }
         return String.join(",", valid.stream().distinct().toList());
+    }
+
+    private String merge(String raw, String defaults) {
+        Set<String> merged = new LinkedHashSet<>(parse(raw));
+        merged.addAll(parse(defaults));
+        return String.join(",", merged);
     }
 
     private String trim(String value) {

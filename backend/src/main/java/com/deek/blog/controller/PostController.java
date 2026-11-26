@@ -63,6 +63,13 @@ public class PostController {
         return ApiResponse.ok(postService.stats());
     }
 
+    @GetMapping("/slug/{slug}")
+    public ApiResponse<PostDetail> detailBySlug(@PathVariable String slug, HttpServletRequest request) {
+        Long userId = SecurityUtils.currentUserId();
+        String ip = clientIp(request);
+        return ApiResponse.ok(postService.detailBySlug(slug, userId, ip));
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<PostDetail> detail(@PathVariable Long id, HttpServletRequest request) {
         Long userId = SecurityUtils.currentUserId();

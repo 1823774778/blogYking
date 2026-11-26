@@ -1,32 +1,47 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import http from '../api'
 import { state } from '../state'
+import { formatDate, readingMinutes } from '../utils'
 import MarkdownBody from '../components/MarkdownBody.vue'
 
 const stats = ref(null)
+const article = ref(null)
+const articleContent = computed(() => article.value?.content || state.site.about)
+const articleTitle = computed(() => article.value?.post?.title || '关于这里')
+const articleSummary = computed(() => article.value?.post?.summary || '一个写字的地方。')
 
 onMounted(async () => {
-  try {
-    const res = await http.get('/posts/stats')
-    stats.value = res.data
-  } catch (e) {
-    /* 忽略 */
-  }
+  const tasks = [
+    http.get('/posts/stats').then((res) => { stats.value = res.data }).catch(() => {})
+  ]
+  tasks.push(http.get('/posts/slug/about').then((res) => { article.value = res.data }).catch(() => {}))
+  await Promise.all(tasks)
 })
 </script>
 
 <template>
   <div class="ff-about-page">
     <header class="ff-page-head">
-      <span class="ff-hero-eyebrow">About · 关于</span>
-      <h1>关于这里</h1>
-      <p>一个写字的地方。</p>
+      <span class="ff-hero-eyebrow">About · 关于本站</span>
+      <h1>{{ articleTitle }}</h1>
+      <p>{{ articleSummary }}</p>
+      <div v-if="article?.post" class="ff-about-meta">
+        <span>{{ article.post.authorName || '站长' }}</span>
+        <span class="dot"></span>
+        <span>{{ formatDate(article.post.createdAt) }}</span>
+        <span class="dot"></span>
+        <span>{{ readingMinutes(articleContent) }} 分钟读完</span>
+      </div>
     </header>
 
     <div class="ff-about-grid">
       <div class="ff-about-card">
-        <MarkdownBody :content="state.site.about" />
+        <MarkdownBody :content="articleContent" />
+        <div v-if="article?.post" class="ff-about-article-link">
+          <router-link class="btn btn-ghost btn-sm" :to="`/post/${article.post.id}`">查看文章与评论</router-link>
+          <span>这篇「关于本站」也是站内文章，可在后台文章管理中修改。</span>
+        </div>
       </div>
 
       <aside class="ff-about-side">

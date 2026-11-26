@@ -186,6 +186,28 @@ public class CommentService {
                 .toList(), result.getTotalElements(), p, s);
     }
 
+    public PageResp<CommentView> adminListByUser(Long userId, int page, int size, String status, String keyword) {
+        int p = Math.max(1, page);
+        int s = Math.min(100, Math.max(1, size));
+        String normalizedStatus = status == null || status.isBlank() ? null : status.trim().toUpperCase();
+        if (normalizedStatus != null
+                && !List.of("VISIBLE", "PENDING", "HIDDEN").contains(normalizedStatus)) {
+            throw new BizException("评论状态筛选不合法");
+        }
+        String normalizedKeyword = keyword == null || keyword.isBlank() ? null : keyword.trim();
+        Page<Comment> result = commentRepository.adminSearchByUser(userId, normalizedStatus, normalizedKeyword,
+                PageRequest.of(p - 1, s, Sort.by(Sort.Order.desc("createdAt"))));
+        Map<Long, String> titles = result.getContent().stream()
+                .map(Comment::getPostId)
+                .distinct()
+                .map(id -> postRepository.findById(id).orElse(null))
+                .filter(post -> post != null)
+                .collect(Collectors.toMap(Post::getId, Post::getTitle, (a, b) -> a));
+        return new PageResp<>(result.getContent().stream()
+                .map(c -> toView(c, userId, titles.get(c.getPostId())))
+                .toList(), result.getTotalElements(), p, s);
+    }
+
     private boolean isVisible(Comment comment) {
         return "VISIBLE".equals(comment.getStatus());
     }

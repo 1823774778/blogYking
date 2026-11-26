@@ -33,4 +33,20 @@ public final class SecurityUtils {
         }
         return auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     }
+
+    public static boolean hasPermission(String permission) {
+        if (permission == null || permission.isBlank()) return false;
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        String authority = "PERM_" + permission;
+        return auth.getAuthorities().stream().anyMatch(a -> authority.equals(a.getAuthority()));
+    }
+
+    public static boolean hasAnyPermission(String... permissions) {
+        if (permissions == null) return false;
+        for (String permission : permissions) {
+            if (hasPermission(permission)) return true;
+        }
+        return false;
+    }
 }

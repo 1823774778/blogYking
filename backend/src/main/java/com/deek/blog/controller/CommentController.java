@@ -42,7 +42,8 @@ public class CommentController {
 
     @DeleteMapping("/comments/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
-        commentService.delete(id, SecurityUtils.requireUserId(), SecurityUtils.isAdmin());
+        commentService.delete(id, SecurityUtils.requireUserId(),
+                SecurityUtils.hasPermission("system:comments"));
         return ApiResponse.ok();
     }
 }

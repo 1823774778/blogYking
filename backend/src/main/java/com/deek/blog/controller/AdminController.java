@@ -56,6 +56,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -129,23 +130,58 @@ public class AdminController {
 
     @GetMapping("/stats")
     public ApiResponse<Map<String, Object>> stats() {
+        Long userId = SecurityUtils.requireUserId();
+        boolean fullPosts = SecurityUtils.hasPermission("system:posts");
+        boolean myPosts = !fullPosts && SecurityUtils.hasPermission("system:my-posts");
+        boolean fullComments = SecurityUtils.hasPermission("system:comments");
+        boolean myComments = !fullComments && SecurityUtils.hasPermission("system:my-comments");
+        boolean userAdmin = SecurityUtils.hasPermission("system:users");
         Map<String, Object> data = new LinkedHashMap<>();
         StatsResp base = postService.stats();
-        data.put("posts", base.posts());
-        data.put("drafts", postRepository.countByStatus("DRAFT"));
-        data.put("pendingPosts", postRepository.countByStatus("PENDING"));
-        data.put("rejectedPosts", postRepository.countByStatus("REJECTED"));
-        data.put("users", base.users());
-        data.put("comments", base.comments());
-        data.put("pendingComments", commentRepository.countByStatus("PENDING"));
-        data.put("hiddenComments", commentRepository.countByStatus("HIDDEN"));
+        if (fullPosts) {
+            data.put("posts", base.posts());
+            data.put("drafts", postRepository.countByStatus("DRAFT"));
+            data.put("pendingPosts", postRepository.countByStatus("PENDING"));
+            data.put("rejectedPosts", postRepository.countByStatus("REJECTED"));
+            data.put("totalViews", base.totalViews());
+            data.put("likes", likeRepository.count());
+            data.put("favorites", favoriteRepository.count());
+        } else if (myPosts) {
+            Map<String, Long> mine = postService.statsForAuthor(userId);
+            data.put("posts", mine.get("posts"));
+            data.put("drafts", mine.get("drafts"));
+            data.put("pendingPosts", mine.get("pendingPosts"));
+            data.put("rejectedPosts", mine.get("rejectedPosts"));
+            data.put("totalViews", mine.get("totalViews"));
+            data.put("likes", mine.get("likes"));
+            data.put("favorites", mine.get("favorites"));
+        } else {
+            data.put("posts", 0);
+            data.put("drafts", 0);
+            data.put("pendingPosts", 0);
+            data.put("rejectedPosts", 0);
+            data.put("totalViews", 0);
+            data.put("likes", 0);
+            data.put("favorites", 0);
+        }
+        if (fullComments) {
+            data.put("comments", base.comments());
+            data.put("pendingComments", commentRepository.countByStatus("PENDING"));
+            data.put("hiddenComments", commentRepository.countByStatus("HIDDEN"));
+        } else if (myComments) {
+            data.put("comments", commentRepository.countByUserId(userId));
+            data.put("pendingComments", commentRepository.countByUserIdAndStatus(userId, "PENDING"));
+            data.put("hiddenComments", commentRepository.countByUserIdAndStatus(userId, "HIDDEN"));
+        } else {
+            data.put("comments", 0);
+            data.put("pendingComments", 0);
+            data.put("hiddenComments", 0);
+        }
+        data.put("users", userAdmin ? base.users() : 0);
+        data.put("admins", userAdmin ? userRepository.countByRole("ADMIN") : 0);
+        data.put("disabledUsers", userAdmin ? userRepository.countByEnabledFalse() : 0);
+        data.put("mutedUsers", userAdmin ? userRepository.countMuted(LocalDateTime.now()) : 0);
         data.put("commentReview", siteConfigService.get().getOrDefault("commentReview", "false"));
-        data.put("totalViews", base.totalViews());
-        data.put("likes", likeRepository.count());
-        data.put("favorites", favoriteRepository.count());
-        data.put("admins", userRepository.countByRole("ADMIN"));
-        data.put("disabledUsers", userRepository.countByEnabledFalse());
-        data.put("mutedUsers", userRepository.countMuted(LocalDateTime.now()));
         return ApiResponse.ok(data);
     }
 
@@ -154,23 +190,29 @@ public class AdminController {
                                                  @RequestParam(defaultValue = "20") int size,
                                                  @RequestParam(required = false) String keyword,
                                                  @RequestParam(required = false) String status) {
-        return ApiResponse.ok(postService.adminList(page, size, keyword, status));
+        if (SecurityUtils.hasPermission("system:posts")) {
+            return ApiResponse.ok(postService.adminList(page, size, keyword, status));
+        }
+        return ApiResponse.ok(postService.adminListByAuthor(SecurityUtils.requireUserId(), page, size, keyword, status));
     }
 
     @GetMapping("/posts/{id}")
     public ApiResponse<PostDetail> post(@PathVariable Long id) {
-        return ApiResponse.ok(postService.adminDetail(id));
+        PostDetail detail = postService.adminDetail(id);
+        ensurePostAccess(detail.post());
+        return ApiResponse.ok(detail);
     }
 
     @PostMapping("/posts")
     public ApiResponse<PostView> createPost(@RequestBody PostReq req) {
         User author = authService.requireUser(SecurityUtils.requireUserId());
-        return ApiResponse.ok(postService.create(req, author));
+        return ApiResponse.ok(postService.create(req, author, SecurityUtils.hasPermission("system:posts")));
     }
 
     @PutMapping("/posts/{id}")
     public ApiResponse<PostView> updatePost(@PathVariable Long id, @RequestBody PostReq req) {
-        return ApiResponse.ok(postService.update(id, req));
+        return ApiResponse.ok(postService.update(id, req, SecurityUtils.requireUserId(),
+                SecurityUtils.hasPermission("system:posts")));
     }
 
     @PutMapping("/posts/{id}/review")
@@ -181,7 +223,7 @@ public class AdminController {
 
     @DeleteMapping("/posts/{id}")
     public ApiResponse<Void> deletePost(@PathVariable Long id) {
-        postService.delete(id);
+        postService.delete(id, SecurityUtils.requireUserId(), SecurityUtils.hasPermission("system:posts"));
         return ApiResponse.ok();
     }
 
@@ -201,7 +243,11 @@ public class AdminController {
                                                        @RequestParam(defaultValue = "20") int size,
                                                        @RequestParam(required = false) String keyword,
                                                        @RequestParam(required = false) String status) {
-        return ApiResponse.ok(commentService.adminList(page, size, status, keyword));
+        if (SecurityUtils.hasPermission("system:comments")) {
+            return ApiResponse.ok(commentService.adminList(page, size, status, keyword));
+        }
+        return ApiResponse.ok(commentService.adminListByUser(SecurityUtils.requireUserId(),
+                page, size, status, keyword));
     }
 
     @PutMapping("/comments/{id}/status")
@@ -499,6 +545,13 @@ public class AdminController {
         map.put("createdAt", String.valueOf(tag.getCreatedAt()));
         map.put("updatedAt", String.valueOf(tag.getUpdatedAt()));
         return map;
+    }
+
+    private void ensurePostAccess(PostView post) {
+        if (SecurityUtils.hasPermission("system:posts")) return;
+        if (post == null || !Objects.equals(post.authorId(), SecurityUtils.requireUserId())) {
+            throw BizException.forbidden("只能查看自己的文章");
+        }
     }
 
     private Map<String, String> maskedConfig(Map<String, String> raw) {

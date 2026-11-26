@@ -8,12 +8,21 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
 
     Page<Post> findAllByStatus(String status, Pageable pageable);
 
     long countByStatus(String status);
+
+    long countByAuthorId(Long authorId);
+
+    long countByAuthorIdAndStatus(Long authorId, String status);
+
+    Optional<Post> findFirstBySlugAndStatus(String slug, String status);
+
+    boolean existsBySlug(String slug);
 
     @Query("""
             select p from Post p
@@ -28,8 +37,31 @@ public interface PostRepository extends JpaRepository<Post, Long> {
                            @Param("keyword") String keyword,
                            Pageable pageable);
 
+    @Query("""
+            select p from Post p
+            where p.authorId = :authorId
+              and (:status is null or p.status = :status)
+              and (:keyword is null
+                   or lower(p.title) like lower(concat('%', :keyword, '%'))
+                   or lower(coalesce(p.summary, '')) like lower(concat('%', :keyword, '%'))
+                   or lower(coalesce(p.tags, '')) like lower(concat('%', :keyword, '%')))
+            """)
+    Page<Post> adminSearchByAuthor(@Param("authorId") Long authorId,
+                                   @Param("status") String status,
+                                   @Param("keyword") String keyword,
+                                   Pageable pageable);
+
     @Query("select coalesce(sum(p.views), 0) from Post p")
     Long totalViews();
+
+    @Query("select coalesce(sum(p.views), 0) from Post p where p.authorId = :authorId")
+    Long totalViewsByAuthor(@Param("authorId") Long authorId);
+
+    @Query("select coalesce(sum(p.likeCount), 0) from Post p where p.authorId = :authorId")
+    Long totalLikesByAuthor(@Param("authorId") Long authorId);
+
+    @Query("select coalesce(sum(p.favoriteCount), 0) from Post p where p.authorId = :authorId")
+    Long totalFavoritesByAuthor(@Param("authorId") Long authorId);
 
     @Query("select p.tags from Post p where p.status = 'PUBLISHED' and p.tags is not null and p.tags <> ''")
     List<String> allTags();

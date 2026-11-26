@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { isAdmin, state } from './state'
+import { hasAnyPermission, isAdmin, state } from './state'
+
+const MANAGE_PERMISSIONS = ['system:posts', 'system:comments', 'system:tags', 'system:announcements', 'system:navigation']
 
 const routes = [
   { path: '/', component: () => import('./views/Home.vue'), meta: { title: '首页' } },
@@ -17,22 +19,48 @@ const routes = [
     meta: { title: '后台', auth: true, admin: true },
     children: [
       { path: '', name: 'admin-dashboard', component: () => import('./views/Admin.vue'), meta: { title: '仪表盘' } },
-      { path: 'profile', name: 'admin-profile', component: () => import('./views/admin/AdminProfile.vue'), meta: { title: '个人中心' } },
-      { path: 'users', name: 'admin-users', component: () => import('./views/admin/AdminUsers.vue'), meta: { title: '用户管理' } },
-      { path: 'roles', name: 'admin-roles', component: () => import('./views/admin/AdminRoles.vue'), meta: { title: '角色权限' } },
-      { path: 'announcements', name: 'admin-announcements', component: () => import('./views/admin/AdminAnnouncements.vue'), meta: { title: '公告管理' } },
-      { path: 'posts', name: 'admin-posts', component: () => import('./views/admin/AdminPosts.vue'), meta: { title: '文章管理' } },
-      { path: 'comments', name: 'admin-comments', component: () => import('./views/admin/AdminComments.vue'), meta: { title: '评论管理' } },
-      { path: 'tags', name: 'admin-tags', component: () => import('./views/admin/AdminTags.vue'), meta: { title: '标签管理' } },
-      { path: 'site-info', name: 'admin-site-info', component: () => import('./views/admin/AdminSiteInfo.vue'), meta: { title: '站点信息' } },
-      { path: 'navigation', name: 'admin-navigation', component: () => import('./views/admin/AdminNavigation.vue'), meta: { title: '导航管理' } },
-      { path: 'notifications', name: 'admin-notifications', component: () => import('./views/admin/AdminNotifications.vue'), meta: { title: '通知设置' } },
-      { path: 'storage', name: 'admin-storage', component: () => import('./views/admin/AdminStorage.vue'), meta: { title: '存储管理' } },
-      { path: 'settings', name: 'admin-settings', component: () => import('./views/admin/AdminSettings.vue'), meta: { title: '站点设置' } }
+      { path: 'profile', name: 'admin-profile', component: () => import('./views/admin/AdminProfile.vue'), meta: { title: '个人中心', permissions: ['system:profile'] } },
+      {
+        path: 'manage',
+        name: 'admin-manage',
+        component: () => import('./views/admin/AdminManage.vue'),
+        meta: { title: '管理', permissions: MANAGE_PERMISSIONS }
+      },
+      {
+        path: 'my-posts',
+        name: 'admin-my-posts',
+        component: () => import('./views/admin/AdminPosts.vue'),
+        props: { mine: true },
+        meta: { title: '我的文章', permissions: ['system:my-posts', 'system:posts'] }
+      },
+      {
+        path: 'my-comments',
+        name: 'admin-my-comments',
+        component: () => import('./views/admin/AdminComments.vue'),
+        props: { mine: true },
+        meta: { title: '我的评论', permissions: ['system:my-comments', 'system:comments'] }
+      },
+      { path: 'users', name: 'admin-users', component: () => import('./views/admin/AdminUsers.vue'), meta: { title: '用户管理', permissions: ['system:users'] } },
+      { path: 'roles', name: 'admin-roles', component: () => import('./views/admin/AdminRoles.vue'), meta: { title: '角色权限', permissions: ['system:roles'] } },
+      { path: 'site-info', name: 'admin-site-info', component: () => import('./views/admin/AdminSiteInfo.vue'), meta: { title: '站点信息', permissions: ['system:site'] } },
+      { path: 'notifications', name: 'admin-notifications', component: () => import('./views/admin/AdminNotifications.vue'), meta: { title: '通知设置', permissions: ['system:notifications'] } },
+      { path: 'storage', name: 'admin-storage', component: () => import('./views/admin/AdminStorage.vue'), meta: { title: '存储管理', permissions: ['system:storage'] } },
+      { path: 'settings', name: 'admin-settings', component: () => import('./views/admin/AdminSettings.vue'), meta: { title: '站点设置', permissions: ['system:settings'] } },
+      {
+        path: 'posts',
+        redirect: (to) => ({ path: '/admin/manage', query: { tab: 'posts', view: typeof to.query.tab === 'string' ? to.query.tab : 'all' } })
+      },
+      {
+        path: 'comments',
+        redirect: (to) => ({ path: '/admin/manage', query: { tab: 'comments', view: typeof to.query.tab === 'string' ? to.query.tab : 'all' } })
+      },
+      { path: 'tags', redirect: { path: '/admin/manage', query: { tab: 'tags' } } },
+      { path: 'announcements', redirect: { path: '/admin/manage', query: { tab: 'announcements' } } },
+      { path: 'navigation', redirect: { path: '/admin/manage', query: { tab: 'navigation' } } }
     ]
   },
-  { path: '/admin/posts/new', name: 'admin-post-new', component: () => import('./views/AdminEditor.vue'), meta: { title: '新建文章', auth: true, admin: true } },
-  { path: '/admin/posts/:id/edit', name: 'admin-post-edit', component: () => import('./views/AdminEditor.vue'), meta: { title: '编辑文章', auth: true, admin: true } },
+  { path: '/admin/posts/new', name: 'admin-post-new', component: () => import('./views/AdminEditor.vue'), meta: { title: '新建文章', auth: true, admin: true, permissions: ['system:my-posts', 'system:posts'] } },
+  { path: '/admin/posts/:id/edit', name: 'admin-post-edit', component: () => import('./views/AdminEditor.vue'), meta: { title: '编辑文章', auth: true, admin: true, permissions: ['system:my-posts', 'system:posts'] } },
   { path: '/admin/editor/:id?', redirect: (to) => (to.params.id ? `/admin/posts/${to.params.id}/edit` : '/admin/posts/new') },
   { path: '/:pathMatch(.*)*', component: () => import('./views/NotFound.vue'), meta: { title: '找不到页面' } }
 ]
@@ -56,6 +84,15 @@ router.beforeEach((to) => {
   }
   if (adminRequired && !isAdmin()) {
     return { path: '/' }
+  }
+  const requiredPermissions = to.matched
+    .map((record) => record.meta.permissions)
+    .filter((permissions) => Array.isArray(permissions) && permissions.length)
+  if (adminRequired && requiredPermissions.length) {
+    const allowed = requiredPermissions.every((permissions) => hasAnyPermission(permissions))
+    if (!allowed) {
+      return { path: '/admin' }
+    }
   }
 })
 

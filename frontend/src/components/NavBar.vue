@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
-import { state, clearAuth, toast } from '../state'
+import { state, clearAuth, toast, isAdmin } from '../state'
 import { formatDateTime, initialOf } from '../utils'
 import ThemeMenu from './ThemeMenu.vue'
 
@@ -334,7 +334,7 @@ onBeforeUnmount(() => {
             </span>
           </button>
           <div v-if="menuOpen" class="user-menu user-menu-compact">
-            <router-link v-if="state.user.role === 'ADMIN'" to="/admin" @click="menuOpen = false">后台管理</router-link>
+            <router-link v-if="isAdmin()" to="/admin" @click="menuOpen = false">后台管理</router-link>
             <button type="button" @click="logout">退出登录</button>
           </div>
         </div>

@@ -122,9 +122,14 @@ public class PostService {
     }
 
     @Transactional
-    public PostView create(PostReq req, User author) {
+    public PostView create(PostReq req, User author, boolean manageAll) {
         Post post = new Post();
         apply(post, req);
+        if (!manageAll) {
+            // 普通用户只能保存草稿或提交审核，置顶与直接发布保留给有文章管理权限的角色。
+            if ("PUBLISHED".equals(post.getStatus())) post.setStatus("PENDING");
+            post.setTop(false);
+        }
         post.setAuthorId(author.getId());
         post.setAuthorName(displayName(author));
         post.setAuthorAvatar(author.getAvatar());
@@ -135,23 +140,41 @@ public class PostService {
     }
 
     @Transactional
-    public PostView update(Long id, PostReq req) {
-        Post post = postRepository.findById(id)
-                .orElseThrow(() -> BizException.notFound("文章不存在"));
+    public PostView update(Long id, PostReq req, Long currentUserId, boolean manageAll) {
+        Post post = requireEditable(id, currentUserId, manageAll);
         apply(post, req);
+        if (!manageAll) {
+            if ("PUBLISHED".equals(post.getStatus())) post.setStatus("PENDING");
+            post.setTop(false);
+        }
         post.setUpdatedAt(LocalDateTime.now());
         postRepository.save(post);
         return toView(post);
     }
 
     @Transactional
-    public void delete(Long id) {
-        Post post = postRepository.findById(id)
-                .orElseThrow(() -> BizException.notFound("文章不存在"));
+    public void delete(Long id, Long currentUserId, boolean manageAll) {
+        Post post = requireEditable(id, currentUserId, manageAll);
         commentRepository.deleteByPostId(id);
         likeRepository.deleteByPostId(id);
         favoriteRepository.deleteByPostId(id);
         postRepository.delete(post);
+    }
+
+    public PostDetail detailBySlug(String slug, Long currentUserId, String ip) {
+        String normalized = slug == null ? "" : slug.trim().toLowerCase();
+        Post post = postRepository.findFirstBySlugAndStatus(normalized, "PUBLISHED")
+                .orElseThrow(() -> BizException.notFound("文章不存在或已删除"));
+        return detail(post.getId(), currentUserId, ip);
+    }
+
+    private Post requireEditable(Long id, Long currentUserId, boolean manageAll) {
+        Post post = postRepository.findById(id)
+                .orElseThrow(() -> BizException.notFound("文章不存在"));
+        if (!manageAll && !Objects.equals(post.getAuthorId(), currentUserId)) {
+            throw BizException.forbidden("只能编辑或删除自己的文章");
+        }
+        return post;
     }
 
     public PageResp<PostView> adminList(int page, int size, String keyword, String status) {
@@ -168,6 +191,34 @@ public class PostService {
                 PageRequest.of(p - 1, s, Sort.by(Order.desc("createdAt"))));
         return new PageResp<>(result.getContent().stream().map(this::toView).toList(),
                 result.getTotalElements(), p, s);
+    }
+
+    public PageResp<PostView> adminListByAuthor(Long authorId, int page, int size, String keyword, String status) {
+        int p = Math.max(1, page);
+        int s = Math.min(100, Math.max(1, size));
+        String normalizedStatus = blankToNull(status);
+        if (normalizedStatus != null) {
+            normalizedStatus = normalizedStatus.toUpperCase();
+            if (!List.of("DRAFT", "PENDING", "PUBLISHED", "REJECTED").contains(normalizedStatus)) {
+                throw new BizException("文章状态筛选不合法");
+            }
+        }
+        Page<Post> result = postRepository.adminSearchByAuthor(authorId, normalizedStatus, blankToNull(keyword),
+                PageRequest.of(p - 1, s, Sort.by(Order.desc("createdAt"))));
+        return new PageResp<>(result.getContent().stream().map(this::toView).toList(),
+                result.getTotalElements(), p, s);
+    }
+
+    public Map<String, Long> statsForAuthor(Long authorId) {
+        return Map.of(
+                "posts", postRepository.countByAuthorIdAndStatus(authorId, "PUBLISHED"),
+                "drafts", postRepository.countByAuthorIdAndStatus(authorId, "DRAFT"),
+                "pendingPosts", postRepository.countByAuthorIdAndStatus(authorId, "PENDING"),
+                "rejectedPosts", postRepository.countByAuthorIdAndStatus(authorId, "REJECTED"),
+                "totalViews", postRepository.totalViewsByAuthor(authorId),
+                "likes", postRepository.totalLikesByAuthor(authorId),
+                "favorites", postRepository.totalFavoritesByAuthor(authorId)
+        );
     }
 
     public PostDetail adminDetail(Long id) {

@@ -2,12 +2,18 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import http from '../../api'
-import { toast } from '../../state'
+import { hasPermission, toast } from '../../state'
 import { formatDateTime } from '../../utils'
 import AiThinking from '../../components/AiThinking.vue'
 
+const props = defineProps({
+  statusTab: { type: String, default: '' },
+  mine: { type: Boolean, default: false }
+})
 const route = useRoute()
-const activeTab = computed(() => String(route.query.tab || 'all'))
+const canModerate = computed(() => hasPermission('system:comments'))
+const isMineView = computed(() => props.mine || !canModerate.value)
+const activeTab = computed(() => String(props.statusTab || route.query.tab || 'all'))
 const keyword = ref('')
 const comments = reactive({ records: [], total: 0, page: 1, size: 15 })
 const stats = ref(null)
@@ -96,6 +102,7 @@ async function moderate(comment, status) {
 }
 
 async function loadAiConfig() {
+  if (!canModerate.value) return
   try {
     const cfg = (await http.get('/admin/config')).data || {}
     aiCommentEnabled.value = String(cfg.aiCommentEnabled ?? 'true') === 'true'
@@ -272,14 +279,14 @@ onMounted(() => {
 <template>
   <div class="adm-page">
     <div class="adm-page-toolbar">
-      <span class="adm-total-pill">{{ tabMeta.label }} · 共 {{ comments.total }} 条</span>
+      <span class="adm-total-pill">{{ isMineView ? '我的评论' : tabMeta.label }} · 共 {{ comments.total }} 条</span>
     </div>
 
     <section class="adm-mini-stats">
-      <div><span>评论总数</span><strong>{{ stats?.comments ?? '—' }}</strong></div>
+      <div><span>{{ isMineView ? '我的评论' : '评论总数' }}</span><strong>{{ stats?.comments ?? '—' }}</strong></div>
       <div><span>待审核</span><strong>{{ stats?.pendingComments ?? '—' }}</strong></div>
       <div><span>已隐藏</span><strong>{{ stats?.hiddenComments ?? '—' }}</strong></div>
-      <div>
+      <div v-if="canModerate">
         <span>审核开关</span>
         <strong class="adm-mini-state" :class="stats?.commentReview === 'true' ? 'is-on' : 'is-off'">
           {{ stats ? (stats.commentReview === 'true' ? '已开启' : '未开启') : '—' }}
@@ -287,7 +294,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="adm-card comment-policy-card">
+    <section v-if="canModerate" class="adm-card comment-policy-card">
       <div>
         <span class="adm-card-kicker">COMMENT POLICY</span>
         <h2>评论先审后发</h2>
@@ -300,7 +307,7 @@ onMounted(() => {
       </label>
     </section>
 
-    <div v-if="selectedCount" class="adm-bulkbar">
+    <div v-if="canModerate && selectedCount" class="adm-bulkbar">
       <span>已选 {{ selectedCount }} 条评论</span>
       <div class="adm-head-actions">
         <button class="btn btn-ghost btn-sm" type="button" :disabled="bulkSaving" @click="bulkModerate('VISIBLE')">批量通过</button>
@@ -328,7 +335,7 @@ onMounted(() => {
         <table class="table adm-table adm-comment-table">
           <thead>
             <tr>
-              <th class="adm-check-col"><input type="checkbox" :checked="allSelected" aria-label="全选当前页评论" @change="toggleSelectAll" /></th>
+              <th v-if="canModerate" class="adm-check-col"><input type="checkbox" :checked="allSelected" aria-label="全选当前页评论" @change="toggleSelectAll" /></th>
               <th>评论内容</th>
               <th>评论者</th>
               <th>所属文章</th>
@@ -339,7 +346,7 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="comment in comments.records" :key="comment.id">
-              <td class="adm-check-col"><input type="checkbox" :checked="selectedIds.includes(comment.id)" :aria-label="`选择评论 ${comment.id}`" @change="toggleSelect(comment)" /></td>
+              <td v-if="canModerate" class="adm-check-col"><input type="checkbox" :checked="selectedIds.includes(comment.id)" :aria-label="`选择评论 ${comment.id}`" @change="toggleSelect(comment)" /></td>
               <td class="adm-comment-cell">
                 <p>“{{ comment.content }}”</p>
                 <span v-if="comment.parentId" class="adm-row-meta">回复评论 #{{ comment.parentId }}</span>
@@ -358,17 +365,17 @@ onMounted(() => {
               <td>{{ formatDateTime(comment.createdAt) }}</td>
               <td>
                 <div class="adm-row-actions wrap">
-                  <button v-if="comment.status !== 'VISIBLE'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'VISIBLE')">通过</button>
-                  <button v-if="comment.status === 'VISIBLE'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'HIDDEN')">隐藏</button>
-                  <button v-if="comment.status === 'PENDING'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'HIDDEN')">拒绝</button>
-                  <button class="btn-text" type="button" :disabled="aiReviewLoading || !aiCommentEnabled" @click="openAiReview(comment)">AI 审核</button>
-                  <button v-if="comment.postId" class="btn-text" type="button" :disabled="summaryLoading || !aiCommentEnabled" @click="openSummary(comment)">AI 总结评论</button>
+                  <button v-if="canModerate && comment.status !== 'VISIBLE'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'VISIBLE')">通过</button>
+                  <button v-if="canModerate && comment.status === 'VISIBLE'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'HIDDEN')">隐藏</button>
+                  <button v-if="canModerate && comment.status === 'PENDING'" class="btn-text" type="button" :disabled="actingId === comment.id" @click="moderate(comment, 'HIDDEN')">拒绝</button>
+                  <button v-if="canModerate" class="btn-text" type="button" :disabled="aiReviewLoading || !aiCommentEnabled" @click="openAiReview(comment)">AI 审核</button>
+                  <button v-if="canModerate && comment.postId" class="btn-text" type="button" :disabled="summaryLoading || !aiCommentEnabled" @click="openSummary(comment)">AI 总结评论</button>
                   <button class="btn-text danger" type="button" @click="removeComment(comment)">删除</button>
                 </div>
               </td>
             </tr>
             <tr v-if="!comments.records.length">
-              <td colspan="7" class="adm-empty-cell">没有符合条件的评论</td>
+              <td :colspan="canModerate ? 7 : 6" class="adm-empty-cell">没有符合条件的评论</td>
             </tr>
           </tbody>
         </table>

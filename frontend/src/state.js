@@ -134,7 +134,15 @@ export function toast(message, type = 'info') {
   }, 2600)
 }
 
+export function hasPermission(code) {
+  if (!code) return false
+  return Array.isArray(state.user?.permissions) && state.user.permissions.includes(code)
+}
+
+export function hasAnyPermission(codes) {
+  return Array.isArray(codes) && codes.some((code) => hasPermission(code))
+}
+
 export function isAdmin() {
-  const permissions = state.user?.permissions || []
-  return state.user?.role === 'ADMIN' || permissions.includes('system:admin')
+  return state.user?.role === 'ADMIN' || hasPermission('system:admin')
 }

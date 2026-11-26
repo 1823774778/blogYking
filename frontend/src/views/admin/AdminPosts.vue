@@ -2,12 +2,18 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import http from '../../api'
-import { toast } from '../../state'
+import { hasPermission, toast } from '../../state'
 import { formatDate, formatDateTime } from '../../utils'
 import AiThinking from '../../components/AiThinking.vue'
 
+const props = defineProps({
+  statusTab: { type: String, default: '' },
+  mine: { type: Boolean, default: false }
+})
 const route = useRoute()
-const activeTab = computed(() => String(route.query.tab || 'all'))
+const canManageAll = computed(() => hasPermission('system:posts'))
+const isMineView = computed(() => props.mine || !canManageAll.value)
+const activeTab = computed(() => String(props.statusTab || route.query.tab || 'all'))
 const keyword = ref('')
 const posts = reactive({ records: [], total: 0, page: 1, size: 15 })
 const stats = ref(null)
@@ -101,6 +107,7 @@ async function submitReview(status) {
 }
 
 async function loadAiConfig() {
+  if (!canManageAll.value) return
   try {
     const cfg = (await http.get('/admin/config')).data || {}
     articleAiEnabled.value = String(cfg.aiArticleEnabled ?? 'true') === 'true'
@@ -187,7 +194,7 @@ onMounted(() => {
 <template>
   <div class="adm-page">
     <div class="adm-page-toolbar">
-      <span class="adm-total-pill">{{ tabMeta.label }}</span>
+      <span class="adm-total-pill">{{ isMineView ? '我的文章' : tabMeta.label }}</span>
       <div class="adm-head-actions">
         <router-link class="btn btn-sm" to="/admin/posts/new">新建文章</router-link>
       </div>
@@ -252,9 +259,9 @@ onMounted(() => {
                 <div class="adm-row-actions wrap">
                   <router-link class="btn-text" :to="`/admin/posts/${post.id}/edit`">编辑</router-link>
                   <a class="btn-text" :href="`/post/${post.id}`" target="_blank" rel="noopener">预览</a>
-                  <button class="btn-text" type="button" :disabled="aiReviewLoadingId === post.id || !articleAiEnabled" @click="openAiReview(post)">{{ aiReviewLoadingId === post.id ? '审核中…' : 'AI 审核' }}</button>
-                  <button v-if="post.status !== 'PUBLISHED'" class="btn-text" type="button" @click="openReview(post)">{{ post.status === 'PENDING' ? '审核' : '发布' }}</button>
-                  <button v-else class="btn-text" type="button" @click="unpublish(post)">下架</button>
+                  <button v-if="canManageAll" class="btn-text" type="button" :disabled="aiReviewLoadingId === post.id || !articleAiEnabled" @click="openAiReview(post)">{{ aiReviewLoadingId === post.id ? '审核中…' : 'AI 审核' }}</button>
+                  <button v-if="canManageAll && post.status !== 'PUBLISHED'" class="btn-text" type="button" @click="openReview(post)">{{ post.status === 'PENDING' ? '审核' : '发布' }}</button>
+                  <button v-else-if="canManageAll" class="btn-text" type="button" @click="unpublish(post)">下架</button>
                   <button class="btn-text danger" type="button" @click="removePost(post)">删除</button>
                 </div>
               </td>

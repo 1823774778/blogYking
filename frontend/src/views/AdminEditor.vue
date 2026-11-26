@@ -2,12 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
-import { state, toast } from '../state'
+import { hasPermission, state, toast } from '../state'
 import MarkdownBody from '../components/MarkdownBody.vue'
 import AiThinking from '../components/AiThinking.vue'
 
 const route = useRoute()
 const router = useRouter()
+const canManageAll = computed(() => hasPermission('system:posts'))
 
 const form = reactive({
   title: '',
@@ -15,7 +16,7 @@ const form = reactive({
   content: '',
   cover: '',
   tags: '',
-  status: 'PUBLISHED',
+  status: canManageAll.value ? 'PUBLISHED' : 'PENDING',
   top: false,
   reviewNote: '',
   slug: '',
@@ -116,7 +117,8 @@ async function save(status) {
     toast('正文不能为空', 'error')
     return
   }
-  form.status = status
+  const requestedStatus = status === 'PUBLISHED' && !canManageAll.value ? 'PENDING' : status
+  form.status = requestedStatus
   saving.value = true
   try {
     const payload = {
@@ -137,8 +139,13 @@ async function save(status) {
       await http.post('/admin/posts', payload)
     }
     settingsOpen.value = false
-    toast(status === 'PUBLISHED' ? '文章已发布' : status === 'PENDING' ? '文章已提交审核' : '草稿已保存')
-    router.push({ path: '/admin/posts', query: { tab: status === 'PUBLISHED' ? 'published' : status === 'PENDING' ? 'pending' : 'draft' } })
+    toast(form.status === 'PUBLISHED' ? '文章已发布' : form.status === 'PENDING' ? '文章已提交审核' : '草稿已保存')
+    const view = form.status === 'PUBLISHED' ? 'published' : form.status === 'PENDING' ? 'pending' : 'draft'
+    if (canManageAll.value) {
+      router.push({ path: '/admin/manage', query: { tab: 'posts', view } })
+    } else {
+      router.push({ path: '/admin/my-posts', query: { tab: view } })
+    }
   } catch (e) {
     toast(e.message, 'error')
   } finally {
@@ -898,7 +905,8 @@ onMounted(async () => {
               <select id="statusSelect" v-model="form.status">
                 <option value="DRAFT">草稿</option>
                 <option value="PENDING">待审核</option>
-                <option value="PUBLISHED">已发布</option>
+                <option v-if="!canManageAll && form.status === 'PUBLISHED'" value="PUBLISHED" disabled>已发布（仅管理员可修改）</option>
+                <option v-if="canManageAll" value="PUBLISHED">已发布</option>
               </select>
             </div>
             <div class="field span-2">
@@ -918,7 +926,7 @@ onMounted(async () => {
             </div>
             <div class="field span-2">
               <div class="fe-check-row">
-                <label class="fe-check"><input v-model="form.top" type="checkbox" /> 置顶这篇文章</label>
+                <label v-if="canManageAll" class="fe-check"><input v-model="form.top" type="checkbox" /> 置顶这篇文章</label>
                 <label class="fe-check"><input v-model="form.allowComment" type="checkbox" /> 开启本文章评论区</label>
               </div>
             </div>

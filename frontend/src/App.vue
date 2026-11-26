@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import SiteMusic from './components/SiteMusic.vue'
 import http from './api'
-import { state, applyTheme } from './state'
+import { state, applyTheme, isAdmin } from './state'
 
 const route = useRoute()
 const router = useRouter()
@@ -83,7 +83,7 @@ onMounted(async () => {
       <span class="hero-eyebrow">Maintenance</span>
       <h1>站点维护中</h1>
       <p>{{ state.site.maintenanceMessage || '站点正在维护升级，预计很快恢复。请稍后刷新页面。' }}</p>
-      <router-link v-if="state.user?.role === 'ADMIN'" class="btn" to="/admin">进入后台</router-link>
+      <router-link v-if="isAdmin()" class="btn" to="/admin">进入后台</router-link>
       <router-link v-else class="btn" to="/login">管理员登录</router-link>
     </div>
     <div v-if="readOnlyMode" class="site-readonly-banner">

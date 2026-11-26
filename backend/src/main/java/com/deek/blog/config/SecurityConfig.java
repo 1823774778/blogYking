@@ -3,6 +3,7 @@ package com.deek.blog.config;
 import com.deek.blog.repository.UserRepository;
 import com.deek.blog.security.JwtAuthenticationFilter;
 import com.deek.blog.security.JwtUtil;
+import com.deek.blog.security.AdminPermissionFilter;
 import com.deek.blog.security.SiteModeFilter;
 import com.deek.blog.role.RoleService;
 import com.deek.blog.service.SiteConfigService;
@@ -66,6 +67,7 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtUtil, userRepository, roleService),
                         UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(new AdminPermissionFilter(), JwtAuthenticationFilter.class)
                 .addFilterBefore(new SiteModeFilter(siteConfigService),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();

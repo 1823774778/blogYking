@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
-import { clearAuth, state, toast } from '../state'
+import { clearAuth, hasAnyPermission, hasPermission, state, toast } from '../state'
 import { initialOf } from '../utils'
 import ThemeMenu from '../components/ThemeMenu.vue'
 import AdminNavIcon from '../components/AdminNavIcon.vue'
@@ -24,38 +24,55 @@ function onLogoError() {
 
 const sections = [
   { key: 'dashboard', label: '仪表盘', to: '/admin', icon: 'dashboard' },
-  { key: 'profile', label: '个人中心', to: '/admin/profile', icon: 'profile' },
-  { key: 'users', label: '用户管理', to: '/admin/users', icon: 'users' },
-  { key: 'roles', label: '角色权限', to: '/admin/roles', icon: 'roles' },
-  { key: 'posts', label: '文章管理', to: '/admin/posts', icon: 'posts' },
-  { key: 'comments', label: '评论管理', to: '/admin/comments', icon: 'comments' },
-  { key: 'tags', label: '标签管理', to: '/admin/tags', icon: 'tags' },
-  { key: 'announcements', label: '公告管理', to: '/admin/announcements', icon: 'announcements' },
-  { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site' },
-  { key: 'navigation', label: '导航管理', to: '/admin/navigation', icon: 'navigation' },
-  { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications' },
-  { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage' },
-  { key: 'settings', label: '站点设置', to: '/admin/settings', icon: 'settings' }
+  { key: 'profile', label: '个人中心', to: '/admin/profile', icon: 'profile', permissions: ['system:profile'] },
+  { key: 'my-posts', label: '我的文章', to: '/admin/my-posts', icon: 'posts', permissions: ['system:my-posts', 'system:posts'] },
+  { key: 'my-comments', label: '我的评论', to: '/admin/my-comments', icon: 'comments', permissions: ['system:my-comments', 'system:comments'] },
+  { key: 'manage', label: '管理', to: '/admin/manage', icon: 'settings', permissions: ['system:posts', 'system:comments', 'system:tags', 'system:announcements', 'system:navigation'] },
+  { key: 'users', label: '用户管理', to: '/admin/users', icon: 'users', permissions: ['system:users'] },
+  { key: 'roles', label: '角色权限', to: '/admin/roles', icon: 'roles', permissions: ['system:roles'] },
+  { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site', permissions: ['system:site'] },
+  { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications', permissions: ['system:notifications'] },
+  { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage', permissions: ['system:storage'] },
+  { key: 'settings', label: '站点设置', to: '/admin/settings', icon: 'settings', permissions: ['system:settings'] }
 ]
 
-const primarySections = [sections[0], sections[1]]
-const navGroups = [
+function sectionByKey(key) {
+  return sections.find((item) => item.key === key)
+}
+
+function visibleSection(section) {
+  return section && (!section.permissions || hasAnyPermission(section.permissions))
+}
+
+const visibleSections = computed(() => sections.filter(visibleSection))
+const primarySections = computed(() => ['dashboard', 'profile']
+  .map(sectionByKey)
+  .filter(visibleSection))
+const fullContentManager = computed(() =>
+  hasPermission('system:posts') && hasPermission('system:comments'))
+const showPersonalContent = computed(() => !fullContentManager.value
+  && (hasPermission('system:my-posts') || hasPermission('system:my-comments')))
+const navGroups = computed(() => [
   {
-    key: 'content',
-    label: '内容',
-    hint: 'CONTENT',
-    icon: 'posts',
-    items: ['posts', 'comments', 'tags', 'announcements'].map((key) => sections.find((item) => item.key === key))
+    key: 'mine',
+    label: '我的内容',
+    hint: 'MY CONTENT',
+    icon: 'profile',
+    items: showPersonalContent.value
+      ? ['my-posts', 'my-comments'].map(sectionByKey).filter(visibleSection)
+      : []
   },
   {
     key: 'settings',
     label: '设置',
     hint: 'SETTINGS',
     icon: 'settings',
-    items: ['users', 'roles', 'site-info', 'navigation', 'notifications', 'storage', 'settings'].map((key) => sections.find((item) => item.key === key))
+    items: ['manage', 'users', 'roles', 'site-info', 'notifications', 'storage', 'settings']
+      .map(sectionByKey)
+      .filter(visibleSection)
   }
-]
-const groupedSections = navGroups.flatMap((group) => group.items)
+].filter((group) => group.items.length))
+const groupedSections = computed(() => navGroups.value.flatMap((group) => group.items))
 const savedOpenGroups = (() => {
   try {
     return JSON.parse(localStorage.getItem('admin_nav_groups') || '{}') || {}
@@ -64,7 +81,7 @@ const savedOpenGroups = (() => {
   }
 })()
 const openGroups = ref({
-  content: savedOpenGroups.content !== false,
+  mine: savedOpenGroups.mine !== false,
   settings: savedOpenGroups.settings !== false
 })
 function toggleNavGroup(key) {
@@ -98,34 +115,26 @@ const sectionTabs = {
     { key: 'all', label: '角色列表' },
     { key: 'permissions', label: '权限目录' }
   ],
-  announcements: [
-    { key: 'edit', label: '公告编辑' }
-  ],
-  posts: [
+  'my-posts': [
     { key: 'all', label: '全部文章' },
     { key: 'published', label: '已发布' },
     { key: 'draft', label: '草稿' },
     { key: 'pending', label: '待审核' },
     { key: 'rejected', label: '已退回' }
   ],
-  comments: [
+  'my-comments': [
     { key: 'all', label: '全部评论' },
     { key: 'pending', label: '待审核' },
     { key: 'visible', label: '已展示' },
     { key: 'hidden', label: '已隐藏' }
   ],
+  manage: [],
   'site-info': [
     { key: 'basic', label: '基础信息' },
     { key: 'appearance', label: '品牌与关于' },
     { key: 'music', label: '站点音乐' },
     { key: 'footer', label: '页脚与联系' },
     { key: 'advanced', label: '高级与代码' }
-  ],
-  tags: [
-    { key: 'all', label: '标签目录' }
-  ],
-  navigation: [
-    { key: 'nav', label: '导航标签' }
   ],
   notifications: [
     { key: 'all', label: '全部通知' },
@@ -146,19 +155,20 @@ const sectionTabs = {
 
 const currentSection = computed(() => {
   const path = route.path
-  if (path.startsWith('/admin/profile')) return sections.find((s) => s.key === 'profile')
-  if (path.startsWith('/admin/roles')) return sections.find((s) => s.key === 'roles')
-  if (path.startsWith('/admin/users')) return sections.find((s) => s.key === 'users')
-  if (path.startsWith('/admin/announcements')) return sections.find((s) => s.key === 'announcements')
-  if (path.startsWith('/admin/posts')) return sections.find((s) => s.key === 'posts')
-  if (path.startsWith('/admin/comments')) return sections.find((s) => s.key === 'comments')
-  if (path.startsWith('/admin/tags')) return sections.find((s) => s.key === 'tags')
-  if (path.startsWith('/admin/site-info')) return sections.find((s) => s.key === 'site-info')
-  if (path.startsWith('/admin/navigation')) return sections.find((s) => s.key === 'navigation')
-  if (path.startsWith('/admin/notifications')) return sections.find((s) => s.key === 'notifications')
-  if (path.startsWith('/admin/storage')) return sections.find((s) => s.key === 'storage')
-  if (path.startsWith('/admin/settings')) return sections.find((s) => s.key === 'settings')
-  return sections[0]
+  if (path.startsWith('/admin/profile')) return sectionByKey('profile')
+  if (path.startsWith('/admin/roles')) return sectionByKey('roles')
+  if (path.startsWith('/admin/users')) return sectionByKey('users')
+  if (path.startsWith('/admin/my-posts')) return sectionByKey('my-posts')
+  if (path.startsWith('/admin/my-comments')) return sectionByKey('my-comments')
+  if (path.startsWith('/admin/manage')) return sectionByKey('manage')
+  if (path.startsWith('/admin/posts') || path.startsWith('/admin/editor')) {
+    return hasPermission('system:posts') ? sectionByKey('manage') : sectionByKey('my-posts')
+  }
+  if (path.startsWith('/admin/site-info')) return sectionByKey('site-info')
+  if (path.startsWith('/admin/notifications')) return sectionByKey('notifications')
+  if (path.startsWith('/admin/storage')) return sectionByKey('storage')
+  if (path.startsWith('/admin/settings')) return sectionByKey('settings')
+  return visibleSections.value[0] || sections[0]
 })
 
 const isEditor = computed(() => route.name === 'admin-post-new' || route.name === 'admin-post-edit')
@@ -166,10 +176,14 @@ const sectionLabel = computed(() => currentSection.value?.label || '仪表盘')
 const displayName = computed(() => state.user?.nickname || state.user?.username || '站长')
 const roleLabel = computed(() => state.user?.roleName || (state.user?.role === 'ADMIN' ? '管理员' : '读者'))
 
-const tabs = computed(() => sectionTabs[currentSection.value?.key] || [])
+const tabs = computed(() => {
+  const list = sectionTabs[currentSection.value?.key] || []
+  if (currentSection.value?.key !== 'dashboard') return list
+  return list.filter((tab) => tab.key !== 'attention' || fullContentManager.value)
+})
 
 watch(() => currentSection.value?.key, (key) => {
-  const group = navGroups.find((item) => item.items.some((entry) => entry.key === key))
+  const group = navGroups.value.find((item) => item.items.some((entry) => entry.key === key))
   if (group && !openGroups.value[group.key]) {
     openGroups.value = { ...openGroups.value, [group.key]: true }
     try {
@@ -181,7 +195,6 @@ watch(() => currentSection.value?.key, (key) => {
 }, { immediate: true })
 const activeTab = computed(() => {
   if (isEditor.value) return 'edit'
-  if (route.name === 'admin-posts' && route.params.id) return 'edit'
   return String(route.query.tab || tabs.value[0]?.key || '')
 })
 
@@ -203,7 +216,7 @@ const sidebarToggleLabel = computed(() => mobileOpen.value ? '关闭侧边导航
 
 function goTab(tab) {
   if (isEditor.value) {
-    router.push('/admin/posts')
+    router.push(hasPermission('system:posts') ? '/admin/manage' : '/admin/my-posts')
     return
   }
   router.replace({ path: route.path, query: { ...route.query, tab: tab.key } })

@@ -95,6 +95,8 @@ const fabOffset = ref({ x: 0, y: 0 })
 const fabDragging = ref(false)
 const fabMoved = ref(false)
 const fabHovered = ref(false)
+// 悬浮球位于屏幕左半区时向右展开，位于右半区时向左展开。
+const fabExpandRight = ref(false)
 const compactViewport = ref(false)
 const searchInput = ref(null)
 const chartBody = ref(null)
@@ -1477,9 +1479,21 @@ function canExpandFab() {
   return Boolean(window.matchMedia?.('(hover: hover) and (pointer: fine)').matches)
 }
 
+function updateFabExpandSide() {
+  if (window.innerWidth <= 920) {
+    fabExpandRight.value = false
+    return
+  }
+  const element = fab.value
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  fabExpandRight.value = rect.left + rect.width / 2 < window.innerWidth / 2
+}
+
 function onFabPointerEnter(event) {
   if (event?.pointerType && event.pointerType !== 'mouse') return
   if (!canExpandFab()) return
+  updateFabExpandSide()
   fabHovered.value = true
 }
 
@@ -1500,21 +1514,25 @@ function onFabFocusOut(event) {
 
 function beginFabDrag(event) {
   if (event.pointerType === 'mouse' && event.button !== 0) return
+  updateFabExpandSide()
   fabHovered.value = true
   const element = event.currentTarget
   const rect = element.getBoundingClientRect()
   const shell = element.closest('.sm-fab-shell')
   const shellRect = shell?.getBoundingClientRect()
+  // 悬浮时外壳会横向展开，拖动基准必须取 54×54 的定位槽，否则松手后位置会跳变。
+  const slot = element.closest('.sm-fab-slot')
+  const slotRect = slot?.getBoundingClientRect()
   fabDrag = {
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
     offsetX: fabOffset.value.x,
     offsetY: fabOffset.value.y,
-    rectLeft: (shellRect?.left ?? rect.left) - fabOffset.value.x,
-    rectTop: (shellRect?.top ?? rect.top) - fabOffset.value.y,
-    width: shellRect?.width || rect.width,
-    height: shellRect?.height || rect.height
+    rectLeft: (slotRect?.left ?? shellRect?.left ?? rect.left) - fabOffset.value.x,
+    rectTop: (slotRect?.top ?? shellRect?.top ?? rect.top) - fabOffset.value.y,
+    width: slotRect?.width || 54,
+    height: slotRect?.height || 54
   }
   fabDragging.value = true
   element.setPointerCapture?.(event.pointerId)
@@ -1549,6 +1567,7 @@ function endFabDrag() {
   window.removeEventListener('pointercancel', endFabDrag)
   if (fabMoved.value) {
     persistFabOffset()
+    nextTick(updateFabExpandSide)
     if (fabMoveTimer) clearTimeout(fabMoveTimer)
     fabMoveTimer = setTimeout(() => { fabMoved.value = false }, 260)
   }
@@ -1576,6 +1595,7 @@ function onViewportResize() {
       }
     }
   }
+  nextTick(updateFabExpandSide)
   if (panelOpen.value) computePanelPlacement()
 }
 
@@ -2360,6 +2380,7 @@ onMounted(() => {
   loadPersistedState()
   loadLayoutState()
   compactViewport.value = window.innerWidth <= 920
+  nextTick(updateFabExpandSide)
   // 站点配置与音源能力可能在挂载之后才到达，先保留用户选择，等能力加载后再校正，
   // 避免刷新时把平台/视图退回默认值并写回本地存储。
   activePlatform.value = restoredPlatform || preferredPlatform()
@@ -3032,7 +3053,7 @@ onBeforeUnmount(() => {
         <div
           v-if="!panelOpen"
           class="sm-fab-shell"
-          :class="{ hovered: fabHovered && currentTrack, dragging: fabDragging, playing }"
+          :class="{ hovered: fabHovered && currentTrack, dragging: fabDragging, playing, 'expand-right': fabExpandRight }"
           @pointerenter="onFabPointerEnter"
           @pointerleave="onFabPointerLeave"
           @focusin="onFabFocusIn"
@@ -3794,10 +3815,12 @@ onBeforeUnmount(() => {
 .sm-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 13px 8px; border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent); color: var(--muted); font-size: 8px; }
 .sm-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.sm-fab-slot { display: flex; align-items: center; justify-content: flex-end; pointer-events: none; }
+.sm-fab-slot { position: relative; display: flex; align-items: center; justify-content: flex-end; width: 54px; height: 54px; flex: 0 0 54px; pointer-events: none; }
 
 .sm-fab-shell {
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
   display: flex;
   align-items: center;
   width: 54px;
@@ -3815,7 +3838,13 @@ onBeforeUnmount(() => {
   touch-action: none;
   user-select: none;
   will-change: width;
+  transform-origin: right center;
   transition: width .34s cubic-bezier(.22, .78, .25, 1), transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.sm-fab-shell.expand-right {
+  right: auto;
+  left: 0;
+  transform-origin: left center;
 }
 .sm-fab-shell.hovered {
   width: 248px;
@@ -3847,6 +3876,7 @@ onBeforeUnmount(() => {
   touch-action: none;
   user-select: none;
 }
+.sm-fab-shell.expand-right .sm-fab { margin-left: 0; margin-right: auto; }
 .sm-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
 .sm-fab-shell:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
 .sm-fab-art { display: grid; will-change: transform; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent)); color: #fff; font-size: 17px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
@@ -3883,6 +3913,7 @@ onBeforeUnmount(() => {
   transform: translate(0, -50%);
   transition-delay: .06s;
 }
+.sm-fab-shell.expand-right .sm-fab-info { transform-origin: left center; }
 .sm-fab-shell.playing .sm-fab-art { animation: sm-disc-spin 7s linear infinite; }
 .sm-fab-shell.playing .sm-fab-ring { opacity: .72; border-style: dashed; animation: sm-disc-orbit 3.4s linear infinite; }
 .sm-fab-shell.playing { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, .7); }
@@ -3914,6 +3945,7 @@ onBeforeUnmount(() => {
   transition-delay: .08s;
 }
 .sm-fab-play:hover { background: var(--accent-ink); }
+.sm-fab-shell.expand-right .sm-fab-play { left: auto; right: 9px; }
 .sm-fab-shell.hovered .sm-fab-play:active { transform: translateY(-50%) scale(.94); }
 .sm-fab-play:disabled { cursor: progress; }
 .sm-fab-shell.hovered .sm-fab-play:disabled { opacity: .9; }
