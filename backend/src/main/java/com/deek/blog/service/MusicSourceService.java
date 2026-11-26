@@ -490,13 +490,14 @@ public class MusicSourceService {
         if (wantedTitle.isBlank()) throw new BizException("缺少歌曲名称");
         if (wantedTitle.length() > 100) wantedTitle = wantedTitle.substring(0, 100);
         if (wantedArtist.length() > 100) wantedArtist = wantedArtist.substring(0, 100);
-        final String searchTitle = wantedTitle;
         String exclude = String.valueOf(source == null ? "" : source).trim().toLowerCase(Locale.ROOT);
 
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
-        String normalizedTitle = normalizeSongText(wantedTitle);
+        String normalizedTitle = baseSongText(wantedTitle);
+        if (normalizedTitle.isBlank()) normalizedTitle = normalizeSongText(wantedTitle);
         if (normalizedTitle.isBlank()) throw new BizException("歌曲名称不合法");
+        final String searchTitle = normalizedTitle;
 
         List<String> searched = new ArrayList<>();
         List<CompletableFuture<List<Map<String, Object>>>> futures = new ArrayList<>();
@@ -535,7 +536,7 @@ public class MusicSourceService {
             String candidateArtist = String.valueOf(track.getOrDefault("artist", "")).trim();
             if (code.isBlank() || id.isBlank()) continue;
             String rawTitle = String.valueOf(track.getOrDefault("title", "")).trim();
-            if (!normalizeSongText(rawTitle).equals(normalizedTitle)) continue;
+            if (!baseSongText(rawTitle).equals(normalizedTitle)) continue;
             if (!artistCompatible(wantedArtist, candidateArtist)) continue;
             String key = code + ":" + id;
             if (seen.putIfAbsent(key, Boolean.TRUE) != null) continue;
@@ -579,6 +580,30 @@ public class MusicSourceService {
                 .toLowerCase(Locale.ROOT)
                 .trim();
         return text.replaceAll("[\\p{Punct}\\p{Z}\\s，。！？、；：“”‘’（）《》【】〈〉「」『』…—·]", "");
+    }
+
+    /** 去掉歌名末尾或中间的括号补充说明，用于跨平台同曲匹配。 */
+    private String baseSongText(String value) {
+        String text = Normalizer.normalize(String.valueOf(value == null ? "" : value), Normalizer.Form.NFKC)
+                .replaceAll("[（(\\[【][^）)\\]】]*[）)\\]】]", " ");
+        return normalizeSongText(text);
+    }
+
+    /**
+     * 公共聚合接口在未登录/无会员或上游限流时会返回同一个约 7 秒的占位 mp3。
+     * 该地址不能当真实歌曲播放，统一丢弃后走跨平台同曲匹配。
+     */
+    private boolean isPlaceholderAudio(String audio) {
+        if (audio == null || audio.isBlank()) return false;
+        try {
+            URI uri = URI.create(audio);
+            String host = uri.getHost();
+            String path = uri.getPath();
+            return host != null && "cdn-img.gitcode.com".equalsIgnoreCase(host)
+                    && path != null && path.contains("d36b953eeef28a05c5086233ca7dbf7af1bfdf9bbbf1d9cc69789f79d619c9bd");
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private boolean artistCompatible(String requested, String candidate) {
@@ -682,6 +707,15 @@ public class MusicSourceService {
             }
         }
 
+        boolean placeholderAudio = false;
+        if (audio != null && !audio.isBlank() && isPlaceholderAudio(audio)) {
+            // 聚合接口在未登录/无会员或限流时会返回固定 7 秒占位音频。
+            placeholderAudio = true;
+            audio = "";
+            message = "音源接口返回占位音频";
+            log.warn("音源返回占位音频，尝试其他平台 platform={} id={}", sourceCode, id);
+        }
+
         String wantedTitle = String.valueOf(title == null ? "" : title).trim();
         if ((audio == null || audio.isBlank()) && !wantedTitle.isBlank()) {
             chosen = findPlayableFallback(runtime, wantedTitle,
@@ -701,9 +735,19 @@ public class MusicSourceService {
 
         if (audio == null || audio.isBlank()) {
             if (!wantedTitle.isBlank()) {
-                throw new BizException("该歌曲在当前可用平台都没有播放地址，换一首试试");
+                if (placeholderAudio && "tx".equals(originalSource)) {
+                    throw new BizException("QQ 音乐接口只返回占位音频，且没有找到其他平台的同曲版本，换一首试试");
+                }
+                throw new BizException(placeholderAudio
+                        ? "音源接口只返回占位音频，且没有找到其他平台的同曲版本，换一首试试"
+                        : "该歌曲在当前可用平台都没有播放地址，换一首试试");
             }
             String reason = resolveError == null ? "" : shortMessage(resolveError);
+            if (placeholderAudio) {
+                throw new BizException("tx".equals(originalSource)
+                        ? "QQ 音乐接口只返回占位音频，需要登录或会员授权"
+                        : "音源接口只返回占位音频，需要登录或会员授权");
+            }
             throw new BizException(reason.isBlank()
                     ? "该歌曲暂时无法播放，可能受版权限制，换一首试试"
                     : "该歌曲暂时无法播放（" + reason + "），换一首试试");

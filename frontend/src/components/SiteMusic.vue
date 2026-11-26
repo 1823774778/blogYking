@@ -3837,6 +3837,7 @@ onBeforeUnmount(() => {
   width: 54px;
   height: 54px;
   flex: 0 0 54px;
+  margin-left: auto;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3870,7 +3871,7 @@ onBeforeUnmount(() => {
   gap: 2px;
   opacity: 0;
   pointer-events: none;
-  transform: translate(-7px, -50%);
+  transform: translate(7px, -50%);
   transition: opacity .12s ease, transform .24s cubic-bezier(.22, .78, .25, 1);
 }
 .sm-fab-info strong,
@@ -3888,7 +3889,7 @@ onBeforeUnmount(() => {
 .sm-fab-play {
   position: absolute;
   top: 50%;
-  right: 9px;
+  left: 9px;
   z-index: 2;
   display: grid;
   place-items: center;
