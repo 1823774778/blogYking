@@ -20,6 +20,15 @@ const FALLBACK_PLATFORM_LABELS = {
   kg: '酷狗音乐',
   mg: '咪咕音乐'
 }
+// 前台展示名沿用用户熟悉的一套称呼，底层仍用平台代码请求。
+const PLATFORM_DISPLAY_NAMES = {
+  kg: '小枸音乐',
+  kw: '小蜗音乐',
+  tx: '小秋音乐',
+  wy: '小芸音乐',
+  mg: '小蜜音乐'
+}
+const PLATFORM_MENU_ORDER = ['kg', 'kw', 'tx', 'wy', 'mg']
 
 function platformColor(code) {
   let hash = 0
@@ -57,6 +66,13 @@ const playlistDetail = ref(null)
 const playlistDetailLoading = ref(false)
 const playlistDetailError = ref('')
 const playlistDetailSeq = ref(0)
+const platformMenuOpen = ref(false)
+const rankingData = ref(null)
+const rankingLoading = ref(false)
+const rankingError = ref('')
+const rankingSeq = ref(0)
+const rankingLoadedKey = ref('')
+const rankingLoadedAt = ref(0)
 const sourceDetails = ref([])
 const sourceMeta = ref({})
 const sourceDetailsLoaded = ref(false)
@@ -72,6 +88,7 @@ const fabMoved = ref(false)
 const compactViewport = ref(false)
 const searchInput = ref(null)
 const chartBody = ref(null)
+const platformMenu = ref(null)
 const fab = ref(null)
 let searchTimer = null
 let searchSeq = 0
@@ -141,6 +158,12 @@ const sourcePlatforms = computed(() => {
 const playlistPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.playlists))
 const chartPlatforms = computed(() => playlistPlatforms.value)
 const hasCharts = computed(() => sourceActive.value && playlistPlatforms.value.length > 0)
+const rankingPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.charts))
+const hasRanking = computed(() => sourceActive.value && rankingPlatforms.value.length > 0)
+const menuPlatforms = computed(() => {
+  const byCode = new Map(sourcePlatforms.value.map((platform) => [platform.code, platform]))
+  return PLATFORM_MENU_ORDER.map((code) => byCode.get(code)).filter(Boolean)
+})
 // 搜索当前由网易云曲库承接；音源没有声明网易云时，搜索结果无法播放，所以整个搜索入口隐藏。
 const searchPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.search))
 const searchPlatformLabel = computed(() => searchPlatforms.value[0]?.label || '网易云')
@@ -150,13 +173,14 @@ const hasPlaylists = computed(() => hasCharts.value)
 const sourceFeatureLabel = computed(() => {
   const features = []
   if (hasPlaylists.value) features.push('歌单')
+  if (hasRanking.value) features.push('排行榜')
   if (hasSearch.value) features.push('搜索')
   features.push('队列', '音量')
   return features.join(' / ')
 })
 const activeChartTracks = computed(() => Array.isArray(playlistDetail.value?.tracks) ? playlistDetail.value.tracks : [])
 const activePlatformInfo = computed(() => sourcePlatforms.value.find((platform) => platform.code === activePlatform.value))
-const activePlatformLabel = computed(() => activePlatformInfo.value?.label || activePlatform.value)
+const activePlatformLabel = computed(() => platformDisplayName(activePlatform.value))
 const activePlaylistCard = computed(() => playlistCards.value.find((item) =>
   item.platform === activePlatform.value && String(item.id) === activePlaylistId.value) || null)
 const activePlaylist = computed(() => {
@@ -166,6 +190,13 @@ const activePlaylist = computed(() => {
 })
 const activePlaylistTitle = computed(() => playlistDetail.value?.title || activePlaylistCard.value?.title || `${activePlatformLabel.value}歌单`)
 const activePlaylistCover = computed(() => playlistDetail.value?.cover || activePlaylistCard.value?.cover || '')
+const rankingTracks = computed(() => Array.isArray(rankingData.value?.tracks) ? rankingData.value.tracks : [])
+const rankingTitle = computed(() => {
+  const raw = String(rankingData.value?.chartTitle || '').trim()
+  if (!raw) return `${activePlatformLabel.value}热歌榜`
+  const realLabel = sourceLabelFor(activePlatform.value)
+  return realLabel && raw.includes(realLabel) ? raw.replace(realLabel, activePlatformLabel.value) : raw
+})
 const activePlaylistSummary = computed(() => {
   const count = activeChartTracks.value.length
   const creator = String(activePlaylist.value?.creator || '').trim()
@@ -226,20 +257,6 @@ const resolveQuality = computed(() => sourceQualities.value.includes('320k') ? '
 const showPlayer = computed(() =>
   state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
 )
-const headerSourceLabel = computed(() => {
-  if (sourceActive.value && playlistTotal.value) return `${playlistTotal.value} 个歌单`
-  if (sourceActive.value && sourcePlatforms.value.length) {
-    if (sourcePlatforms.value.length <= 2) return sourcePlatforms.value.map((platform) => platform.label).join(' · ')
-    return `${sourcePlatforms.value.length} 个平台`
-  }
-  if (sourceActive.value && hasSource.value) return sourceName.value
-  return localCount.value ? `本地音乐 ${localCount.value}` : '站点音乐'
-})
-const headerSourceTitle = computed(() => sourceActive.value
-  ? (playlistTotal.value
-      ? `来自 ${playlistPlatforms.value.length} 个平台的 ${playlistTotal.value} 个推荐歌单`
-      : sourcePlatforms.value.map((platform) => platform.label).join(' · '))
-  : '')
 const footerSourceLabel = computed(() => {
   if (sourceActive.value) return sourceName.value + (sourceVersion.value ? ` v${sourceVersion.value}` : '')
   return localCount.value ? `本地音乐 · ${localCount.value} 首` : '站点音乐'
@@ -335,11 +352,13 @@ watch(muted, (value) => {
 })
 
 function reconcileAvailableView() {
-  if (playlistPlatforms.value.length && !platformInitialized) {
+  if ((playlistPlatforms.value.length || rankingPlatforms.value.length) && !platformInitialized) {
     // 默认选中更稳定的解析通道；真实歌单不预加载歌曲。
     activePlatform.value = preferredPlatform()
     platformInitialized = true
-  } else if (hasCharts.value && !playlistPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
+  } else if (view.value === 'ranking' && !rankingPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
+    activePlatform.value = preferredPlatform()
+  } else if (view.value !== 'ranking' && hasCharts.value && !playlistPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
     activePlatform.value = preferredPlatform()
   }
   if (view.value === 'playlist' && !activePlaylistId.value) {
@@ -349,20 +368,23 @@ function reconcileAvailableView() {
   const allowed = [
     ...(localActive.value ? ['local'] : []),
     ...(hasCharts.value ? ['charts', 'playlist'] : []),
+    ...(hasRanking.value ? ['ranking'] : []),
     'queue',
     ...(hasSearch.value ? ['search'] : [])
   ]
   if (allowed.includes(view.value)) {
     if (view.value === 'charts') loadPlaylists()
     else if (view.value === 'playlist') loadPlaylistDetail()
+    else if (view.value === 'ranking') loadRanking()
     return
   }
   view.value = defaultView()
   if (view.value === 'local') loadLocalTracks(false)
   else if (view.value === 'charts') loadPlaylists()
+  else if (view.value === 'ranking') loadRanking()
 }
 
-watch([contentMode, hasSource, hasCharts, hasSearch, localActive], reconcileAvailableView)
+watch([contentMode, hasSource, hasCharts, hasRanking, hasSearch, localActive], reconcileAvailableView)
 watch(sourcePlatformCodes, reconcileAvailableView)
 watch(sourceDetails, reconcileAvailableView, { deep: true })
 watch(sourceUrl, () => {
@@ -381,6 +403,13 @@ watch(sourceUrl, () => {
   playlistDetailLoading.value = false
   playlistDetailError.value = ''
   playlistDetailCache.clear()
+  platformMenuOpen.value = false
+  rankingSeq.value += 1
+  rankingData.value = null
+  rankingLoading.value = false
+  rankingError.value = ''
+  rankingLoadedKey.value = ''
+  rankingLoadedAt.value = 0
   sourceDetailsSeq += 1
   sourceDetails.value = []
   sourceMeta.value = {}
@@ -407,6 +436,7 @@ function apiErrorMessage(error, fallback) {
 function defaultView() {
   if (sourceActive.value) {
     if (hasCharts.value) return 'charts'
+    if (hasRanking.value) return 'ranking'
     if (hasSearch.value) return 'search'
     return 'queue'
   }
@@ -505,6 +535,9 @@ function openPanel() {
   if (target === 'charts') {
     resetChartScroll()
     loadPlaylists()
+  } else if (target === 'ranking') {
+    resetChartScroll()
+    loadRanking()
   } else if (target === 'search') {
     nextTick(() => searchInput.value?.focus())
   } else if (target === 'local') {
@@ -514,6 +547,7 @@ function openPanel() {
 
 function closePanel() {
   panelOpen.value = false
+  platformMenuOpen.value = false
   if (fabFocusTimer) clearTimeout(fabFocusTimer)
   fabFocusTimer = setTimeout(() => fab.value?.focus({ preventScroll: true }), 190)
 }
@@ -531,9 +565,10 @@ function resetChartScroll() {
 
 function showChartsView() {
   if (!hasCharts.value) {
-    if (hasSearch.value) {
-      view.value = 'search'
-      nextTick(() => searchInput.value?.focus())
+    if (hasRanking.value) {
+      showRankingView()
+    } else if (hasSearch.value) {
+      showSearchView()
     } else if (sourceActive.value) {
       view.value = 'queue'
     } else {
@@ -544,6 +579,48 @@ function showChartsView() {
   view.value = 'charts'
   resetChartScroll()
   loadPlaylists()
+}
+
+function showRankingView() {
+  if (!hasRanking.value) {
+    if (hasCharts.value) showChartsView()
+    return
+  }
+  view.value = 'ranking'
+  resetChartScroll()
+  loadRanking()
+}
+
+function showSearchView() {
+  if (!hasSearch.value) return
+  view.value = 'search'
+  nextTick(() => searchInput.value?.focus())
+}
+
+function selectPlatformView(code, target) {
+  const platform = String(code || '').trim()
+  if (!platform) return
+  platformMenuOpen.value = false
+  platformInitialized = true
+  const changed = platform !== activePlatform.value
+  activePlatform.value = platform
+  if (changed) {
+    playlistItems.value = []
+    playlistTotal.value = 0
+    playlistLoadedKey.value = ''
+    activePlaylistId.value = ''
+    playlistDetail.value = null
+    rankingData.value = null
+    rankingLoadedKey.value = ''
+  }
+  if (target === 'ranking') {
+    view.value = 'ranking'
+    loadRanking(true)
+  } else {
+    view.value = 'charts'
+    loadPlaylists(true)
+  }
+  resetChartScroll()
 }
 
 async function loadLocalTracks(silent = true) {
@@ -565,6 +642,8 @@ function showLocalView() {
     if (sourceActive.value) {
       if (hasCharts.value) {
         view.value = 'charts'
+      } else if (hasRanking.value) {
+        view.value = 'ranking'
       } else if (hasSearch.value) {
         view.value = 'search'
         nextTick(() => searchInput.value?.focus())
@@ -584,7 +663,6 @@ function onLocalMusicChanged() {
 
 function selectLocalTrack(track) {
   const index = addTrackToQueue(track)
-  view.value = 'queue'
   playIndex(index, true)
 }
 
@@ -596,7 +674,6 @@ function playAllLocal() {
     if (firstIndex < 0) firstIndex = index
   }
   if (firstIndex < 0) return
-  view.value = 'queue'
   playIndex(firstIndex, true)
 }
 
@@ -610,6 +687,10 @@ function openSearchOrLocal() {
     showChartsView()
     return
   }
+  if (sourceActive.value && hasRanking.value) {
+    showRankingView()
+    return
+  }
   if (localActive.value) {
     showLocalView()
     return
@@ -618,7 +699,8 @@ function openSearchOrLocal() {
 }
 
 function preferredPlatform() {
-  const codes = chartPlatforms.value.map((platform) => platform.code)
+  const codes = (chartPlatforms.value.length ? chartPlatforms.value : rankingPlatforms.value)
+    .map((platform) => platform.code)
   // 音源可能声明了平台但解析通道并不可用。默认优先选择实测最稳定的网易云 / QQ，
   // 其余平台仍按音源声明展示，由用户主动切换。
   if (codes.includes('wy')) return 'wy'
@@ -628,7 +710,11 @@ function preferredPlatform() {
 
 async function loadPlaylists(force = false) {
   if (!sourceActive.value || !hasCharts.value) return
-  const key = [sourceUrl.value, playlistPlatforms.value.map((item) => item.code).join(','), 30].join('|')
+  if (!playlistPlatforms.value.some((item) => item.code === activePlatform.value)) {
+    activePlatform.value = preferredPlatform()
+  }
+  const platform = activePlatform.value
+  const key = [sourceUrl.value, platform, 30].join('|')
   if (!force && playlistLoadedKey.value === key && playlistItems.value.length
       && Date.now() - playlistLoadedAt.value < CHART_TTL_MILLIS) {
     return
@@ -638,10 +724,10 @@ async function loadPlaylists(force = false) {
   playlistError.value = ''
   try {
     const res = await http.get('/music/playlists', {
-      params: { limit: 30 },
+      params: { limit: 30, platform },
       timeout: 30000
     })
-    if (seq !== playlistSeq.value) return
+    if (seq !== playlistSeq.value || platform !== activePlatform.value) return
     const payload = res.data && typeof res.data === 'object' ? res.data : null
     const items = Array.isArray(payload?.items) ? payload.items : []
     playlistItems.value = items.map((item) => ({
@@ -664,6 +750,45 @@ async function loadPlaylists(force = false) {
     playlistError.value = apiErrorMessage(e, '歌单暂时不可用，请稍后重试')
   } finally {
     if (seq === playlistSeq.value) playlistLoading.value = false
+  }
+}
+
+async function loadRanking(force = false) {
+  if (!sourceActive.value || !hasRanking.value) return
+  if (!rankingPlatforms.value.some((item) => item.code === activePlatform.value)) {
+    activePlatform.value = preferredPlatform()
+  }
+  const platform = activePlatform.value
+  const key = [sourceUrl.value, platform, 20].join('|')
+  if (!force && rankingLoadedKey.value === key && rankingTracks.value.length
+      && Date.now() - rankingLoadedAt.value < CHART_TTL_MILLIS) {
+    return
+  }
+  const seq = ++rankingSeq.value
+  rankingLoading.value = true
+  rankingError.value = ''
+  try {
+    const res = await http.get('/music/charts', {
+      params: { platform, limit: 20 },
+      timeout: 30000
+    })
+    if (seq !== rankingSeq.value || platform !== activePlatform.value) return
+    const payload = res.data && typeof res.data === 'object' ? res.data : null
+    if (!payload) throw new Error('排行榜数据为空')
+    rankingData.value = {
+      ...payload,
+      platform,
+      chartTitle: String(payload.chartTitle || `${platformDisplayName(platform)}热歌榜`).trim(),
+      tracks: Array.isArray(payload.tracks) ? payload.tracks : []
+    }
+    rankingLoadedKey.value = key
+    rankingLoadedAt.value = Date.now()
+    resetChartScroll()
+  } catch (e) {
+    if (seq !== rankingSeq.value) return
+    rankingError.value = apiErrorMessage(e, '排行榜暂时不可用，请稍后重试')
+  } finally {
+    if (seq === rankingSeq.value) rankingLoading.value = false
   }
 }
 
@@ -727,7 +852,7 @@ function refreshChart() {
 }
 
 function playlistSubtitle(playlist) {
-  const label = sourceLabelFor(playlist?.platform)
+  const label = platformDisplayName(playlist?.platform)
   const count = Number(playlist?.trackCount || 0)
   if (count > 0) return `${label} · ${count} 首`
   return label
@@ -750,20 +875,26 @@ function addTrackToQueue(track) {
 
 function selectChartTrack(track) {
   const index = addTrackToQueue(track)
-  view.value = 'queue'
   playIndex(index, true)
 }
 
-function playChartAll() {
-  if (!activeChartTracks.value.length) return
+function playCollection(tracks) {
+  if (!tracks.length) return
   let firstIndex = -1
-  for (const track of activeChartTracks.value) {
+  for (const track of tracks) {
     const index = addTrackToQueue(track)
     if (firstIndex < 0) firstIndex = index
   }
   if (firstIndex < 0) return
-  view.value = 'queue'
   playIndex(firstIndex, true)
+}
+
+function playChartAll() {
+  playCollection(activeChartTracks.value)
+}
+
+function playRankingAll() {
+  playCollection(rankingTracks.value)
 }
 
 function loadLayoutState() {
@@ -949,7 +1080,6 @@ function selectSearchResult(track) {
     })
     index = queue.value.length - 1
   }
-  view.value = 'queue'
   playIndex(index, true)
 }
 
@@ -994,6 +1124,10 @@ async function requestPlaybackUrl(lookup, seq, requested = resolveQuality.value)
 function sourceLabelFor(code) {
   const platform = sourcePlatforms.value.find((item) => item.code === code)
   return platform?.label || FALLBACK_PLATFORM_LABELS[code] || String(code || '').toUpperCase()
+}
+
+function platformDisplayName(code) {
+  return PLATFORM_DISPLAY_NAMES[code] || sourceLabelFor(code)
 }
 
 async function fetchFallbackCandidates(track) {
@@ -1307,7 +1441,18 @@ function onAudioError() {
 }
 
 function onKeydown(event) {
-  if (event.key === 'Escape' && panelOpen.value) closePanel()
+  if (event.key !== 'Escape') return
+  if (platformMenuOpen.value) {
+    platformMenuOpen.value = false
+    return
+  }
+  if (panelOpen.value) closePanel()
+}
+
+function onDocumentClick(event) {
+  if (!platformMenuOpen.value) return
+  if (platformMenu.value?.contains(event.target)) return
+  platformMenuOpen.value = false
 }
 
 function onVisibilityChange() {
@@ -1329,6 +1474,7 @@ onMounted(() => {
     audio.value.muted = muted.value
   }
   document.addEventListener('keydown', onKeydown)
+  document.addEventListener('click', onDocumentClick)
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('resize', onViewportResize)
   window.addEventListener('deek:music-local-changed', onLocalMusicChanged)
@@ -1345,6 +1491,7 @@ onBeforeUnmount(() => {
   playlistDetailSeq.value += 1
   endFabDrag()
   document.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('resize', onViewportResize)
   window.removeEventListener('deek:music-local-changed', onLocalMusicChanged)
@@ -1379,9 +1526,50 @@ onBeforeUnmount(() => {
               <small>{{ sourceActive ? sourceName + (sourceVersion ? ' · v' + sourceVersion : '') : '本地音乐' + (localCount ? ' · ' + localCount + ' 首' : '') }}</small>
             </div>
           </div>
-          <span class="sm-source-pill" :title="headerSourceTitle || headerSourceLabel">
-            {{ headerSourceLabel }}
-          </span>
+          <div v-if="sourceActive && (hasCharts || hasRanking)" ref="platformMenu" class="sm-menu">
+            <button
+              type="button"
+              class="sm-platform-btn"
+              :aria-expanded="platformMenuOpen"
+              aria-haspopup="true"
+              :title="`${activePlatformLabel} · ${view === 'ranking' ? '排行榜' : '歌单'}；点击切换平台`"
+              @click.stop="platformMenuOpen = !platformMenuOpen"
+            >
+              <i class="sm-platform-dot" :style="{ background: activePlatformInfo?.color || 'var(--accent)' }" aria-hidden="true"></i>
+              <span>{{ activePlatformLabel }}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <div v-if="platformMenuOpen" class="sm-platform-pop" @click.stop>
+              <span class="sm-platform-group">推荐歌单</span>
+              <button
+                v-for="platform in menuPlatforms"
+                :key="'playlist-' + platform.code"
+                type="button"
+                class="sm-platform-option"
+                :class="{ on: activePlatform === platform.code && view !== 'ranking' }"
+                :disabled="!platform.playlists"
+                @click="selectPlatformView(platform.code, 'charts')"
+              >
+                <i class="sm-platform-dot" :style="{ background: platform.color }" aria-hidden="true"></i>
+                <span>{{ platformDisplayName(platform.code) }}</span>
+                <small>歌单</small>
+              </button>
+              <span class="sm-platform-group ranking">排行榜</span>
+              <button
+                v-for="platform in menuPlatforms"
+                :key="'ranking-' + platform.code"
+                type="button"
+                class="sm-platform-option"
+                :class="{ on: activePlatform === platform.code && view === 'ranking' }"
+                :disabled="!platform.charts"
+                @click="selectPlatformView(platform.code, 'ranking')"
+              >
+                <i class="sm-platform-dot" :style="{ background: platform.color }" aria-hidden="true"></i>
+                <span>{{ platformDisplayName(platform.code) }}</span>
+                <small>排行榜</small>
+              </button>
+            </div>
+          </div>
           <button type="button" class="sm-icon-btn sm-close" aria-label="收起播放器" @click="closePanel">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 9 6 6 6-6" /></svg>
           </button>
@@ -1394,40 +1582,16 @@ onBeforeUnmount(() => {
         </div>
         <p v-if="sourceActive && sourceMeta.initAlert" class="sm-source-alert">{{ sourceMeta.initAlert }}</p>
 
-        <div v-if="hasSearch" class="sm-search">
-          <span class="sm-search-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
-          </span>
-          <input
-            ref="searchInput"
-            :value="searchKeyword"
-            type="search"
-            enterkeyhint="search"
-            autocomplete="off"
-            aria-label="搜索歌曲"
-            placeholder="搜索歌曲、歌手或专辑"
-            @input="setSearchKeyword($event.target.value)"
-            @focus="searchFocused = true"
-            @blur="searchFocused = false"
-            @keydown.enter.prevent="runSearch()"
-          />
-          <button v-if="searchKeyword" type="button" class="sm-search-clear" aria-label="清空搜索" @click="setSearchKeyword('')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 7 10 10M17 7 7 17" /></svg>
-          </button>
-          <button type="button" class="sm-search-btn" :disabled="!searchKeyword.trim() || searchLoading" @click="runSearch()">
-            {{ searchLoading ? '…' : '搜索' }}
-          </button>
-        </div>
-
         <nav class="sm-tabs" aria-label="播放器视图">
           <button v-if="localActive" type="button" :class="{ on: view === 'local' }" @click="showLocalView">
             本地音乐 <em v-if="localCount">{{ localCount }}</em>
           </button>
           <button v-if="hasCharts" type="button" :class="{ on: view === 'charts' || view === 'playlist' }" @click="showChartsView">歌单</button>
+          <button v-if="hasRanking" type="button" :class="{ on: view === 'ranking' }" @click="showRankingView">排行榜</button>
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
             播放列表 <em>{{ queue.length }}</em>
           </button>
-          <button v-if="hasSearch" type="button" :class="{ on: view === 'search' }" @click="view = 'search'">搜索</button>
+          <button v-if="hasSearch" type="button" :class="{ on: view === 'search' }" @click="showSearchView">搜索</button>
         </nav>
 
         <div v-if="view === 'local' && localActive" class="sm-body sm-local-body">
@@ -1491,8 +1655,8 @@ onBeforeUnmount(() => {
             <div>
               <span class="sm-chart-kicker">PLAYLISTS</span>
               <strong>推荐歌单</strong>
-              <small v-if="playlistLoading">正在读取平台歌单…</small>
-              <small v-else>来自 {{ playlistPlatforms.length }} 个平台的 {{ playlistCards.length }} 个歌单，点击查看歌曲</small>
+              <small v-if="playlistLoading">正在读取 {{ activePlatformLabel }} 歌单…</small>
+              <small v-else>{{ activePlatformLabel }} · 点击封面进入歌单</small>
             </div>
           </div>
 
@@ -1628,6 +1792,66 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <div v-else-if="view === 'ranking' && hasRanking" ref="chartBody" class="sm-body sm-ranking-body">
+          <div class="sm-ranking-head">
+            <div class="sm-ranking-copy">
+              <span class="sm-chart-kicker">RANKING</span>
+              <strong>{{ rankingTitle }}</strong>
+              <small>{{ rankingTracks.length ? `${activePlatformLabel} · ${rankingTracks.length} 首 · 点击歌曲加入队列` : '正在读取排行榜…' }}</small>
+            </div>
+            <div class="sm-chart-actions">
+              <button type="button" class="sm-text-btn" :disabled="rankingLoading" @click="loadRanking(true)">刷新</button>
+              <button v-if="rankingTracks.length" type="button" class="sm-chart-playall" @click="playRankingAll">播放全部</button>
+            </div>
+          </div>
+
+          <div v-if="rankingLoading" class="sm-search-loading">
+            <span class="sm-spinner" aria-hidden="true"></span>
+            <p>正在读取{{ activePlatformLabel }}排行榜…</p>
+          </div>
+
+          <div v-else-if="rankingError" class="sm-search-error">
+            <span>!</span>
+            <div>
+              <strong>排行榜暂时不可用</strong>
+              <p>{{ rankingError }}</p>
+            </div>
+            <button type="button" class="sm-text-btn" @click="loadRanking(true)">重试</button>
+          </div>
+
+          <div v-else-if="rankingTracks.length" class="sm-chart-list" role="list" :aria-label="rankingTitle">
+            <button
+              v-for="(track, index) in rankingTracks"
+              :key="track.source + '-' + track.id + '-' + index"
+              type="button"
+              class="sm-chart-row"
+              role="listitem"
+              @click="selectChartTrack(track)"
+            >
+              <span class="sm-chart-rank" :class="{ top: index < 3 }">{{ index + 1 }}</span>
+              <span class="sm-chart-cover" :class="{ image: track.cover }">
+                <img v-if="track.cover" :src="track.cover" alt="" referrerpolicy="no-referrer" loading="lazy" @error="$event.target.style.display = 'none'" />
+                <template v-else>{{ coverLetter(track) }}</template>
+              </span>
+              <span class="sm-chart-copy">
+                <strong>{{ track.title }}</strong>
+                <small>{{ track.artist }}<template v-if="track.album"> · {{ track.album }}</template></small>
+              </span>
+              <span v-if="track.fee > 0" class="sm-vip">VIP</span>
+              <span v-else class="sm-chart-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
+              <span class="sm-chart-play" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+              </span>
+            </button>
+          </div>
+
+          <div v-else class="sm-empty sm-chart-empty">
+            <span class="sm-empty-orb">♪</span>
+            <strong>这个平台暂时没有排行榜</strong>
+            <p>换个平台，或刷新后再试。</p>
+          </div>
+        </div>
+
         <div v-else-if="view === 'queue'" class="sm-body sm-queue-body">
           <div v-if="currentTrack" class="sm-now">
             <div class="sm-now-cover">
@@ -1744,6 +1968,31 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-else class="sm-body sm-search-body">
+          <div v-if="hasSearch" class="sm-search sm-search-view">
+            <span class="sm-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+            </span>
+            <input
+              ref="searchInput"
+              :value="searchKeyword"
+              type="search"
+              enterkeyhint="search"
+              autocomplete="off"
+              aria-label="搜索歌曲"
+              placeholder="搜索歌曲、歌手或专辑"
+              @input="setSearchKeyword($event.target.value)"
+              @focus="searchFocused = true"
+              @blur="searchFocused = false"
+              @keydown.enter.prevent="runSearch()"
+            />
+            <button v-if="searchKeyword" type="button" class="sm-search-clear" aria-label="清空搜索" @click="setSearchKeyword('')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 7 10 10M17 7 7 17" /></svg>
+            </button>
+            <button type="button" class="sm-search-btn" :disabled="!searchKeyword.trim() || searchLoading" @click="runSearch()">
+              {{ searchLoading ? '…' : '搜索' }}
+            </button>
+          </div>
+
           <div v-if="searchHintVisible" class="sm-search-hint">
             <span class="sm-search-hint-kicker">SEARCH</span>
             <strong>想听点什么？</strong>
@@ -1886,6 +2135,74 @@ onBeforeUnmount(() => {
 .sm-brand > div { display: grid; gap: 2px; min-width: 0; }
 .sm-brand strong { color: var(--ink); font-size: 14px; letter-spacing: .01em; }
 .sm-brand small { overflow: hidden; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-menu { position: relative; flex: 0 1 auto; min-width: 0; }
+.sm-platform-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 132px;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--paper));
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease;
+}
+.sm-platform-btn:hover { background: color-mix(in srgb, var(--accent) 12%, var(--paper)); border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
+.sm-platform-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-platform-btn svg { width: 13px; height: 13px; flex: 0 0 13px; opacity: .7; }
+.sm-platform-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); }
+.sm-platform-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  gap: 2px;
+  width: 230px;
+  max-height: 460px;
+  padding: 7px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paper) 94%, #fff);
+  box-shadow: 0 18px 46px -18px rgba(15, 35, 30, .32), inset 0 1px 0 rgba(255, 255, 255, .72);
+  backdrop-filter: blur(18px);
+}
+.sm-platform-group {
+  padding: 5px 8px 3px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .12em;
+}
+.sm-platform-group.ranking { margin-top: 5px; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); padding-top: 8px; }
+.sm-platform-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 29px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.sm-platform-option:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 6%, var(--paper)); }
+.sm-platform-option.on { background: color-mix(in srgb, var(--accent) 10%, var(--paper)); color: var(--accent-ink); font-weight: 650; }
+.sm-platform-option:disabled { opacity: .42; cursor: not-allowed; }
+.sm-platform-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-platform-option small { margin-left: auto; color: var(--muted); font-size: 8px; font-weight: 500; }
+.sm-platform-option.on small { color: var(--accent-ink); }
+
 .sm-source-pill {
   max-width: 114px;
   overflow: hidden;
@@ -2010,6 +2327,13 @@ onBeforeUnmount(() => {
 .sm-tabs em { color: var(--accent-ink); font-size: 9px; font-style: normal; }
 
 .sm-chart-body { display: flex; flex-direction: column; gap: 9px; }
+.sm-ranking-body { display: flex; flex-direction: column; gap: 9px; }
+.sm-ranking-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
+.sm-ranking-copy { display: grid; gap: 2px; min-width: 0; }
+.sm-ranking-copy strong { overflow: hidden; color: var(--ink); font-size: 17px; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
+.sm-ranking-copy small { color: var(--muted); font-size: 9px; line-height: 1.5; }
+.sm-search-view { margin: 0; }
+.sm-search-body { display: flex; flex-direction: column; gap: 10px; }
 .sm-playlist-body { display: flex; flex-direction: column; gap: 10px; }
 .sm-playlist-head { display: grid; gap: 2px; padding: 2px 2px 0; }
 .sm-playlist-head > div { display: grid; gap: 2px; min-width: 0; }
@@ -2341,7 +2665,7 @@ onBeforeUnmount(() => {
 .sm-empty-action { margin-top: 6px; padding: 6px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink-soft); font-size: 10px; cursor: pointer; }
 .sm-empty-action:hover { border-color: var(--accent); color: var(--accent-ink); }
 
-.sm-search-body { display: flex; flex-direction: column; gap: 10px; }
+
 .sm-search-hint { display: grid; gap: 5px; padding: 12px 4px 18px; }
 .sm-search-hint-kicker { color: var(--accent-ink); font-size: 8px; font-weight: 800; letter-spacing: .16em; }
 .sm-search-hint strong { color: var(--ink); font-size: 18px; letter-spacing: -.02em; }
@@ -2415,7 +2739,9 @@ onBeforeUnmount(() => {
 @media (max-width: 520px) {
   .sm-panel { left: 0; right: 0; bottom: 0; max-height: calc(100dvh - 10px); border-radius: 18px 18px 0 0; }
   .sm-head { padding: 12px 13px 10px; }
-  .sm-source-pill { max-width: 94px; }
+  .sm-platform-btn { max-width: 108px; font-size: 9.5px; padding: 5px 8px; }
+  .sm-platform-pop { width: 214px; max-height: 430px; }
+.sm-source-pill { max-width: 94px; }
   .sm-source-meta { margin: 7px 13px 0; }
   .sm-foot { padding-bottom: calc(11px + env(safe-area-inset-bottom)); }
 }

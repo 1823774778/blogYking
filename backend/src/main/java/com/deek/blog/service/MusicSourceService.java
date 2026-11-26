@@ -660,19 +660,29 @@ public class MusicSourceService {
      * 当前音源各平台推荐歌单。只读取当前音源声明的平台，并把各平台结果交错排列，
      * 避免前台又变成按平台分组的列表。
      */
-    public Map<String, Object> playlists(int limit) {
+    public Map<String, Object> playlists(int limit, String platform) {
         int total = Math.max(1, Math.min(MAX_PLAYLIST_TOTAL, limit));
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        String requested = String.valueOf(platform == null ? "" : platform).trim().toLowerCase(Locale.ROOT);
         List<String> codes = new ArrayList<>();
-        for (String code : runtime.platforms().keySet()) {
-            String normalized = String.valueOf(code == null ? "" : code).trim().toLowerCase(Locale.ROOT);
-            if (PLAYLIST_PLATFORM_CODES.contains(normalized) && !codes.contains(normalized)) {
-                codes.add(normalized);
+        if (!requested.isBlank()) {
+            if (!PLAYLIST_PLATFORM_CODES.contains(requested)) throw new BizException("不支持的平台");
+            if (!runtime.platforms().containsKey(requested)) {
+                throw new BizException(displayPlatformLabel(requested, "") + "未包含在当前导入的音源中");
+            }
+            codes.add(requested);
+        } else {
+            for (String code : runtime.platforms().keySet()) {
+                String normalized = String.valueOf(code == null ? "" : code).trim().toLowerCase(Locale.ROOT);
+                if (PLAYLIST_PLATFORM_CODES.contains(normalized) && !codes.contains(normalized)) {
+                    codes.add(normalized);
+                }
             }
         }
         if (codes.isEmpty()) throw new BizException("当前音源没有可读取歌单的平台");
-        int perPlatform = Math.max(1, Math.min(8, (total + codes.size() - 1) / codes.size()));
+        int perPlatform = codes.size() == 1 ? total
+                : Math.max(1, Math.min(8, (total + codes.size() - 1) / codes.size()));
         String cacheKey = sourceUrl + "|" + String.join(",", codes) + ":" + perPlatform;
         synchronized (playlistLock) {
             ChartEntry entry = playlistLists.get(cacheKey);

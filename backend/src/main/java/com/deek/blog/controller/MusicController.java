@@ -55,8 +55,9 @@ public class MusicController {
     /** 当前音源各平台推荐歌单，按平台交错返回。 */
     @GetMapping("/playlists")
     public ApiResponse<Map<String, Object>> playlists(
-            @RequestParam(name = "limit", defaultValue = "30") int limit) {
-        return ApiResponse.ok(musicSourceService.playlists(limit));
+            @RequestParam(name = "limit", defaultValue = "30") int limit,
+            @RequestParam(name = "platform", defaultValue = "") String platform) {
+        return ApiResponse.ok(musicSourceService.playlists(limit, platform));
     }
 
     @GetMapping("/source")
