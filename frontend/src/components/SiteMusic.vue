@@ -2846,7 +2846,7 @@ onBeforeUnmount(() => {
 .sm-volume-pop input::-webkit-slider-runnable-track { width: 4px; height: 92px; border-radius: 999px; background: linear-gradient(to top, var(--accent) var(--sm-volume), color-mix(in srgb, var(--muted) 16%, var(--paper)) var(--sm-volume)); }
 .sm-volume-pop input::-moz-range-track { width: 4px; height: 92px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 16%, var(--paper)); }
 .sm-volume-pop input::-moz-range-progress { width: 4px; border-radius: 999px; background: var(--accent); }
-.sm-volume-pop input::-webkit-slider-thumb { width: 12px; height: 12px; appearance: none; border: 2px solid var(--paper); border-radius: 50%; background: var(--accent); box-shadow: 0 1px 5px rgba(0, 0, 0, .2); }
+.sm-volume-pop input::-webkit-slider-thumb { width: 12px; height: 12px; appearance: none; border: 2px solid var(--paper); border-radius: 50%; background: var(--accent); box-shadow: 0 1px 5px rgba(0, 0, 0, .2); transform: translateX(-4px); }
 .sm-volume-pop input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid var(--paper); border-radius: 50%; background: var(--accent); }
 .sm-volume-mute { display: grid; place-items: center; width: 23px; height: 23px; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--accent) 7%, var(--paper)); color: var(--muted); cursor: pointer; }
 .sm-volume-mute:hover { color: var(--ink); }

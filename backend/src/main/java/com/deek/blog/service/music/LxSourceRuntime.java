@@ -206,8 +206,15 @@ public final class LxSourceRuntime implements AutoCloseable {
             return null;
         });
 
+        // 宿主 HTTP 请求是同步的，并自带 Java 侧的 request timeout；音源里的 setTimeout
+        // 多用于超时/取消。如果在这里立即执行回调，所有 lx.request 都会在真正发出前
+        // 被判定超时。这里只立即执行 0ms 任务（音源用来启动并发 hedge），正延时交给
+        // Java HTTP 超时兜底，避免同步触发定时器造成全平台取链失败。
         context.getBindings("js").putMember("setTimeout", (ProxyExecutable) args -> {
-            if (args.length > 0 && args[0].canExecute()) args[0].executeVoid();
+            if (args.length > 0 && args[0].canExecute()
+                    && (args.length < 2 || !args[1].isNumber() || args[1].asInt() <= 0)) {
+                args[0].executeVoid();
+            }
             return null;
         });
         context.getBindings("js").putMember("clearTimeout", (ProxyExecutable) args -> null);
@@ -279,10 +286,18 @@ public final class LxSourceRuntime implements AutoCloseable {
                         parsed = text;
                     }
                 }
+                Map<String, Object> responseHeaders = new LinkedHashMap<>();
+                response.headers().map().forEach((key, values) -> {
+                    if (key != null && !key.isBlank()) {
+                        responseHeaders.put(key, values == null || values.isEmpty() ? "" : values.get(0));
+                    }
+                });
                 Map<String, Object> responseMap = new LinkedHashMap<>();
                 responseMap.put("statusCode", response.statusCode());
                 responseMap.put("body", parsed);
-                responseMap.put("headers", response.headers().map());
+                // LX 音源用 response.headers['content-type'] 做音频校验，必须传字符串值；
+                // Java Map/List 直接暴露给 GraalJS 时属性读取不可靠，会导致所有音频被判为非音频。
+                responseMap.put("headers", ProxyObject.fromMap(responseHeaders));
                 callback.execute(null, ProxyObject.fromMap(responseMap));
             } catch (Exception e) {
                 callback.execute(e.toString(), null);
