@@ -98,11 +98,17 @@ public class MusicController {
     @GetMapping("/url")
     public ApiResponse<Map<String, Object>> url(@RequestParam(name = "id") String id,
                                                 @RequestParam(name = "source", defaultValue = "wy") String source,
-                                                @RequestParam(name = "quality", defaultValue = "320k") String quality) {
-        Map<String, Object> data = musicSourceService.resolveUrl(source, id, quality);
+                                                @RequestParam(name = "quality", defaultValue = "320k") String quality,
+                                                @RequestParam(name = "title", defaultValue = "") String title,
+                                                @RequestParam(name = "artist", defaultValue = "") String artist,
+                                                @RequestParam(name = "album", defaultValue = "") String album,
+                                                @RequestParam(name = "duration", defaultValue = "") String duration) {
+        Map<String, Object> data = musicSourceService.resolveUrl(source, id, quality, title, artist, album, duration);
         Object audio = data.get("url");
         if (audio != null && !String.valueOf(audio).isBlank()) {
-            data.put("proxyUrl", audioProxyService.createProxyUrl(String.valueOf(audio), source));
+            Object resolvedSource = data.get("source");
+            String proxySource = resolvedSource == null ? source : String.valueOf(resolvedSource);
+            data.put("proxyUrl", audioProxyService.createProxyUrl(String.valueOf(audio), proxySource));
         }
         return ApiResponse.ok(data);
     }

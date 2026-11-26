@@ -54,7 +54,9 @@ public class MusicSourceService {
     private static final int MAX_SEARCH_LIMIT = 30;
     private static final int MAX_CHART_LIMIT = 30;
     private static final int MAX_PLAYLIST_TOTAL = 36;
-    private static final int MAX_PLAYLIST_TRACKS = 100;
+    /** 歌单详情读取上限只用于防御异常超大歌单；常规歌单会完整翻页读取。 */
+    private static final int MAX_PLAYLIST_TRACKS = 1000;
+    private static final int PLAYLIST_PAGE_SIZE = 100;
     private static final long RUNTIME_TTL_MILLIS = 6 * 60 * 60 * 1000L;
     private static final long SEARCH_TTL_MILLIS = 2 * 60 * 1000L;
     private static final long CHART_TTL_MILLIS = 10 * 60 * 1000L;
@@ -539,6 +541,20 @@ public class MusicSourceService {
     }
 
     public Map<String, Object> resolveUrl(String platform, String songId, String quality) {
+        return resolveUrl(platform, songId, quality, "", "");
+    }
+
+    /**
+     * 解析歌曲播放地址。原平台失败时，按歌曲名与歌手在当前音源支持的其他平台里
+     * 寻找同名可播放版本，尽量做到点击即播，而不是直接报“无法播放”。
+     */
+    public Map<String, Object> resolveUrl(String platform, String songId, String quality,
+                                          String title, String artist) {
+        return resolveUrl(platform, songId, quality, title, artist, "", "");
+    }
+
+    public Map<String, Object> resolveUrl(String platform, String songId, String quality,
+                                          String title, String artist, String album, String duration) {
         String sourceCode = String.valueOf(platform == null ? "" : platform).trim();
         if (sourceCode.isBlank()) sourceCode = "wy";
         String id = String.valueOf(songId == null ? "" : songId).trim();
@@ -549,33 +565,137 @@ public class MusicSourceService {
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
         if (!runtime.platforms().containsKey(sourceCode)) throw new BizException("当前音源不支持该平台");
-        String audio;
+
+        String originalSource = sourceCode;
+        String originalId = id;
+        String audio = "";
         String message = "";
+        boolean fallback = false;
+        Map<String, Object> chosen = null;
+        RuntimeException resolveError = null;
         try {
-            audio = runtime.resolveMusicUrl(sourceCode, id, qualityCode);
+            audio = runtime.resolveMusicUrl(sourceCode, id, qualityCode,
+                    playbackMeta(title, artist, album, duration));
         } catch (RuntimeException e) {
-            if ("wy".equals(sourceCode)) {
-                try {
-                    audio = resolveNeteaseFallback(id, qualityCode);
-                    message = "音源未返回地址，已使用网易云公开地址";
-                } catch (Exception fallbackError) {
-                    throw new BizException("该歌曲暂时无法播放，可能受版权限制，换一首试试");
-                }
-            } else {
-                throw new BizException("音源解析失败：" + shortMessage(e));
+            resolveError = e;
+        }
+
+        if ((audio == null || audio.isBlank()) && "wy".equals(sourceCode)) {
+            try {
+                audio = resolveNeteaseFallback(id, qualityCode);
+                message = "音源未返回地址，已使用网易云公开地址";
+            } catch (Exception fallbackError) {
+                log.debug("网易云公开地址回退失败 id={}: {}", id, fallbackError.toString());
             }
         }
-        if (audio == null || audio.isBlank()) {
-            throw new BizException("该歌曲暂时无法播放，可能受版权限制，换一首试试");
+
+        String wantedTitle = String.valueOf(title == null ? "" : title).trim();
+        if ((audio == null || audio.isBlank()) && !wantedTitle.isBlank()) {
+            chosen = findPlayableFallback(runtime, wantedTitle,
+                    String.valueOf(artist == null ? "" : artist).trim(),
+                    originalSource, qualityCode);
+            if (chosen != null) {
+                audio = String.valueOf(chosen.getOrDefault("url", ""));
+                String nextSource = String.valueOf(chosen.getOrDefault("source", originalSource)).trim();
+                String nextId = String.valueOf(chosen.getOrDefault("id", originalId)).trim();
+                if (!nextSource.isBlank()) sourceCode = nextSource;
+                if (!nextId.isBlank()) id = nextId;
+                fallback = true;
+                message = "原来源播放失败，已自动切换到"
+                        + platformLabel(runtime, sourceCode) + "继续播放";
+            }
         }
+
+        if (audio == null || audio.isBlank()) {
+            if (!wantedTitle.isBlank()) {
+                throw new BizException("该歌曲在当前可用平台都没有播放地址，换一首试试");
+            }
+            String reason = resolveError == null ? "" : shortMessage(resolveError);
+            throw new BizException(reason.isBlank()
+                    ? "该歌曲暂时无法播放，可能受版权限制，换一首试试"
+                    : "该歌曲暂时无法播放（" + reason + "），换一首试试");
+        }
+
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("url", playableUrl(audio));
         data.put("source", sourceCode);
         data.put("platform", sourceCode);
+        data.put("id", id);
         data.put("quality", qualityCode);
         data.put("qualityLabel", QUALITY_LABELS.getOrDefault(qualityCode, qualityCode));
         data.put("message", message);
+        data.put("fallback", fallback);
+        data.put("originalSource", originalSource);
+        data.put("originalId", originalId);
+        data.put("platformLabel", platformLabel(runtime, sourceCode));
+        if (chosen != null) {
+            for (String key : List.of("title", "artist", "album", "cover", "duration", "fee", "pageUrl")) {
+                if (chosen.containsKey(key)) data.put(key, chosen.get(key));
+            }
+        }
         return data;
+    }
+
+    /** 给音源脚本补充 LX Music 常见的 musicInfo 字段，避免只靠歌曲 ID 无法拼出播放地址。 */
+    private Map<String, String> playbackMeta(Object title, Object artist, Object album, Object duration) {
+        Map<String, String> meta = new LinkedHashMap<>();
+        String name = String.valueOf(title == null ? "" : title).trim();
+        String singer = String.valueOf(artist == null ? "" : artist).trim();
+        String albumName = String.valueOf(album == null ? "" : album).trim();
+        String durationValue = String.valueOf(duration == null ? "" : duration).trim();
+        if (!name.isBlank()) {
+            meta.put("name", name);
+            meta.put("title", name);
+        }
+        if (!singer.isBlank()) {
+            meta.put("singer", singer);
+            meta.put("artist", singer);
+        }
+        if (!albumName.isBlank()) meta.put("albumName", albumName);
+        if (!durationValue.isBlank() && !"null".equals(durationValue)) meta.put("duration", durationValue);
+        return meta;
+    }
+
+    /** 在音源声明的平台中查找同歌名、同歌手且能解析出地址的版本。 */
+    private Map<String, Object> findPlayableFallback(LxSourceRuntime runtime, String title, String artist,
+                                                     String excludeSource, String quality) {
+        List<Map<String, Object>> candidates;
+        try {
+            Map<String, Object> found = fallbackCandidates(title, artist, excludeSource);
+            Object list = found.get("candidates");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> parsed = list instanceof List<?>
+                    ? (List<Map<String, Object>>) list : List.of();
+            candidates = parsed;
+        } catch (Exception e) {
+            log.debug("自动匹配可播放来源失败 title={}: {}", title, e.toString());
+            return null;
+        }
+        int attempt = 0;
+        for (Map<String, Object> candidate : candidates) {
+            if (attempt >= 5) break;
+            String code = String.valueOf(candidate.getOrDefault("source", "")).trim().toLowerCase(Locale.ROOT);
+            String candidateId = String.valueOf(candidate.getOrDefault("id", "")).trim();
+            if (code.isBlank() || candidateId.isBlank()) continue;
+            if (!runtime.platforms().containsKey(code)) continue;
+            if (code.equals(excludeSource)) continue;
+            attempt += 1;
+            for (String candidateQuality : List.of(quality, "128k")) {
+                try {
+                    String url = runtime.resolveMusicUrl(code, candidateId, candidateQuality,
+                            playbackMeta(candidate.get("title"), candidate.get("artist"),
+                                    candidate.get("album"), candidate.get("duration")));
+                    if (url == null || url.isBlank()) continue;
+                    Map<String, Object> item = new LinkedHashMap<>(candidate);
+                    item.put("url", url);
+                    item.put("quality", candidateQuality);
+                    return item;
+                } catch (Exception e) {
+                    log.debug("同歌名来源解析失败 source={} id={}: {}", code, candidateId, e.toString());
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -962,11 +1082,11 @@ public class MusicSourceService {
         }
         JsonNode playlist = root.path("result").isObject() ? root.path("result") : root.path("playlist");
         List<Map<String, Object>> tracks = new ArrayList<>();
-        // 歌单详情默认只带前 10 首；用 trackIds 批量补全，最多读取 100 首。
+        // 歌单详情默认只带前 10 首；用 trackIds 批量补全，按接口返回的完整列表读取。
         List<Long> trackIds = new ArrayList<>();
         for (JsonNode item : playlist.path("trackIds")) {
-            if (item.path("id").canConvertToLong()) trackIds.add(item.path("id").asLong());
             if (trackIds.size() >= MAX_PLAYLIST_TRACKS) break;
+            if (item.path("id").canConvertToLong()) trackIds.add(item.path("id").asLong());
         }
         Map<Long, JsonNode> details = trackIds.isEmpty() ? Map.of() : fetchSongDetails(trackIds);
         Map<Long, JsonNode> playlistTracks = new LinkedHashMap<>();
@@ -1005,7 +1125,7 @@ public class MusicSourceService {
     private Map<String, Object> playlistDetailQq(String id) throws Exception {
         JsonNode dir = null;
         List<Map<String, Object>> tracks = new ArrayList<>();
-        // QQ 接口单页最多返回 30 首，按 song_begin 继续翻页，直到取满 100 首。
+        // QQ 接口单页最多返回 30 首，按 song_begin 继续翻页，直到歌单读取完。
         for (int begin = 0; begin < MAX_PLAYLIST_TRACKS; begin += 30) {
             ObjectNode payload = objectMapper.createObjectNode();
             ObjectNode req = payload.putObject("req_0");
@@ -1042,7 +1162,9 @@ public class MusicSourceService {
                         fee,
                         "https://y.qq.com/n/ryqq/songDetail/" + songId));
             }
-            if (songList.size() < 30) break;
+            int expected = dir == null ? 0 : dir.path("songnum").asInt(0);
+            if (expected > 0 && tracks.size() >= expected) break;
+            if (expected == 0 && songList.size() < 30) break;
         }
         if (dir == null) throw new IOException("QQ 歌单不存在");
         return playlistDetailData("tx", id,
@@ -1064,29 +1186,41 @@ public class MusicSourceService {
             metaItems = List.of();
         }
         Map<String, Object> meta = findPlaylist(metaItems, id);
-        String url = "https://mobiles.kugou.com/api/v3/special/song?specialid=" + id
-                + "&page=1&pagesize=" + MAX_PLAYLIST_TRACKS + "&plat=0&version=8000";
-        JsonNode root = getJsonRaw(url, "https://www.kugou.com/");
         List<Map<String, Object>> tracks = new ArrayList<>();
-        for (JsonNode song : root.path("data").path("info")) {
-            if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
-            String hash = song.path("hash").asText("").trim();
-            if (hash.isBlank()) continue;
-            String filename = song.path("filename").asText("").trim();
-            String title = song.path("remark").asText("").trim();
-            String artist = "未知歌手";
-            int dash = filename.indexOf(" - ");
-            if (dash > 0) {
-                artist = filename.substring(0, dash).trim();
-                if (title.isBlank()) title = filename.substring(dash + 3).trim();
-            } else if (title.isBlank()) {
-                title = filename;
+        int page = 1;
+        while (tracks.size() < MAX_PLAYLIST_TRACKS) {
+            String url = "https://mobiles.kugou.com/api/v3/special/song?specialid=" + id
+                    + "&page=" + page + "&pagesize=" + PLAYLIST_PAGE_SIZE + "&plat=0&version=8000";
+            JsonNode root = getJsonRaw(url, "https://www.kugou.com/");
+            JsonNode info = root.path("data").path("info");
+            if (!info.isArray() || info.isEmpty()) break;
+            int added = 0;
+            for (JsonNode song : info) {
+                if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+                String hash = song.path("hash").asText("").trim();
+                if (hash.isBlank()) continue;
+                String filename = song.path("filename").asText("").trim();
+                String title = song.path("remark").asText("").trim();
+                String artist = "未知歌手";
+                int dash = filename.indexOf(" - ");
+                if (dash > 0) {
+                    artist = filename.substring(0, dash).trim();
+                    if (title.isBlank()) title = filename.substring(dash + 3).trim();
+                } else if (title.isBlank()) {
+                    title = filename;
+                }
+                if (title.isBlank()) title = "未命名歌曲";
+                int fee = song.path("pay_type").asInt(0) > 0 ? 1 : 0;
+                tracks.add(chartTrack("kg", hash, title, artist, "", "",
+                        song.path("duration").asLong(0), fee,
+                        "https://www.kugou.com/song/#hash=" + hash));
+                added += 1;
             }
-            if (title.isBlank()) title = "未命名歌曲";
-            int fee = song.path("pay_type").asInt(0) > 0 ? 1 : 0;
-            tracks.add(chartTrack("kg", hash, title, artist, "", "",
-                    song.path("duration").asLong(0), fee,
-                    "https://www.kugou.com/song/#hash=" + hash));
+            int expected = meta == null ? 0 : ((Number) meta.getOrDefault("trackCount", 0)).intValue();
+            if (added == 0) break;
+            if (expected > 0 && tracks.size() >= expected) break;
+            if (expected == 0 && info.size() < PLAYLIST_PAGE_SIZE) break;
+            page += 1;
         }
         String pageUrl = "https://www.kugou.com/yy/special/single/" + id + ".html";
         return playlistDetailData("kg", id,
@@ -1100,27 +1234,43 @@ public class MusicSourceService {
     }
 
     private Map<String, Object> playlistDetailKuwo(String id) throws Exception {
-        String url = "https://wapi.kuwo.cn/api/www/playlist/playListInfo?pid=" + id + "&pn=1&rn="
-                + MAX_PLAYLIST_TRACKS + "&httpsStatus=1";
-        JsonNode root = getJsonRaw(url, "https://www.kuwo.cn/");
-        JsonNode data = root.path("data");
-        JsonNode musicList = data.path("musicList");
+        JsonNode data = null;
         List<Map<String, Object>> tracks = new ArrayList<>();
-        for (JsonNode song : musicList) {
-            if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
-            String rawId = song.path("musicrid").asText("").trim();
-            if (rawId.isBlank()) continue;
-            String songId = rawId.replaceFirst("^MUSIC_", "");
-            String cover = song.path("albumpic").asText("");
-            tracks.add(chartTrack("kw", songId,
-                    cleanKuwoText(song.path("name").asText("未命名歌曲")),
-                    cleanKuwoText(song.path("artist").asText("未知歌手")),
-                    cleanKuwoText(song.path("album").asText("")),
-                    cover,
-                    song.path("duration").asLong(0),
-                    song.path("isListenFee").asInt(0) > 0 ? 1 : 0,
-                    "https://www.kuwo.cn/play_detail/" + songId));
+        int page = 1;
+        int total = 0;
+        while (tracks.size() < MAX_PLAYLIST_TRACKS) {
+            String url = "https://wapi.kuwo.cn/api/www/playlist/playListInfo?pid=" + id + "&pn=" + page
+                    + "&rn=" + PLAYLIST_PAGE_SIZE + "&httpsStatus=1";
+            JsonNode root = getJsonRaw(url, "https://www.kuwo.cn/");
+            JsonNode current = root.path("data");
+            if (data == null) data = current;
+            if (current.isMissingNode() || current.isNull()) break;
+            total = Math.max(total, current.path("total").asInt(0));
+            JsonNode musicList = current.path("musicList");
+            if (!musicList.isArray() || musicList.isEmpty()) break;
+            int added = 0;
+            for (JsonNode song : musicList) {
+                if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+                String rawId = song.path("musicrid").asText("").trim();
+                if (rawId.isBlank()) continue;
+                String songId = rawId.replaceFirst("^MUSIC_", "");
+                String cover = song.path("albumpic").asText("");
+                tracks.add(chartTrack("kw", songId,
+                        cleanKuwoText(song.path("name").asText("未命名歌曲")),
+                        cleanKuwoText(song.path("artist").asText("未知歌手")),
+                        cleanKuwoText(song.path("album").asText("")),
+                        cover,
+                        song.path("duration").asLong(0),
+                        song.path("isListenFee").asInt(0) > 0 ? 1 : 0,
+                        "https://www.kuwo.cn/play_detail/" + songId));
+                added += 1;
+            }
+            if (added == 0) break;
+            if (total > 0 && tracks.size() >= total) break;
+            if (total == 0 && musicList.size() < PLAYLIST_PAGE_SIZE) break;
+            page += 1;
         }
+        if (data == null) throw new IOException("酷我歌单不存在");
         String cover = data.path("img500").asText("");
         if (cover.isBlank()) cover = data.path("img").asText("");
         return playlistDetailData("kw", id,
@@ -1128,7 +1278,7 @@ public class MusicSourceService {
                 cover,
                 data.path("userName").asText(data.path("uname").asText("酷我音乐")),
                 data.path("tag").asText(""),
-                data.path("total").asInt(tracks.size()),
+                total > 0 ? total : tracks.size(),
                 data.path("listencnt").asLong(0),
                 "https://www.kuwo.cn/playlist_detail/" + id,
                 tracks);
@@ -1138,29 +1288,43 @@ public class MusicSourceService {
         JsonNode metaRoot = getJsonRaw("https://c.musicapp.migu.cn/MIGUM3.0/resource/playlist/v2.0?playlistId=" + id,
                 "https://music.migu.cn/");
         JsonNode meta = metaRoot.path("data");
-        JsonNode songsRoot = getJsonRaw("https://app.c.nf.migu.cn/MIGUM3.0/resource/playlist/song/v2.0?pageNo=1&pageSize="
-                + MAX_PLAYLIST_TRACKS + "&playlistId=" + id, "https://music.migu.cn/");
+        int total = meta.path("musicNum").asInt(0);
+        // 咪咕接口每页最多接受 50 首；pageSize 传更大时第二页会返回空。
+        int pageSize = 50;
         List<Map<String, Object>> tracks = new ArrayList<>();
-        for (JsonNode song : songsRoot.path("data").path("songList")) {
-            if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
-            String songId = song.path("copyrightId").asText("").trim();
-            if (songId.isBlank()) songId = song.path("contentId").asText("").trim();
-            if (songId.isBlank()) continue;
-            String cover = song.path("img1").asText("");
-            if (cover.startsWith("/")) cover = "https://d.musicapp.migu.cn" + cover;
-            int fee = 0;
-            for (JsonNode tag : song.path("showTags")) {
-                String value = tag.asText("");
-                if (value.contains("vip")) { fee = 1; break; }
+        int page = 1;
+        while (tracks.size() < MAX_PLAYLIST_TRACKS) {
+            JsonNode songsRoot = getJsonRaw("https://app.c.nf.migu.cn/MIGUM3.0/resource/playlist/song/v2.0?pageNo="
+                    + page + "&pageSize=" + pageSize + "&playlistId=" + id, "https://music.migu.cn/");
+            JsonNode songList = songsRoot.path("data").path("songList");
+            if (!songList.isArray() || songList.isEmpty()) break;
+            int added = 0;
+            for (JsonNode song : songList) {
+                if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+                String songId = song.path("copyrightId").asText("").trim();
+                if (songId.isBlank()) songId = song.path("contentId").asText("").trim();
+                if (songId.isBlank()) continue;
+                String cover = song.path("img1").asText("");
+                if (cover.startsWith("/")) cover = "https://d.musicapp.migu.cn" + cover;
+                int fee = 0;
+                for (JsonNode tag : song.path("showTags")) {
+                    String value = tag.asText("");
+                    if (value.contains("vip")) { fee = 1; break; }
+                }
+                tracks.add(chartTrack("mg", songId,
+                        song.path("songName").asText("未命名歌曲"),
+                        joinArtists(song.path("singerList")),
+                        song.path("album").asText(""),
+                        cover,
+                        song.path("duration").asLong(0),
+                        fee,
+                        "https://music.migu.cn/v3/music/song/" + songId));
+                added += 1;
             }
-            tracks.add(chartTrack("mg", songId,
-                    song.path("songName").asText("未命名歌曲"),
-                    joinArtists(song.path("singerList")),
-                    song.path("album").asText(""),
-                    cover,
-                    song.path("duration").asLong(0),
-                    fee,
-                    "https://music.migu.cn/v3/music/song/" + songId));
+            if (added == 0) break;
+            if (total > 0 && tracks.size() >= total) break;
+            if (total == 0 && songList.size() < pageSize) break;
+            page += 1;
         }
         String cover = meta.path("imgItem").path("img").asText("");
         if (cover.isBlank()) cover = meta.path("originalImgUrl").asText("");
@@ -1169,7 +1333,7 @@ public class MusicSourceService {
                 cover,
                 meta.path("ownerName").asText("咪咕音乐"),
                 meta.path("summary").asText(""),
-                meta.path("musicNum").asInt(tracks.size()),
+                total > 0 ? total : tracks.size(),
                 meta.path("opNumItem").path("playNum").asLong(0),
                 "https://music.migu.cn/v5/#/playlist?playlistId=" + id,
                 tracks);

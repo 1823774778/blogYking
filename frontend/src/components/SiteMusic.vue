@@ -20,15 +20,6 @@ const FALLBACK_PLATFORM_LABELS = {
   kg: '酷狗音乐',
   mg: '咪咕音乐'
 }
-// 前台展示名沿用用户熟悉的一套称呼，底层仍用平台代码请求。
-const PLATFORM_DISPLAY_NAMES = {
-  kg: '小枸音乐',
-  kw: '小蜗音乐',
-  tx: '小秋音乐',
-  wy: '小芸音乐',
-  mg: '小蜜音乐'
-}
-const PLATFORM_MENU_ORDER = ['kg', 'kw', 'tx', 'wy', 'mg']
 
 function platformColor(code) {
   let hash = 0
@@ -160,10 +151,10 @@ const chartPlatforms = computed(() => playlistPlatforms.value)
 const hasCharts = computed(() => sourceActive.value && playlistPlatforms.value.length > 0)
 const rankingPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.charts))
 const hasRanking = computed(() => sourceActive.value && rankingPlatforms.value.length > 0)
-const menuPlatforms = computed(() => {
-  const byCode = new Map(sourcePlatforms.value.map((platform) => [platform.code, platform]))
-  return PLATFORM_MENU_ORDER.map((code) => byCode.get(code)).filter(Boolean)
-})
+// 下拉只展示当前音源真实支持的平台，同一平台同时服务歌单与排行榜。
+const menuPlatforms = computed(() => sourcePlatforms.value
+  .filter((platform) => platform.playlists || platform.charts))
+const menuViewTarget = computed(() => view.value === 'ranking' ? 'ranking' : 'charts')
 // 搜索当前由网易云曲库承接；音源没有声明网易云时，搜索结果无法播放，所以整个搜索入口隐藏。
 const searchPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.search))
 const searchPlatformLabel = computed(() => searchPlatforms.value[0]?.label || '网易云')
@@ -193,9 +184,7 @@ const activePlaylistCover = computed(() => playlistDetail.value?.cover || active
 const rankingTracks = computed(() => Array.isArray(rankingData.value?.tracks) ? rankingData.value.tracks : [])
 const rankingTitle = computed(() => {
   const raw = String(rankingData.value?.chartTitle || '').trim()
-  if (!raw) return `${activePlatformLabel.value}热歌榜`
-  const realLabel = sourceLabelFor(activePlatform.value)
-  return realLabel && raw.includes(realLabel) ? raw.replace(realLabel, activePlatformLabel.value) : raw
+  return raw || `${activePlatformLabel.value}热歌榜`
 })
 const activePlaylistSummary = computed(() => {
   const count = activeChartTracks.value.length
@@ -300,6 +289,9 @@ function loadPersistedState() {
           duration: Number(track.duration) || 0,
           fee: Number(track.fee) || 0,
           pageUrl: track.pageUrl || '',
+          originSource: track.originSource || '',
+          originId: track.originId || '',
+          fallbackOriginalSource: track.fallbackOriginalSource || '',
           url: track.source === 'local' ? String(track.url || '') : '',
           urlError: '',
           urlLoading: false
@@ -334,6 +326,9 @@ function persistState() {
         duration: track.duration,
         fee: track.fee,
         pageUrl: track.pageUrl,
+        originSource: track.originSource || '',
+        originId: track.originId || '',
+        fallbackOriginalSource: track.fallbackOriginalSource || '',
         url: track.source === 'local' ? track.url : ''
       }))
     }))
@@ -597,6 +592,15 @@ function showSearchView() {
   nextTick(() => searchInput.value?.focus())
 }
 
+function platformMenuTarget(platform) {
+  if (menuViewTarget.value === 'ranking' && platform?.charts) return 'ranking'
+  return platform?.playlists ? 'charts' : 'ranking'
+}
+
+function platformMenuLabel(platform) {
+  return platformMenuTarget(platform) === 'ranking' ? '排行榜' : '歌单'
+}
+
 function selectPlatformView(code, target) {
   const platform = String(code || '').trim()
   if (!platform) return
@@ -822,7 +826,7 @@ async function loadPlaylistDetail(force = false) {
   try {
     const res = await http.get('/music/playlist', {
       params: { platform, id },
-      timeout: 30000
+      timeout: 90000
     })
     if (seq !== playlistDetailSeq.value || platform !== activePlatform.value || id !== activePlaylistId.value) return
     const payload = res.data && typeof res.data === 'object' ? res.data : null
@@ -871,6 +875,55 @@ function addTrackToQueue(track) {
     urlLoading: false
   })
   return queue.value.length - 1
+}
+
+function isCurrentTrack(track) {
+  const current = currentTrack.value
+  if (!current || !track) return false
+  const currentSource = String(current.source || 'wy')
+  const trackSource = String(track.source || 'wy')
+  const directMatch = String(current.id) === String(track.id) && currentSource === trackSource
+  const originSource = String(current.originSource || '')
+  const originId = String(current.originId || '')
+  const originMatch = originSource && originId
+    && originSource === trackSource
+    && originId === String(track.id)
+    && String(current.title || '') === String(track.title || '')
+  if (!directMatch && !originMatch) return false
+  if (currentSource === 'local' && String(current.url || '') !== String(track.url || '')) return false
+  return true
+}
+
+function isTrackLoading(track) {
+  return isCurrentTrack(track) && (loadingTrack.value || Boolean(currentTrack.value?.urlLoading))
+}
+
+function isTrackPlaying(track) {
+  return isCurrentTrack(track) && playing.value && !loadingTrack.value
+}
+
+function toggleChartTrack(track) {
+  if (isCurrentTrack(track)) {
+    togglePlayback()
+    return
+  }
+  selectChartTrack(track)
+}
+
+function toggleLocalTrack(track) {
+  if (isCurrentTrack(track)) {
+    togglePlayback()
+    return
+  }
+  selectLocalTrack(track)
+}
+
+function toggleSearchTrack(track) {
+  if (isCurrentTrack(track)) {
+    togglePlayback()
+    return
+  }
+  selectSearchResult(track)
 }
 
 function selectChartTrack(track) {
@@ -1106,13 +1159,34 @@ async function requestPlaybackUrl(lookup, seq, requested = resolveQuality.value)
         params: {
           id: String(lookup.id),
           source: lookup.source || 'wy',
-          quality
+          quality,
+          title: String(lookup.title || ''),
+          artist: String(lookup.artist || ''),
+          album: String(lookup.album || ''),
+          duration: String(lookup.duration || '')
         },
-        timeout: 30000
+        timeout: 45000
       })
       if (seq !== playSeq) return null
-      const url = res.data?.proxyUrl || res.data?.url
-      if (url) return { url, quality: res.data?.quality || quality }
+      const payload = res.data && typeof res.data === 'object' ? res.data : {}
+      const url = payload.proxyUrl || payload.url
+      if (url) {
+        return {
+          url,
+          quality: payload.quality || quality,
+          source: String(payload.source || lookup.source || 'wy'),
+          id: String(payload.id || lookup.id || ''),
+          fallback: payload.fallback === true,
+          platformLabel: String(payload.platformLabel || ''),
+          title: payload.title,
+          artist: payload.artist,
+          album: payload.album,
+          cover: payload.cover,
+          duration: payload.duration,
+          fee: payload.fee,
+          pageUrl: payload.pageUrl
+        }
+      }
       lastError = new Error('播放地址为空')
     } catch (e) {
       lastError = e
@@ -1127,7 +1201,7 @@ function sourceLabelFor(code) {
 }
 
 function platformDisplayName(code) {
-  return PLATFORM_DISPLAY_NAMES[code] || sourceLabelFor(code)
+  return sourceLabelFor(code)
 }
 
 async function fetchFallbackCandidates(track) {
@@ -1149,6 +1223,10 @@ async function fetchFallbackCandidates(track) {
 
 function applyFallbackCandidate(track, candidate) {
   if (!track.fallbackOriginalSource) track.fallbackOriginalSource = track.source
+  if (!track.originSource) {
+    track.originSource = track.source
+    track.originId = String(track.id || '')
+  }
   track.source = String(candidate.source || track.source)
   track.id = String(candidate.id || track.id)
   track.album = candidate.album || track.album || ''
@@ -1190,8 +1268,7 @@ async function tryFallbackPlayback(track, autoplay = true, outerSeq = null) {
         const resolved = await requestPlaybackUrl(candidate, seq)
         if (!resolved || seq !== playSeq || queue.value[currentIndex.value] !== track) return false
         applyFallbackCandidate(track, candidate)
-        track.url = resolved.url
-        track.quality = resolved.quality
+        applyPlaybackResolution(track, resolved)
         track.urlRetried = true
         track.urlLoading = false
         track.urlError = ''
@@ -1215,6 +1292,31 @@ async function tryFallbackPlayback(track, autoplay = true, outerSeq = null) {
   }
 }
 
+function applyPlaybackResolution(track, resolved) {
+  if (!track || !resolved) return false
+  const nextSource = String(resolved.source || track.source || 'wy').trim()
+  const nextId = String(resolved.id || track.id || '').trim()
+  const switched = nextSource !== track.source || nextId !== String(track.id || '')
+  if (switched) {
+    if (!track.fallbackOriginalSource) track.fallbackOriginalSource = track.source
+    if (!track.originSource) {
+      track.originSource = track.source
+      track.originId = String(track.id || '')
+    }
+    track.source = nextSource
+    track.id = nextId
+    track.album = resolved.album || track.album || ''
+    track.cover = resolved.cover || track.cover || ''
+    track.duration = Number(resolved.duration) || track.duration || 0
+    track.fee = Number(resolved.fee) || 0
+    track.pageUrl = resolved.pageUrl || ''
+    track.fallbackLabel = resolved.platformLabel || sourceLabelFor(nextSource)
+  }
+  track.url = resolved.url
+  track.quality = resolved.quality
+  return switched
+}
+
 async function resolveAndPlay(track, autoplay = true, retrying = false) {
   const seq = ++playSeq
   loadingTrack.value = true
@@ -1228,11 +1330,13 @@ async function resolveAndPlay(track, autoplay = true, retrying = false) {
     const resolved = await requestPlaybackUrl(track, seq)
     if (!resolved || seq !== playSeq) return
     if (queue.value[currentIndex.value] !== track) return
-    track.url = resolved.url
-    track.quality = resolved.quality
+    applyPlaybackResolution(track, resolved)
     track.urlRetried = retrying
     track.urlLoading = false
     loadingTrack.value = false
+    if (resolved.fallback) {
+      toast(`已自动切换到${resolved.platformLabel || sourceLabelFor(track.source)}播放`, 'info')
+    }
     await nextTick()
     if (seq !== playSeq) return
     startAudio(track, autoplay)
@@ -1540,33 +1644,18 @@ onBeforeUnmount(() => {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <div v-if="platformMenuOpen" class="sm-platform-pop" @click.stop>
-              <span class="sm-platform-group">推荐歌单</span>
+              <span class="sm-platform-group">{{ menuViewTarget === 'ranking' ? '排行榜' : '推荐歌单' }}</span>
               <button
                 v-for="platform in menuPlatforms"
-                :key="'playlist-' + platform.code"
+                :key="platform.code"
                 type="button"
                 class="sm-platform-option"
-                :class="{ on: activePlatform === platform.code && view !== 'ranking' }"
-                :disabled="!platform.playlists"
-                @click="selectPlatformView(platform.code, 'charts')"
+                :class="{ on: activePlatform === platform.code }"
+                @click="selectPlatformView(platform.code, platformMenuTarget(platform))"
               >
                 <i class="sm-platform-dot" :style="{ background: platform.color }" aria-hidden="true"></i>
                 <span>{{ platformDisplayName(platform.code) }}</span>
-                <small>歌单</small>
-              </button>
-              <span class="sm-platform-group ranking">排行榜</span>
-              <button
-                v-for="platform in menuPlatforms"
-                :key="'ranking-' + platform.code"
-                type="button"
-                class="sm-platform-option"
-                :class="{ on: activePlatform === platform.code && view === 'ranking' }"
-                :disabled="!platform.charts"
-                @click="selectPlatformView(platform.code, 'ranking')"
-              >
-                <i class="sm-platform-dot" :style="{ background: platform.color }" aria-hidden="true"></i>
-                <span>{{ platformDisplayName(platform.code) }}</span>
-                <small>排行榜</small>
+                <small>{{ platformMenuLabel(platform) }}</small>
               </button>
             </div>
           </div>
@@ -1628,7 +1717,7 @@ onBeforeUnmount(() => {
               type="button"
               class="sm-local-row"
               role="listitem"
-              @click="selectLocalTrack(track)"
+              @click="toggleLocalTrack(track)"
             >
               <span class="sm-local-cover">{{ coverLetter(track) }}</span>
               <span class="sm-local-copy">
@@ -1636,8 +1725,10 @@ onBeforeUnmount(() => {
                 <small>{{ track.artist || '未知歌手' }}<template v-if="track.album"> · {{ track.album }}</template></small>
               </span>
               <span class="sm-local-duration">{{ track.duration ? formatTime(track.duration) : '本地' }}</span>
-              <span class="sm-local-play" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+              <span class="sm-local-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+                <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
+                <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
               </span>
             </button>
           </div>
@@ -1765,7 +1856,7 @@ onBeforeUnmount(() => {
               type="button"
               class="sm-chart-row"
               role="listitem"
-              @click="selectChartTrack(track)"
+              @click="toggleChartTrack(track)"
             >
               <span class="sm-chart-rank" :class="{ top: index < 3 }">{{ index + 1 }}</span>
               <span class="sm-chart-cover" :class="{ image: track.cover }">
@@ -1778,8 +1869,10 @@ onBeforeUnmount(() => {
               </span>
               <span v-if="track.fee > 0" class="sm-vip">VIP</span>
               <span v-else class="sm-chart-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
-              <span class="sm-chart-play" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+              <span class="sm-chart-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+                <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
+                <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
               </span>
             </button>
           </div>
@@ -1826,7 +1919,7 @@ onBeforeUnmount(() => {
               type="button"
               class="sm-chart-row"
               role="listitem"
-              @click="selectChartTrack(track)"
+              @click="toggleChartTrack(track)"
             >
               <span class="sm-chart-rank" :class="{ top: index < 3 }">{{ index + 1 }}</span>
               <span class="sm-chart-cover" :class="{ image: track.cover }">
@@ -1839,8 +1932,10 @@ onBeforeUnmount(() => {
               </span>
               <span v-if="track.fee > 0" class="sm-vip">VIP</span>
               <span v-else class="sm-chart-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
-              <span class="sm-chart-play" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+              <span class="sm-chart-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+                <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
+                <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
               </span>
             </button>
           </div>
@@ -2018,7 +2113,7 @@ onBeforeUnmount(() => {
 
           <div v-else-if="searchResults.length" class="sm-result-list" role="list" aria-label="搜索结果">
             <div v-for="(track, index) in searchResults" :key="track.id + '-' + index" class="sm-result" role="listitem">
-              <button type="button" class="sm-result-main" @click="selectSearchResult(track)">
+              <button type="button" class="sm-result-main" @click="toggleSearchTrack(track)">
                 <span class="sm-result-cover" :class="{ image: track.cover }">
                   <img v-if="track.cover" :src="track.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" loading="lazy" />
                   <template v-else>{{ coverLetter(track) }}</template>
@@ -2029,7 +2124,11 @@ onBeforeUnmount(() => {
                 </span>
                 <span v-if="track.fee > 0" class="sm-vip">VIP</span>
                 <span v-else class="sm-result-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
-                <span class="sm-result-add" aria-hidden="true">＋</span>
+                <span class="sm-result-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+                  <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
+                  <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
+                </span>
               </button>
             </div>
             <p class="sm-result-more">搜索由{{ searchPlatformLabel }}曲库提供 · 点击歌曲加入播放队列</p>
@@ -2559,6 +2658,8 @@ onBeforeUnmount(() => {
 .sm-chart-duration { flex: 0 0 auto; color: var(--muted); font-size: 8.5px; font-variant-numeric: tabular-nums; }
 .sm-chart-play { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
 .sm-chart-play svg { width: 13px; height: 13px; }
+.sm-chart-play.playing, .sm-local-play.playing, .sm-result-play.playing { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sm-list-spinner { width: 11px; height: 11px; border-width: 1.5px; border-color: color-mix(in srgb, currentColor 18%, transparent); border-top-color: currentColor; animation: sm-spin .7s linear infinite; }
 .sm-chart-empty { padding-top: 20px; }
 
 .sm-local-body { display: flex; flex-direction: column; gap: 10px; }
@@ -2692,6 +2793,10 @@ onBeforeUnmount(() => {
 .sm-result-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .sm-result-duration { flex: 0 0 auto; color: var(--muted); font-size: 8.5px; font-variant-numeric: tabular-nums; }
 .sm-result-add { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--line); border-radius: 50%; color: var(--accent-ink); font-size: 12px; font-weight: 700; }
+.sm-result-play { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
+.sm-result-play svg { width: 12px; height: 12px; }
+.sm-result-main:hover .sm-result-play { border-color: var(--accent); background: var(--accent); color: #fff; }
+.sm-result-play.playing { background: var(--accent); border-color: var(--accent); color: #fff; }
 .sm-result-main:hover .sm-result-add { border-color: var(--accent); background: var(--accent); color: #fff; }
 .sm-result-more { margin: 2px 0 0; color: var(--muted); font-size: 8.5px; text-align: center; }
 

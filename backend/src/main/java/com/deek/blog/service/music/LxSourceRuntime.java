@@ -121,13 +121,23 @@ public final class LxSourceRuntime implements AutoCloseable {
         }
         context.eval("js", """
                 globalThis.__lxResolveResult = null;
-                globalThis.__lxResolveMusic = function(platform, id, quality) {
+                globalThis.__lxResolveMusic = function(platform, id, quality, extraJson) {
                   globalThis.__lxResolveResult = null;
                   try {
+                    let extra = {};
+                    if (extraJson) {
+                      try { extra = JSON.parse(extraJson) || {}; } catch (error) { extra = {}; }
+                    }
+                    const base = {
+                      songmid: String(id), hash: String(id), mid: String(id), id: String(id),
+                      songId: String(id), musicid: String(id), musicId: String(id),
+                      musicmid: String(id), copyrightId: String(id), contentId: String(id),
+                      strMediaMid: String(id), mediaMid: String(id)
+                    };
                     const payload = {
                       source: platform,
                       action: 'musicUrl',
-                      info: { type: quality, musicInfo: { songmid: String(id), hash: String(id), mid: String(id), id: String(id), songId: String(id), musicid: String(id) } }
+                      info: { type: quality, musicInfo: Object.assign(base, extra) }
                     };
                     Promise.resolve(globalThis.__lxRequestHandler(payload))
                       .then(value => { globalThis.__lxResolveResult = JSON.stringify({ ok: true, data: value }); })
@@ -293,7 +303,12 @@ public final class LxSourceRuntime implements AutoCloseable {
         return initAlert;
     }
 
-    public synchronized String resolveMusicUrl(String platform, String songId, String quality) {
+    public String resolveMusicUrl(String platform, String songId, String quality) {
+        return resolveMusicUrl(platform, songId, quality, Map.of());
+    }
+
+    public synchronized String resolveMusicUrl(String platform, String songId, String quality,
+                                               Map<String, String> extraInfo) {
         if (!platforms.containsKey(platform)) {
             throw new IllegalArgumentException("当前音源不支持该平台");
         }
@@ -301,7 +316,15 @@ public final class LxSourceRuntime implements AutoCloseable {
             throw new IllegalArgumentException("歌曲 ID 不合法");
         }
         String q = quality == null || quality.isBlank() ? "320k" : quality;
-        context.getBindings("js").getMember("__lxResolveMusic").execute(platform, songId, q);
+        String extraJson = "";
+        if (extraInfo != null && !extraInfo.isEmpty()) {
+            try {
+                extraJson = objectMapper.writeValueAsString(extraInfo);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException("音源附加信息格式不正确", e);
+            }
+        }
+        context.getBindings("js").getMember("__lxResolveMusic").execute(platform, songId, q, extraJson);
         context.eval("js", "void 0;");
         String raw = context.getBindings("js").getMember("__lxResolveResult").isNull()
                 ? ""
