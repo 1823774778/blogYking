@@ -33,8 +33,8 @@ const canNotifications = computed(() => hasPermission('system:notifications'))
 const canStorage = computed(() => hasPermission('system:storage'))
 const canSettings = computed(() => hasPermission('system:settings'))
 const showAttention = computed(() => canManagePosts.value || canManageComments.value)
-const postsHome = computed(() => canManagePosts.value ? '/admin/manage?tab=posts' : '/admin/my-posts')
-const commentsHome = computed(() => canManageComments.value ? '/admin/manage?tab=comments' : '/admin/my-comments')
+const postsHome = computed(() => canManagePosts.value ? '/admin/manage/posts' : '/admin/my-posts')
+const commentsHome = computed(() => canManageComments.value ? '/admin/manage/comments' : '/admin/my-comments')
 
 const activeTab = computed(() => String(route.query.tab || 'overview'))
 const attentionCount = computed(() =>
@@ -166,8 +166,8 @@ onMounted(async () => {
           <strong>{{ attentionCount ? `${attentionCount} 项内容等待处理` : '今天没有待处理事项' }}</strong>
           <p>{{ attentionCount ? '审核通过后才会进入前台；退回时请写清楚修改意见。' : '文章与评论都已处理完毕，可以继续写作。' }}</p>
         </div>
-        <router-link v-if="stats?.pendingPosts && canManagePosts" class="btn btn-ghost btn-sm" to="/admin/manage?tab=posts&view=pending">处理文章</router-link>
-        <router-link v-if="stats?.pendingComments && canManageComments" class="btn btn-ghost btn-sm" to="/admin/manage?tab=comments&view=pending">处理评论</router-link>
+        <router-link v-if="stats?.pendingPosts && canManagePosts" class="btn btn-ghost btn-sm" to="/admin/manage/posts?tab=pending">处理文章</router-link>
+        <router-link v-if="stats?.pendingComments && canManageComments" class="btn btn-ghost btn-sm" to="/admin/manage/comments?tab=pending">处理评论</router-link>
       </section>
 
       <div class="adm-split">
@@ -177,7 +177,7 @@ onMounted(async () => {
               <span class="adm-card-kicker">POSTS</span>
               <h2>待审核文章</h2>
             </div>
-            <router-link class="btn-text" to="/admin/manage?tab=posts&view=pending">查看全部</router-link>
+            <router-link class="btn-text" to="/admin/manage/posts?tab=pending">查看全部</router-link>
           </div>
           <div v-if="attentionPosts.length" class="adm-attention-list">
             <div v-for="post in attentionPosts" :key="post.id" class="adm-attention-row">
@@ -185,7 +185,7 @@ onMounted(async () => {
                 <router-link class="adm-row-title" :to="`/admin/posts/${post.id}/edit`">{{ post.title }}</router-link>
                 <div class="adm-row-meta">{{ post.authorName || '未署名' }} · {{ formatDate(post.updatedAt) }}</div>
               </div>
-              <router-link class="btn btn-ghost btn-sm" to="/admin/manage?tab=posts&view=pending">去审核</router-link>
+              <router-link class="btn btn-ghost btn-sm" to="/admin/manage/posts?tab=pending">去审核</router-link>
             </div>
           </div>
           <div v-else class="adm-empty">没有待审核文章</div>
@@ -197,7 +197,7 @@ onMounted(async () => {
               <span class="adm-card-kicker">COMMENTS</span>
               <h2>待审核评论</h2>
             </div>
-            <router-link class="btn-text" to="/admin/manage?tab=comments&view=pending">查看全部</router-link>
+            <router-link class="btn-text" to="/admin/manage/comments?tab=pending">查看全部</router-link>
           </div>
           <div v-if="attentionComments.length" class="adm-attention-list">
             <div v-for="comment in attentionComments" :key="comment.id" class="adm-attention-row">
@@ -205,7 +205,7 @@ onMounted(async () => {
                 <p class="adm-comment-quote">“{{ comment.content }}”</p>
                 <div class="adm-row-meta">{{ comment.nickname || '匿名读者' }} · {{ comment.postTitle || '未知文章' }}</div>
               </div>
-              <router-link class="btn btn-ghost btn-sm" to="/admin/manage?tab=comments&view=pending">去审核</router-link>
+              <router-link class="btn btn-ghost btn-sm" to="/admin/manage/comments?tab=pending">去审核</router-link>
             </div>
           </div>
           <div v-else class="adm-empty">没有待审核评论</div>
@@ -257,19 +257,19 @@ onMounted(async () => {
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5Z" /></svg></span>
             <span>{{ canManageComments ? '评论管理' : '我的评论' }}</span>
           </router-link>
-          <router-link v-if="canTags" class="adm-quick-item" to="/admin/manage?tab=tags">
+          <router-link v-if="canTags" class="adm-quick-item" to="/admin/manage/tags">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h7l9 9-7 7-9-9V4Z" /><circle cx="8.5" cy="8.5" r="1.2" /></svg></span>
             <span>标签管理</span>
           </router-link>
-          <router-link v-if="canNavigation" class="adm-quick-item" to="/admin/manage?tab=navigation">
+          <router-link v-if="canNavigation" class="adm-quick-item" to="/admin/manage/navigation">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h10M4 18h6" /><path d="m18 14 3 3-3 3" /></svg></span>
             <span>导航管理</span>
           </router-link>
-          <router-link v-if="canUsers" class="adm-quick-item" to="/admin/users">
+          <router-link v-if="canUsers" class="adm-quick-item" to="/admin/manage/users">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.8M18 20a6 6 0 0 0-2-4.4" /></svg></span>
             <span>用户管理</span>
           </router-link>
-          <router-link v-if="canAnnouncements" class="adm-quick-item" to="/admin/manage?tab=announcements">
+          <router-link v-if="canAnnouncements" class="adm-quick-item" to="/admin/manage/announcements">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10v4M7 8v8M10 6v12M14 9v6M17 7v10M20 10v4" /></svg></span>
             <span>公告与 AI</span>
           </router-link>
@@ -285,7 +285,7 @@ onMounted(async () => {
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" /><path d="M10 19a2 2 0 0 0 4 0" /></svg></span>
             <span>通知设置</span>
           </router-link>
-          <router-link v-if="canStorage" class="adm-quick-item" to="/admin/storage">
+          <router-link v-if="canStorage" class="adm-quick-item" to="/admin/manage/storage">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></svg></span>
             <span>存储管理</span>
           </router-link>

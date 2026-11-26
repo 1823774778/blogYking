@@ -142,7 +142,7 @@ async function save(status) {
     toast(form.status === 'PUBLISHED' ? '文章已发布' : form.status === 'PENDING' ? '文章已提交审核' : '草稿已保存')
     const view = form.status === 'PUBLISHED' ? 'published' : form.status === 'PENDING' ? 'pending' : 'draft'
     if (canManageAll.value) {
-      router.push({ path: '/admin/manage', query: { tab: 'posts', view } })
+      router.push({ path: '/admin/manage/posts', query: { tab: view } })
     } else {
       router.push({ path: '/admin/my-posts', query: { tab: view } })
     }
