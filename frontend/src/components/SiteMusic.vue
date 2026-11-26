@@ -47,6 +47,15 @@ const searchError = ref('')
 const searchFocused = ref(false)
 const view = ref('charts')
 const activePlatform = ref('wy')
+const nowTab = ref('lyrics')
+const lastBrowseView = ref('charts')
+const lyricLines = ref([])
+const lyricHasTimed = ref(false)
+const lyricLoading = ref(false)
+const lyricError = ref('')
+const lyricProvider = ref('')
+const activeLyricIndex = ref(-1)
+const lyricScroll = ref(null)
 const playlistItems = ref([])
 const playlistTotal = ref(0)
 const playlistLoading = ref(false)
@@ -93,6 +102,14 @@ let fabFocusTimer = null
 let platformInitialized = false
 let sourceDetailsSeq = 0
 const playlistDetailCache = new Map()
+const lyricCache = new Map()
+let lyricSeq = 0
+let lyricRequestKey = ''
+let platformRestorePending = false
+let sourceWatchReady = false
+let restoredPlatform = ''
+let restoredView = ''
+let restoredPlaylistId = ''
 
 const sourceUrl = computed(() => String(state.site.musicSourceUrl || '').trim())
 const hasSource = computed(() => Boolean(sourceUrl.value))
@@ -174,6 +191,12 @@ const sourceFeatureLabel = computed(() => {
 const activeChartTracks = computed(() => Array.isArray(playlistDetail.value?.tracks) ? playlistDetail.value.tracks : [])
 const activePlatformInfo = computed(() => sourcePlatforms.value.find((platform) => platform.code === activePlatform.value))
 const activePlatformLabel = computed(() => platformDisplayName(activePlatform.value))
+const activeQualityText = computed(() => {
+  const qualities = Array.isArray(activePlatformInfo.value?.qualities) && activePlatformInfo.value.qualities.length
+    ? activePlatformInfo.value.qualities
+    : sourceQualities.value
+  return qualities.map(qualityText).join(' · ')
+})
 const activePlaylistCard = computed(() => playlistCards.value.find((item) =>
   item.platform === activePlatform.value && String(item.id) === activePlaylistId.value) || null)
 const activePlaylist = computed(() => {
@@ -243,8 +266,17 @@ const qualityText = (quality) => {
   const labels = { '128k': '128K', '320k': '320K', 'flac': 'FLAC', 'flac24': 'FLAC 24' }
   return labels[value.toLowerCase()] || value.toUpperCase()
 }
-const sourceQualityText = computed(() => sourceQualities.value.map(qualityText).join(' · '))
 const resolveQuality = computed(() => sourceQualities.value.includes('320k') ? '320k' : (sourceQualities.value[0] || '128k'))
+
+function playbackQualityFor(track) {
+  const platform = sourcePlatforms.value.find((item) => item.code === String(track?.source || '').trim())
+  const supported = Array.isArray(platform?.qualities) && platform.qualities.length
+    ? platform.qualities
+    : sourceQualities.value
+  if (supported.includes('320k')) return '320k'
+  if (supported.includes('128k')) return '128k'
+  return supported[0] || '128k'
+}
 const showPlayer = computed(() =>
   state.site.musicEnabled === 'true' && (hasSource.value || localCount.value > 0)
 )
@@ -311,6 +343,13 @@ function loadPersistedState() {
       : -1
     const restored = queue.value[currentIndex.value]
     if (restored) restored.played = true
+    if (typeof raw.platform === 'string') restoredPlatform = raw.platform.trim()
+    if (typeof raw.view === 'string') restoredView = raw.view.trim()
+    if (typeof raw.nowTab === 'string') nowTab.value = raw.nowTab === 'queue' ? 'queue' : 'lyrics'
+    if (typeof raw.activePlaylistId === 'string') restoredPlaylistId = raw.activePlaylistId.trim()
+    if (typeof raw.lastBrowseView === 'string' && ['charts', 'ranking', 'search', 'local', 'playlist'].includes(raw.lastBrowseView)) {
+      lastBrowseView.value = raw.lastBrowseView
+    }
   } catch (e) {
     /* 本地状态损坏时忽略即可 */
   }
@@ -323,6 +362,11 @@ function persistState() {
       volume: volume.value,
       muted: muted.value,
       currentIndex: currentIndex.value,
+      platform: activePlatform.value,
+      view: view.value,
+      nowTab: nowTab.value,
+      activePlaylistId: activePlaylistId.value,
+      lastBrowseView: lastBrowseView.value,
       queue: queue.value.slice(0, 50).map((track) => ({
         id: track.id,
         source: track.source || 'wy',
@@ -347,7 +391,20 @@ function persistState() {
 
 watch(queue, persistState, { deep: true })
 watch([mode, volume, muted], persistState)
-watch(view, () => { volumePopoverOpen.value = false })
+watch([activePlatform, view, nowTab, activePlaylistId, lastBrowseView], persistState)
+watch(view, (next) => {
+  volumePopoverOpen.value = false
+  if (['charts', 'ranking', 'search', 'local', 'playlist'].includes(next)) lastBrowseView.value = next
+  if (next === 'now') loadLyrics()
+})
+watch(nowTab, (next) => {
+  if (next === 'lyrics' && view.value === 'now') loadLyrics()
+})
+watch(() => [currentTrack.value?.source, currentTrack.value?.id, currentTrack.value?.title, currentTrack.value?.artist].join('|'), () => {
+  activeLyricIndex.value = -1
+  lyricRequestKey = ''
+  if (view.value === 'now' && nowTab.value === 'lyrics') loadLyrics(true)
+})
 watch(volume, (value) => {
   if (audio.value) audio.value.volume = Math.min(1, Math.max(0, value))
 })
@@ -355,44 +412,76 @@ watch(muted, (value) => {
   if (audio.value) audio.value.muted = value
 })
 
+function isViewAllowed(candidate) {
+  if (!candidate) return false
+  if (candidate === 'local') return localActive.value
+  if (candidate === 'charts') return hasCharts.value
+  if (candidate === 'playlist') return hasCharts.value && Boolean(activePlaylistId.value)
+  if (candidate === 'ranking') return hasRanking.value
+  if (candidate === 'search') return hasSearch.value
+  if (candidate === 'now') return Boolean(currentTrack.value)
+  return false
+}
+
+function resolveInitialView(candidate) {
+  if (candidate === 'queue') return currentTrack.value ? 'now' : defaultView()
+  if (candidate === 'now' && currentTrack.value) return 'now'
+  if (isViewAllowed(candidate)) return candidate
+  return defaultView()
+}
+
 function reconcileAvailableView() {
+  // 音源能力尚未返回时不要用空平台列表校正用户刷新前选择的平台/视图。
+  if (platformRestorePending && !sourceDetailsLoaded.value && contentMode.value !== 'local') return
   if ((playlistPlatforms.value.length || rankingPlatforms.value.length) && !platformInitialized) {
-    // 默认选中更稳定的解析通道；真实歌单不预加载歌曲。
-    activePlatform.value = preferredPlatform()
+    // 默认选中更稳定的解析通道；真实歌单不预加载歌曲。刷新后优先恢复用户上次选择的平台。
+    const remembered = String(restoredPlatform || '').trim()
+    const rememberedValid = sourcePlatforms.value.some((platform) => platform.code === remembered)
+    activePlatform.value = rememberedValid ? remembered : preferredPlatform()
     platformInitialized = true
   } else if (view.value === 'ranking' && !rankingPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
     activePlatform.value = preferredPlatform()
-  } else if (view.value !== 'ranking' && hasCharts.value && !playlistPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
+  } else if (view.value !== 'ranking' && view.value !== 'now' && hasCharts.value
+      && !playlistPlatforms.value.some((platform) => platform.code === activePlatform.value)) {
     activePlatform.value = preferredPlatform()
   }
+  if (view.value === 'queue') view.value = currentTrack.value ? 'now' : defaultView()
   if (view.value === 'playlist' && !activePlaylistId.value) {
     view.value = 'charts'
   }
+  if (view.value === 'now' && !currentTrack.value) {
+    view.value = defaultView()
+  }
   if (!panelOpen.value) return
-  const allowed = [
-    ...(localActive.value ? ['local'] : []),
-    ...(hasCharts.value ? ['charts', 'playlist'] : []),
-    ...(hasRanking.value ? ['ranking'] : []),
-    'queue',
-    ...(hasSearch.value ? ['search'] : [])
-  ]
-  if (allowed.includes(view.value)) {
+  if (isViewAllowed(view.value)) {
     if (view.value === 'charts') loadPlaylists()
     else if (view.value === 'playlist') loadPlaylistDetail()
     else if (view.value === 'ranking') loadRanking()
+    else if (view.value === 'now') loadLyrics()
     return
   }
   view.value = defaultView()
   if (view.value === 'local') loadLocalTracks(false)
   else if (view.value === 'charts') loadPlaylists()
   else if (view.value === 'ranking') loadRanking()
+  else if (view.value === 'now') loadLyrics()
 }
 
 watch([contentMode, hasSource, hasCharts, hasRanking, hasSearch, localActive], reconcileAvailableView)
 watch(sourcePlatformCodes, reconcileAvailableView)
 watch(sourceDetails, reconcileAvailableView, { deep: true })
 watch(sourceUrl, () => {
+  if (!sourceWatchReady) {
+    sourceWatchReady = true
+    // 首次拿到站点音乐配置后补齐音源能力；不要把它当成“用户切换了音源”。
+    loadSourceCapabilities()
+    return
+  }
   platformInitialized = false
+  platformRestorePending = false
+  restoredPlatform = ''
+  restoredView = ''
+  restoredPlaylistId = ''
   if (view.value === 'playlist') view.value = 'charts'
   playlistSeq.value += 1
   playlistDetailSeq.value += 1
@@ -425,6 +514,7 @@ watch(sourceUrl, () => {
 watch(contentMode, (mode) => {
   if (mode === 'source') loadSourceCapabilities()
   else {
+    platformRestorePending = false
     sourceDetailsSeq += 1
     sourceDetails.value = []
     sourceMeta.value = {}
@@ -442,7 +532,7 @@ function defaultView() {
     if (hasCharts.value) return 'charts'
     if (hasRanking.value) return 'ranking'
     if (hasSearch.value) return 'search'
-    return 'queue'
+    return 'now'
   }
   return 'local'
 }
@@ -471,7 +561,10 @@ async function loadSourceCapabilities() {
     sourceDetails.value = []
     sourceDetailsLoaded.value = false
   } finally {
-    if (seq === sourceDetailsSeq) sourceDetailsLoading.value = false
+    if (seq === sourceDetailsSeq) {
+      sourceDetailsLoading.value = false
+      if (platformRestorePending) platformRestorePending = false
+    }
   }
 }
 
@@ -533,7 +626,7 @@ function openPanel() {
   if (panelOpen.value) return
   if (fabFocusTimer) clearTimeout(fabFocusTimer)
   computePanelPlacement()
-  const target = defaultView()
+  const target = resolveInitialView(view.value)
   panelOpen.value = true
   view.value = target
   if (target === 'charts') {
@@ -542,10 +635,15 @@ function openPanel() {
   } else if (target === 'ranking') {
     resetChartScroll()
     loadRanking()
+  } else if (target === 'playlist') {
+    resetChartScroll()
+    loadPlaylistDetail()
   } else if (target === 'search') {
     nextTick(() => searchInput.value?.focus())
   } else if (target === 'local') {
     loadLocalTracks()
+  } else if (target === 'now') {
+    loadLyrics()
   }
 }
 
@@ -575,7 +673,7 @@ function showChartsView() {
     } else if (hasSearch.value) {
       showSearchView()
     } else if (sourceActive.value) {
-      view.value = 'queue'
+      openNowView()
     } else {
       showLocalView()
     }
@@ -602,6 +700,38 @@ function showSearchView() {
   nextTick(() => searchInput.value?.focus())
 }
 
+function openNowView(tab = 'lyrics') {
+  if (!currentTrack.value) return
+  if (!panelOpen.value) openPanel()
+  if (view.value !== 'now') lastBrowseView.value = view.value
+  view.value = 'now'
+  nowTab.value = tab === 'queue' ? 'queue' : 'lyrics'
+  platformMenuOpen.value = false
+  volumePopoverOpen.value = false
+  if (nowTab.value === 'lyrics') {
+    loadLyrics()
+    nextTick(() => scrollActiveLyric(false))
+  }
+}
+
+function setNowTab(tab) {
+  nowTab.value = tab === 'queue' ? 'queue' : 'lyrics'
+  if (nowTab.value === 'lyrics') {
+    loadLyrics()
+    nextTick(() => scrollActiveLyric(false))
+  }
+}
+
+function backFromNow() {
+  const target = isViewAllowed(lastBrowseView.value) ? lastBrowseView.value : defaultView()
+  view.value = target
+  if (target === 'charts') loadPlaylists()
+  else if (target === 'ranking') loadRanking()
+  else if (target === 'playlist') loadPlaylistDetail()
+  else if (target === 'search') nextTick(() => searchInput.value?.focus())
+  else if (target === 'local') loadLocalTracks(false)
+}
+
 function platformMenuTarget(platform) {
   if (menuViewTarget.value === 'ranking' && platform?.charts) return 'ranking'
   return platform?.playlists ? 'charts' : 'ranking'
@@ -616,6 +746,7 @@ function selectPlatformView(code, target) {
   if (!platform) return
   platformMenuOpen.value = false
   platformInitialized = true
+  platformRestorePending = false
   const changed = platform !== activePlatform.value
   activePlatform.value = platform
   if (changed) {
@@ -662,7 +793,7 @@ function showLocalView() {
         view.value = 'search'
         nextTick(() => searchInput.value?.focus())
       } else {
-        view.value = 'queue'
+        openNowView()
       }
     }
     return
@@ -709,7 +840,7 @@ function openSearchOrLocal() {
     showLocalView()
     return
   }
-  view.value = 'queue'
+  openNowView()
 }
 
 function preferredPlatform() {
@@ -809,6 +940,7 @@ async function loadRanking(force = false) {
 function openPlaylist(playlist) {
   if (!playlist?.id) return
   platformInitialized = true
+  platformRestorePending = false
   activePlatform.value = playlist.platform
   activePlaylistId.value = String(playlist.id)
   view.value = 'playlist'
@@ -1185,7 +1317,7 @@ async function requestPlaybackUrl(lookup, seq, requested = resolveQuality.value)
           album: String(lookup.album || ''),
           duration: String(lookup.duration || '')
         },
-        timeout: 45000
+        timeout: 25000
       })
       if (seq !== playSeq) return null
       const payload = res.data && typeof res.data === 'object' ? res.data : {}
@@ -1285,7 +1417,7 @@ async function tryFallbackPlayback(track, autoplay = true, outerSeq = null) {
       track.fallbackIndex = Number(track.fallbackIndex || 0) + 1
       if (!candidate?.id || !candidate?.source) continue
       try {
-        const resolved = await requestPlaybackUrl(candidate, seq)
+        const resolved = await requestPlaybackUrl(candidate, seq, playbackQualityFor(candidate))
         if (!resolved || seq !== playSeq || queue.value[currentIndex.value] !== track) return false
         applyFallbackCandidate(track, candidate)
         applyPlaybackResolution(track, resolved)
@@ -1347,7 +1479,7 @@ async function resolveAndPlay(track, autoplay = true, retrying = false) {
   }
   playing.value = false
   try {
-    const resolved = await requestPlaybackUrl(track, seq)
+    const resolved = await requestPlaybackUrl(track, seq, playbackQualityFor(track))
     if (!resolved || seq !== playSeq) return
     if (queue.value[currentIndex.value] !== track) return
     applyPlaybackResolution(track, resolved)
@@ -1362,14 +1494,150 @@ async function resolveAndPlay(track, autoplay = true, retrying = false) {
     startAudio(track, autoplay)
   } catch (e) {
     if (seq !== playSeq) return
-    const switched = await tryFallbackPlayback(track, autoplay, seq)
-    if (seq !== playSeq || switched) return
+    // 后端 resolveUrl 已在原平台失败后做过同名换源；这里不再重复请求 /music/fallback，
+    // 避免一次失败播放等待两轮跨平台搜索。音频加载失败时仍由 onAudioError 走换源恢复。
     track.urlLoading = false
     loadingTrack.value = false
-    track.urlError = track.fallbackMessage || apiErrorMessage(e, '该歌曲暂时无法播放')
+    track.urlError = apiErrorMessage(e, '该歌曲暂时无法播放')
     playing.value = false
     toast(track.urlError, 'error')
   }
+}
+
+const lyricSourceLabel = computed(() => {
+  if (lyricProvider.value === 'netease') return '网易云歌词'
+  if (lyricProvider.value === 'lrclib') return 'LRCLIB'
+  return ''
+})
+
+function lyricTrackKey(track) {
+  if (!track) return ''
+  return [track.source || 'wy', track.id || '', track.title || '', track.artist || ''].join('|')
+}
+
+function applyLyricPayload(payload) {
+  const rawLines = Array.isArray(payload?.lines) ? payload.lines : []
+  const lines = rawLines
+    .map((line) => ({
+      time: Number(line?.time) || 0,
+      text: String(line?.text || '').trim()
+    }))
+    .filter((line) => line.text)
+    .slice(0, 2000)
+  lyricLines.value = lines
+  lyricHasTimed.value = Boolean(payload?.hasTimed) && lines.some((line) => line.time > 0)
+  lyricProvider.value = String(payload?.provider || '').trim()
+  lyricError.value = lines.length ? '' : String(payload?.message || '暂无歌词')
+  activeLyricIndex.value = -1
+  if (lyricHasTimed.value) syncLyricIndex(audio.value?.currentTime || 0)
+  else nextTick(() => scrollActiveLyric(true))
+}
+
+async function loadLyrics(force = false) {
+  const track = currentTrack.value
+  if (!track) {
+    lyricLines.value = []
+    lyricHasTimed.value = false
+    lyricError.value = ''
+    lyricProvider.value = ''
+    activeLyricIndex.value = -1
+    return
+  }
+  if (view.value !== 'now' || nowTab.value !== 'lyrics') return
+  const key = lyricTrackKey(track)
+  if (!force && lyricLoading.value && lyricRequestKey === key) return
+  const cached = lyricCache.get(key)
+  if (!force && cached && Date.now() - cached.createdAt < 30 * 60 * 1000) {
+    applyLyricPayload(cached.data)
+    return
+  }
+  const seq = ++lyricSeq
+  lyricRequestKey = key
+  lyricLoading.value = true
+  lyricError.value = ''
+  lyricLines.value = []
+  lyricHasTimed.value = false
+  lyricProvider.value = ''
+  activeLyricIndex.value = -1
+  try {
+    const res = await http.get('/music/lyric', {
+      params: {
+        id: String(track.id || ''),
+        source: track.source || 'wy',
+        title: String(track.title || ''),
+        artist: String(track.artist || ''),
+        album: String(track.album || ''),
+        duration: String(track.duration || ''),
+        refresh: force ? 1 : 0
+      },
+      timeout: 20000
+    })
+    if (seq !== lyricSeq || key !== lyricTrackKey(currentTrack.value)) return
+    const payload = res.data && typeof res.data === 'object' ? res.data : {}
+    lyricCache.set(key, { createdAt: Date.now(), data: payload })
+    if (lyricCache.size > 40) lyricCache.clear()
+    applyLyricPayload(payload)
+  } catch (e) {
+    if (seq !== lyricSeq || key !== lyricTrackKey(currentTrack.value)) return
+    lyricLines.value = []
+    lyricHasTimed.value = false
+    lyricProvider.value = ''
+    lyricError.value = apiErrorMessage(e, '歌词暂时不可用')
+  } finally {
+    if (seq === lyricSeq) {
+      lyricLoading.value = false
+      lyricRequestKey = ''
+    }
+  }
+}
+
+function findLyricIndex(time) {
+  const lines = lyricLines.value
+  let active = -1
+  for (let index = 0; index < lines.length; index += 1) {
+    if (Number(lines[index].time) <= time + 0.06) active = index
+    else break
+  }
+  return active
+}
+
+function syncLyricIndex(time) {
+  if (!lyricHasTimed.value || !lyricLines.value.length) return
+  const index = findLyricIndex(Number(time) || 0)
+  if (index !== activeLyricIndex.value) {
+    activeLyricIndex.value = index
+    nextTick(() => scrollActiveLyric())
+  }
+}
+
+function scrollActiveLyric(reset = false) {
+  const container = lyricScroll.value
+  if (!container) return
+  if (reset || !lyricHasTimed.value || activeLyricIndex.value < 0) {
+    container.scrollTo({ top: 0, behavior: 'auto' })
+    return
+  }
+  const active = container.querySelector('.sm-lyric-line.active')
+  if (!active) return
+  const top = active.offsetTop - container.clientHeight / 2 + active.offsetHeight / 2
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+  container.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' })
+}
+
+function onAudioTimeUpdate() {
+  const element = audio.value
+  progress.value = element?.currentTime || 0
+  syncLyricIndex(progress.value)
+}
+
+function seekToLyric(time) {
+  if (!lyricHasTimed.value) return
+  const element = audio.value
+  if (!element || !Number.isFinite(time)) return
+  element.currentTime = Math.max(0, time)
+  progress.value = element.currentTime
+  syncLyricIndex(progress.value)
+  if (element.paused) element.play().catch(() => {})
 }
 
 function startAudio(track, autoplay = true) {
@@ -1488,6 +1756,7 @@ function seek(event) {
   const percent = Number(event.target.value)
   element.currentTime = (percent / 100) * currentDuration.value
   progress.value = element.currentTime
+  syncLyricIndex(progress.value)
 }
 
 function setVolume(event) {
@@ -1596,10 +1865,18 @@ onMounted(() => {
   loadPersistedState()
   loadLayoutState()
   compactViewport.value = window.innerWidth <= 920
-  activePlatform.value = preferredPlatform()
-  view.value = defaultView()
+  // 站点配置与音源能力可能在挂载之后才到达，先保留用户选择，等能力加载后再校正，
+  // 避免刷新时把平台/视图退回默认值并写回本地存储。
+  activePlatform.value = restoredPlatform || preferredPlatform()
+  platformRestorePending = Boolean(restoredPlatform) && !sourceDetailsLoaded.value
+  activePlaylistId.value = restoredPlaylistId
+  if (restoredView === 'now' && currentTrack.value) view.value = 'now'
+  else if (['charts', 'ranking', 'search', 'playlist', 'local'].includes(restoredView)) view.value = restoredView
+  else view.value = defaultView()
+  platformInitialized = true
   loadLocalTracks(true)
   loadSourceCapabilities()
+  if (view.value === 'now') nextTick(() => loadLyrics())
   if (audio.value) {
     audio.value.volume = volume.value
     audio.value.muted = muted.value
@@ -1638,7 +1915,7 @@ onBeforeUnmount(() => {
       preload="metadata"
       @play="playing = true"
       @pause="playing = false"
-      @timeupdate="progress = audio?.currentTime || 0"
+      @timeupdate="onAudioTimeUpdate"
       @loadedmetadata="duration = audio?.duration || currentTrack?.duration || 0"
       @durationchange="duration = audio?.duration || currentTrack?.duration || 0"
       @ended="onEnded"
@@ -1691,22 +1968,19 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <div v-if="sourceActive && (sourceQualityText || sourceDetailsLoading || sourceMeta.initAlert)" class="sm-source-meta">
-          <span v-if="sourceQualityText" class="sm-source-chip">音质 {{ sourceQualityText }}</span>
+        <div v-if="sourceActive && (activeQualityText || sourceDetailsLoading || sourceMeta.initAlert)" class="sm-source-meta">
+          <span v-if="activeQualityText" class="sm-source-chip">音质 {{ activeQualityText }}</span>
           <span v-if="sourceDetailsLoading" class="sm-source-chip muted">读取音源能力…</span>
           <span v-if="sourceMeta.initAlert" class="sm-source-chip warn">音源提示</span>
         </div>
         <p v-if="sourceActive && sourceMeta.initAlert" class="sm-source-alert">{{ sourceMeta.initAlert }}</p>
 
-        <nav class="sm-tabs" aria-label="播放器视图">
+        <nav v-if="view !== 'now'" class="sm-tabs" aria-label="播放器视图">
           <button v-if="localActive" type="button" :class="{ on: view === 'local' }" @click="showLocalView">
             本地音乐 <em v-if="localCount">{{ localCount }}</em>
           </button>
           <button v-if="hasCharts" type="button" :class="{ on: view === 'charts' || view === 'playlist' }" @click="showChartsView">歌单</button>
           <button v-if="hasRanking" type="button" :class="{ on: view === 'ranking' }" @click="showRankingView">排行榜</button>
-          <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
-            播放列表 <em>{{ playedQueue.length }}</em>
-          </button>
           <button v-if="hasSearch" type="button" :class="{ on: view === 'search' }" @click="showSearchView">搜索</button>
         </nav>
 
@@ -1752,7 +2026,7 @@ onBeforeUnmount(() => {
                 <small>{{ track.artist || '未知歌手' }}<template v-if="track.album"> · {{ track.album }}</template></small>
               </span>
               <span class="sm-local-duration">{{ track.duration ? formatTime(track.duration) : '本地' }}</span>
-              <span class="sm-local-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+              <span class="sm-local-play" :class="{ playing: isTrackPlaying(track), loading: isTrackLoading(track) }" aria-hidden="true">
                 <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
                 <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
@@ -1896,7 +2170,7 @@ onBeforeUnmount(() => {
               </span>
               <span v-if="track.fee > 0" class="sm-vip">VIP</span>
               <span v-else class="sm-chart-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
-              <span class="sm-chart-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+              <span class="sm-chart-play" :class="{ playing: isTrackPlaying(track), loading: isTrackLoading(track) }" aria-hidden="true">
                 <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
                 <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
@@ -1959,7 +2233,7 @@ onBeforeUnmount(() => {
               </span>
               <span v-if="track.fee > 0" class="sm-vip">VIP</span>
               <span v-else class="sm-chart-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
-              <span class="sm-chart-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+              <span class="sm-chart-play" :class="{ playing: isTrackPlaying(track), loading: isTrackLoading(track) }" aria-hidden="true">
                 <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
                 <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
@@ -1974,56 +2248,117 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-else-if="view === 'queue'" class="sm-body sm-queue-body">
-          <div class="sm-list-head sm-queue-head">
-            <div>
-              <span class="sm-chart-kicker">PLAYED</span>
-              <strong>播放列表</strong>
-              <span>{{ playedQueue.length }} 首</span>
+        <div v-else-if="view === 'now' && currentTrack" class="sm-body sm-nowview-body">
+          <div class="sm-nowview-head">
+            <button type="button" class="sm-nowview-back" aria-label="返回浏览" @click="backFromNow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg>
+              <span>返回</span>
+            </button>
+            <div class="sm-nowview-tabs" role="tablist" aria-label="正在播放功能">
+              <button type="button" role="tab" :aria-selected="nowTab === 'lyrics'" :class="{ on: nowTab === 'lyrics' }" @click="setNowTab('lyrics')">歌词</button>
+              <button type="button" role="tab" :aria-selected="nowTab === 'queue'" :class="{ on: nowTab === 'queue' }" @click="setNowTab('queue')">播放列表 <em>{{ playedQueue.length }}</em></button>
             </div>
-            <button v-if="queue.length" type="button" class="sm-text-btn" @click="clearQueue">清空</button>
+            <span class="sm-nowview-spacer" aria-hidden="true"></span>
           </div>
 
-          <div v-if="playedQueue.length" class="sm-track-list" role="list" aria-label="播放列表">
-            <div
-              v-for="item in playedQueue"
-              :key="item.track.id + '-' + item.index"
-              class="sm-track"
-              :class="{ active: item.index === currentIndex }"
-              role="listitem"
-            >
-              <button type="button" class="sm-track-main" @click="toggleQueueItem(item.index)">
-                <span class="sm-track-cover" :class="{ image: item.track.cover }">
-                  <img v-if="item.track.cover" :src="item.track.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
-                  <template v-else>{{ coverLetter(item.track) }}</template>
-                  <i v-if="item.index === currentIndex && playing" class="sm-mini-eq" aria-hidden="true"><b></b><b></b><b></b></i>
-                </span>
-                <span class="sm-track-copy">
-                  <strong>{{ item.track.title }}</strong>
-                  <small>{{ item.track.artist }}<template v-if="item.track.urlError"> · 播放失败</template></small>
-                </span>
-                <span class="sm-track-duration">{{ item.track.duration ? formatTime(item.track.duration) : '—' }}</span>
-              </button>
-              <button type="button" class="sm-track-remove" aria-label="从播放列表移除" @click="removeTrack(item.index)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m7 7 10 10M17 7 7 17" /></svg>
-              </button>
+          <div v-if="nowTab === 'lyrics'" class="sm-nowview-lyrics">
+            <div class="sm-nowview-hero">
+              <span class="sm-nowview-cover" :class="{ image: currentTrack.cover }">
+                <img v-if="currentTrack.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
+                <template v-else>{{ coverLetter(currentTrack) }}</template>
+                <i v-if="playing" class="sm-mini-eq" aria-hidden="true"><b></b><b></b><b></b></i>
+              </span>
+              <div class="sm-nowview-copy">
+                <strong>{{ currentTrack.title }}</strong>
+                <small>{{ currentTrack.artist }}<template v-if="currentTrack.album"> · {{ currentTrack.album }}</template></small>
+                <span v-if="lyricSourceLabel" class="sm-lyric-source">{{ lyricSourceLabel }}</span>
+              </div>
+            </div>
+
+            <div ref="lyricScroll" class="sm-lyric-scroll" aria-live="polite">
+              <div v-if="lyricLoading" class="sm-lyric-state">
+                <span class="sm-list-spinner" aria-hidden="true"></span>
+                <strong>正在匹配歌词…</strong>
+                <p>歌词按歌名、歌手与平台自动匹配</p>
+              </div>
+              <div v-else-if="lyricError && !lyricLines.length" class="sm-lyric-state sm-lyric-empty">
+                <span aria-hidden="true">♪</span>
+                <strong>{{ lyricError === '暂无歌词' ? '这首歌暂时没有歌词' : '歌词暂时不可用' }}</strong>
+                <p>{{ lyricError }}</p>
+                <button type="button" class="sm-text-btn" @click="loadLyrics(true)">重试</button>
+              </div>
+              <div v-else-if="lyricLines.length" class="sm-lyric-list" :class="{ 'is-plain': !lyricHasTimed }">
+                <button
+                  v-for="(line, index) in lyricLines"
+                  :key="line.time + '-' + index"
+                  type="button"
+                  class="sm-lyric-line"
+                  :class="{ active: lyricHasTimed && index === activeLyricIndex }"
+                  :disabled="!lyricHasTimed"
+                  :aria-current="lyricHasTimed && index === activeLyricIndex ? 'true' : undefined"
+                  @click="seekToLyric(line.time)"
+                >
+                  {{ line.text }}
+                </button>
+              </div>
+              <div v-else class="sm-lyric-state sm-lyric-empty">
+                <span aria-hidden="true">♪</span>
+                <strong>暂无歌词</strong>
+                <p>可以继续播放，或换一首歌试试</p>
+              </div>
             </div>
           </div>
 
-          <div v-else-if="queue.length" class="sm-empty sm-queue-empty">
-            <span class="sm-empty-orb">♪</span>
-            <strong>还没有开始播放</strong>
-            <p>从歌单、排行榜或搜索结果里选一首歌，播放过的曲目才会出现在这里。</p>
-          </div>
+          <div v-else class="sm-nowview-queue">
+            <div class="sm-list-head sm-queue-head">
+              <div>
+                <span class="sm-chart-kicker">PLAYED</span>
+                <strong>播放列表</strong>
+                <span>{{ playedQueue.length }} 首</span>
+              </div>
+              <button v-if="queue.length" type="button" class="sm-text-btn" @click="clearQueue">清空</button>
+            </div>
 
-          <div v-else class="sm-empty">
-            <span class="sm-empty-orb">♪</span>
-            <strong>还没有播放音乐</strong>
-            <p>{{ hasSource ? '搜索一首歌，或者从歌单里挑一首开始。' : '从本地音乐里挑一首开始播放。' }}</p>
-            <button type="button" class="sm-empty-action" @click="openSearchOrLocal">{{ hasSource ? '去搜索' : '浏览本地音乐' }}</button>
+            <div v-if="playedQueue.length" class="sm-track-list" role="list" aria-label="播放列表">
+              <div
+                v-for="item in playedQueue"
+                :key="item.track.id + '-' + item.index"
+                class="sm-track"
+                :class="{ active: item.index === currentIndex }"
+                role="listitem"
+              >
+                <button type="button" class="sm-track-main" @click="toggleQueueItem(item.index)">
+                  <span class="sm-track-cover" :class="{ image: item.track.cover }">
+                    <img v-if="item.track.cover" :src="item.track.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
+                    <template v-else>{{ coverLetter(item.track) }}</template>
+                    <i v-if="item.index === currentIndex && playing" class="sm-mini-eq" aria-hidden="true"><b></b><b></b><b></b></i>
+                  </span>
+                  <span class="sm-track-copy">
+                    <strong>{{ item.track.title }}</strong>
+                    <small>{{ item.track.artist }}<template v-if="item.track.urlError"> · 播放失败</template></small>
+                  </span>
+                  <span class="sm-track-duration">{{ item.track.duration ? formatTime(item.track.duration) : '—' }}</span>
+                </button>
+                <button type="button" class="sm-track-remove" aria-label="从播放列表移除" @click="removeTrack(item.index)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m7 7 10 10M17 7 7 17" /></svg>
+                </button>
+              </div>
+            </div>
+
+            <div v-else-if="queue.length" class="sm-empty sm-queue-empty">
+              <span class="sm-empty-orb">♪</span>
+              <strong>还没有开始播放</strong>
+              <p>从歌单、排行榜或搜索结果里选一首歌，播放过的曲目才会出现在这里。</p>
+            </div>
+
+            <div v-else class="sm-empty">
+              <span class="sm-empty-orb">♪</span>
+              <strong>还没有播放音乐</strong>
+              <p>{{ hasSource ? '搜索一首歌，或者从歌单里挑一首开始。' : '从本地音乐里挑一首开始播放。' }}</p>
+              <button type="button" class="sm-empty-action" @click="openSearchOrLocal">{{ hasSource ? '去搜索' : '浏览本地音乐' }}</button>
+            </div>
           </div>
         </div>
-
         <div v-else class="sm-body sm-search-body">
           <div v-if="hasSearch" class="sm-search sm-search-view">
             <span class="sm-search-icon" aria-hidden="true">
@@ -2086,7 +2421,7 @@ onBeforeUnmount(() => {
                 </span>
                 <span v-if="track.fee > 0" class="sm-vip">VIP</span>
                 <span v-else class="sm-result-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
-                <span class="sm-result-play" :class="{ playing: isTrackPlaying(track) }" aria-hidden="true">
+                <span class="sm-result-play" :class="{ playing: isTrackPlaying(track), loading: isTrackLoading(track) }" aria-hidden="true">
                   <span v-if="isTrackLoading(track)" class="sm-list-spinner"></span>
                   <svg v-else-if="isTrackPlaying(track)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14" /></svg>
                   <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 9 6-9 6V6Z" /></svg>
@@ -2114,7 +2449,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="sm-nowbar-row">
-            <button type="button" class="sm-nowbar-track" aria-label="查看播放列表" @click="view = 'queue'">
+            <button type="button" class="sm-nowbar-track" aria-label="查看歌词与播放列表" @click="openNowView()">
               <span class="sm-nowbar-cover">
                 <img v-if="currentTrack.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
                 <span v-else>{{ coverLetter(currentTrack) }}</span>
@@ -2707,7 +3042,13 @@ onBeforeUnmount(() => {
 .sm-chart-play { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
 .sm-chart-play svg { width: 13px; height: 13px; }
 .sm-chart-play.playing, .sm-local-play.playing, .sm-result-play.playing { background: var(--accent); border-color: var(--accent); color: #fff; }
-.sm-list-spinner { width: 11px; height: 11px; border-width: 1.5px; border-color: color-mix(in srgb, currentColor 18%, transparent); border-top-color: currentColor; animation: sm-spin .7s linear infinite; }
+.sm-list-spinner { display: block; box-sizing: border-box; width: 12px; height: 12px; flex: 0 0 12px; border: 1.5px solid color-mix(in srgb, currentColor 18%, transparent); border-top-color: currentColor; border-radius: 50%; animation: sm-spin .7s linear infinite; }
+.sm-chart-play.loading, .sm-local-play.loading, .sm-result-play.loading { background: var(--accent); border-color: var(--accent); color: #fff; animation: sm-loader-ring 1.4s ease-out infinite; }
+.sm-chart-play.loading .sm-list-spinner, .sm-local-play.loading .sm-list-spinner, .sm-result-play.loading .sm-list-spinner {
+  width: 15px; height: 15px; flex-basis: 15px;
+  border: 2px solid rgba(255, 255, 255, .32); border-top-color: #fff; border-left-color: rgba(255, 255, 255, .72);
+  box-shadow: 0 0 2px rgba(255, 255, 255, .24);
+}
 .sm-chart-empty { padding-top: 20px; }
 
 .sm-local-body { display: flex; flex-direction: column; gap: 10px; }
@@ -2954,8 +3295,56 @@ onBeforeUnmount(() => {
 .sm-panel-leave-active { transition: opacity .17s ease, transform .2s ease; }
 .sm-panel-enter-from, .sm-panel-leave-to { opacity: 0; transform: translate(var(--sm-panel-x, 0px), var(--sm-panel-y, 10px)) scale(.965); transform-origin: var(--sm-panel-origin, bottom right); }
 
+.sm-nowview-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sm-nowview-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; gap: 4px; flex: 0 0 auto; padding: 1px 0 7px; }
+.sm-nowview-back { display: inline-flex; align-items: center; gap: 2px; padding: 4px 2px; border: 0; background: transparent; color: var(--muted); font-size: 9px; cursor: pointer; }
+.sm-nowview-back:hover { color: var(--ink); }
+.sm-nowview-back svg { width: 14px; height: 14px; }
+.sm-nowview-spacer { display: block; }
+.sm-nowview-tabs { display: flex; justify-content: center; gap: 3px; padding: 3px; border: 1px solid color-mix(in srgb, var(--line) 74%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 5%, var(--paper)); }
+.sm-nowview-tabs button { flex: 1; padding: 5px 8px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 600; cursor: pointer; transition: background .18s ease, color .18s ease; }
+.sm-nowview-tabs button.on { background: var(--accent); color: #fff; box-shadow: 0 3px 9px color-mix(in srgb, var(--accent) 24%, transparent); }
+.sm-nowview-tabs em { margin-left: 1px; font-size: 8px; font-style: normal; opacity: .8; font-variant-numeric: tabular-nums; }
+.sm-nowview-lyrics { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.sm-nowview-hero { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; padding: 4px 2px 8px; }
+.sm-nowview-cover { position: relative; display: grid; place-items: center; width: 50px; height: 50px; flex: 0 0 50px; overflow: hidden; border-radius: 12px; background: linear-gradient(145deg, var(--accent), #8d6bff); color: #fff; font-size: 18px; font-weight: 800; box-shadow: 0 7px 16px color-mix(in srgb, var(--accent) 18%, transparent); }
+.sm-nowview-cover.image { background: var(--paper); }
+.sm-nowview-cover img { width: 100%; height: 100%; object-fit: cover; }
+.sm-nowview-cover .sm-mini-eq { right: 4px; bottom: 4px; }
+.sm-nowview-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.sm-nowview-copy strong { overflow: hidden; color: var(--ink); font-size: 15px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.sm-nowview-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-lyric-source { width: fit-content; margin-top: 1px; padding: 2px 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 7%, var(--paper)); color: var(--accent-ink); font-size: 8px; }
+.sm-lyric-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 6px; scrollbar-width: none; scroll-behavior: smooth; }
+.sm-lyric-scroll::-webkit-scrollbar { display: none; }
+.sm-lyric-list { display: flex; flex-direction: column; gap: 1px; padding: 34px 0 54px; }
+.sm-lyric-line { width: 100%; padding: 7px 3px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; opacity: .5; transform: scale(.97); transition: opacity .28s ease, color .28s ease, transform .28s cubic-bezier(.2, .8, .2, 1), background .2s ease; cursor: pointer; }
+.sm-lyric-line:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); opacity: .78; }
+.sm-lyric-line.active {
+  color: var(--accent-ink); font-size: 15px; font-weight: 700; opacity: 1; transform: scale(1.04);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 13%, transparent);
+  text-shadow: 0 2px 14px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: sm-lyric-pop .3s ease-out;
+}
+.sm-lyric-line:disabled { cursor: default; }
+.sm-lyric-list.is-plain .sm-lyric-line { opacity: .7; transform: none; cursor: default; }
+.sm-lyric-list.is-plain .sm-lyric-line:hover { background: transparent; opacity: .7; }
+.sm-lyric-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 180px; padding: 24px 8px; color: var(--muted); text-align: center; }
+.sm-lyric-state strong { color: var(--ink-soft); font-size: 12px; }
+.sm-lyric-state p { margin: 0; font-size: 9px; line-height: 1.6; }
+.sm-lyric-state .sm-list-spinner { width: 18px; height: 18px; flex-basis: 18px; border-width: 2px; color: var(--accent); margin-bottom: 2px; }
+.sm-lyric-empty span { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 8%, var(--paper)); color: var(--accent-ink); font-size: 18px; }
+.sm-nowview-queue { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow-y: auto; padding-bottom: 2px; scrollbar-width: thin; }
+
 @keyframes sm-bars { from { transform: scaleY(.55); opacity: .55; } to { transform: scaleY(1); opacity: 1; } }
 @keyframes sm-spin { to { transform: rotate(360deg); } }
+@keyframes sm-loader-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 24%, transparent); }
+  65% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 5px transparent; }
+}
+@keyframes sm-lyric-pop { from { opacity: .42; transform: scale(.96); } to { opacity: 1; transform: scale(1.04); } }
 @keyframes sm-disc-spin { to { transform: rotate(360deg); } }
 @keyframes sm-disc-orbit { to { transform: rotate(360deg); } }
 @keyframes sm-pulse { 0%, 100% { transform: scale(1); opacity: .32; } 50% { transform: scale(1.16); opacity: .08; } }
@@ -2972,6 +3361,11 @@ onBeforeUnmount(() => {
   .sm-source-pill { max-width: 94px; }
   .sm-source-meta { margin: 6px 12px 0; }
   .sm-tabs { margin: 7px 12px 0; }
+  .sm-nowview-head { grid-template-columns: 40px minmax(0, 1fr) 40px; }
+  .sm-nowview-back span { display: none; }
+  .sm-nowview-copy strong { font-size: 14px; }
+  .sm-lyric-line { font-size: 12.5px; padding: 6px 2px; }
+  .sm-lyric-line.active { font-size: 14px; }
   .sm-body { padding: 9px 12px 3px; }
   .sm-nowbar { padding: 6px 12px calc(7px + env(safe-area-inset-bottom)); }
   .sm-foot { padding-bottom: calc(7px + env(safe-area-inset-bottom)); }
@@ -2979,5 +3373,6 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab.playing .sm-fab-art, .sm-fab.playing .sm-fab-ring { animation: none; }
   .sm-panel-enter-active, .sm-panel-leave-active, .sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .12s linear; }
+  .sm-lyric-line, .sm-lyric-line.active, .sm-nowview-tabs button { transition: none; animation: none; transform: none; }
 }
 </style>

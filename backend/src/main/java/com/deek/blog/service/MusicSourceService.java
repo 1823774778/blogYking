@@ -61,6 +61,8 @@ public class MusicSourceService {
     private static final long SEARCH_TTL_MILLIS = 2 * 60 * 1000L;
     private static final long CHART_TTL_MILLIS = 10 * 60 * 1000L;
     private static final long PLAYLIST_TTL_MILLIS = 10 * 60 * 1000L;
+    /** 播放地址缓存只保留很短时间，避免平台短 token 失效；用于重复播放/刷新后的快速命中。 */
+    private static final long URL_TTL_MILLIS = 90 * 1000L;
     private static final String SOURCE_CACHE_DIR = "music-sources";
     private static final String LOCAL_SOURCE_PREFIX = "local://";
     private static final String CHART_FALLBACK_QUERY = "热门";
@@ -93,6 +95,7 @@ public class MusicSourceService {
     private final Map<String, ChartEntry> charts = new HashMap<>();
     private final Map<String, ChartEntry> playlistLists = new HashMap<>();
     private final Map<String, ChartEntry> playlistDetails = new HashMap<>();
+    private final Map<String, UrlEntry> resolvedUrls = new ConcurrentHashMap<>();
     private final Object runtimeLock = new Object();
     private final Object searchLock = new Object();
     private final Object chartLock = new Object();
@@ -431,7 +434,7 @@ public class MusicSourceService {
         List<Map<String, Object>> raw = new ArrayList<>();
         for (CompletableFuture<List<Map<String, Object>>> future : futures) {
             try {
-                raw.addAll(future.get(18, TimeUnit.SECONDS));
+                raw.addAll(future.get(8, TimeUnit.SECONDS));
             } catch (Exception e) {
                 log.debug("跨源匹配超时或失败: {}", e.toString());
             }
@@ -565,6 +568,15 @@ public class MusicSourceService {
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
         if (!runtime.platforms().containsKey(sourceCode)) throw new BizException("当前音源不支持该平台");
+        qualityCode = supportedQuality(runtime, sourceCode, qualityCode);
+
+        String cacheKey = sourceUrl + "|" + sourceCode + "|" + id + "|" + qualityCode;
+        UrlEntry cached = resolvedUrls.get(cacheKey);
+        if (cached != null && System.currentTimeMillis() - cached.createdAt < URL_TTL_MILLIS) {
+            Map<String, Object> hit = new LinkedHashMap<>(cached.data);
+            hit.put("cached", true);
+            return hit;
+        }
 
         String originalSource = sourceCode;
         String originalId = id;
@@ -633,6 +645,8 @@ public class MusicSourceService {
                 if (chosen.containsKey(key)) data.put(key, chosen.get(key));
             }
         }
+        if (resolvedUrls.size() > 300) resolvedUrls.clear();
+        resolvedUrls.put(cacheKey, new UrlEntry(System.currentTimeMillis(), new LinkedHashMap<>(data)));
         return data;
     }
 
@@ -654,6 +668,16 @@ public class MusicSourceService {
         if (!albumName.isBlank()) meta.put("albumName", albumName);
         if (!durationValue.isBlank() && !"null".equals(durationValue)) meta.put("duration", durationValue);
         return meta;
+    }
+
+    /** 音源平台不一定支持请求的音质；按平台声明的音质选择最接近的可用档位，避免无谓重试。 */
+    private String supportedQuality(LxSourceRuntime runtime, String code, String requested) {
+        LxSourceRuntime.PlatformInfo info = runtime.platforms().get(code);
+        List<String> supported = info == null ? List.of() : info.qualities();
+        if (supported.isEmpty() || supported.contains(requested)) return requested;
+        if (supported.contains("320k") && "flac".equals(requested)) return "320k";
+        if (supported.contains("128k")) return "128k";
+        return supported.get(0);
     }
 
     /** 在音源声明的平台中查找同歌名、同歌手且能解析出地址的版本。 */
@@ -680,7 +704,11 @@ public class MusicSourceService {
             if (!runtime.platforms().containsKey(code)) continue;
             if (code.equals(excludeSource)) continue;
             attempt += 1;
-            for (String candidateQuality : List.of(quality, "128k")) {
+            String preferred = supportedQuality(runtime, code, quality);
+            List<String> candidateQualities = new ArrayList<>();
+            candidateQualities.add(preferred);
+            if (!"128k".equals(preferred)) candidateQualities.add("128k");
+            for (String candidateQuality : candidateQualities) {
                 try {
                     String url = runtime.resolveMusicUrl(code, candidateId, candidateQuality,
                             playbackMeta(candidate.get("title"), candidate.get("artist"),
@@ -2127,5 +2155,8 @@ public class MusicSourceService {
     }
 
     private record ChartEntry(long createdAt, Map<String, Object> data) {
+    }
+
+    private record UrlEntry(long createdAt, Map<String, Object> data) {
     }
 }

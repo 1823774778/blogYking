@@ -4,6 +4,7 @@ import com.deek.blog.common.ApiResponse;
 import com.deek.blog.service.LocalMusicService;
 import com.deek.blog.service.MusicAudioProxyService;
 import com.deek.blog.service.MusicPlaylistService;
+import com.deek.blog.service.MusicLyricService;
 import com.deek.blog.service.MusicSourceService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,15 +27,18 @@ public class MusicController {
 
     private final MusicPlaylistService musicPlaylistService;
     private final MusicSourceService musicSourceService;
+    private final MusicLyricService musicLyricService;
     private final LocalMusicService localMusicService;
     private final MusicAudioProxyService audioProxyService;
 
     public MusicController(MusicPlaylistService musicPlaylistService,
                            MusicSourceService musicSourceService,
+                           MusicLyricService musicLyricService,
                            LocalMusicService localMusicService,
                            MusicAudioProxyService audioProxyService) {
         this.musicPlaylistService = musicPlaylistService;
         this.musicSourceService = musicSourceService;
+        this.musicLyricService = musicLyricService;
         this.localMusicService = localMusicService;
         this.audioProxyService = audioProxyService;
     }
@@ -93,6 +97,18 @@ public class MusicController {
                                                      @RequestParam(name = "artist", defaultValue = "") String artist,
                                                      @RequestParam(name = "source", defaultValue = "") String source) {
         return ApiResponse.ok(musicSourceService.fallbackCandidates(title, artist, source));
+    }
+
+    /** 歌词：优先网易云公开歌词，回退 LRCLIB；返回可直接驱动歌词动画的时间轴。 */
+    @GetMapping("/lyric")
+    public ApiResponse<Map<String, Object>> lyric(@RequestParam(name = "id", defaultValue = "") String id,
+                                                   @RequestParam(name = "source", defaultValue = "") String source,
+                                                   @RequestParam(name = "title", defaultValue = "") String title,
+                                                   @RequestParam(name = "artist", defaultValue = "") String artist,
+                                                   @RequestParam(name = "album", defaultValue = "") String album,
+                                                   @RequestParam(name = "duration", defaultValue = "") String duration,
+                                                   @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
+        return ApiResponse.ok(musicLyricService.lookup(source, id, title, artist, album, duration, refresh));
     }
 
     @GetMapping("/url")
