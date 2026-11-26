@@ -39,10 +39,24 @@ public class MusicController {
         this.audioProxyService = audioProxyService;
     }
 
-    /** 旧版歌单接口保留，兼容已保存旧配置的站点。 */
+    /** 旧版歌单接口保留；带 platform/id 时读取当前音源平台的真实歌单。 */
     @GetMapping("/playlist")
-    public ApiResponse<Map<String, Object>> playlist(@RequestParam(name = "url") String url) {
+    public ApiResponse<Map<String, Object>> playlist(
+            @RequestParam(name = "url", required = false) String url,
+            @RequestParam(name = "platform", required = false) String platform,
+            @RequestParam(name = "id", required = false) String id) {
+        if (platform != null && !platform.isBlank() && id != null && !id.isBlank()) {
+            return ApiResponse.ok(musicSourceService.playlistDetail(platform, id));
+        }
+        if (url == null || url.isBlank()) throw new IllegalArgumentException("缺少歌单地址");
         return ApiResponse.ok(musicPlaylistService.resolve(url));
+    }
+
+    /** 当前音源各平台推荐歌单，按平台交错返回。 */
+    @GetMapping("/playlists")
+    public ApiResponse<Map<String, Object>> playlists(
+            @RequestParam(name = "limit", defaultValue = "30") int limit) {
+        return ApiResponse.ok(musicSourceService.playlists(limit));
     }
 
     @GetMapping("/source")

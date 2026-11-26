@@ -5,6 +5,7 @@ import com.deek.blog.service.music.LxSourceRuntime;
 import com.deek.blog.service.storage.StoragePathResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,9 +53,12 @@ public class MusicSourceService {
     private static final int MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
     private static final int MAX_SEARCH_LIMIT = 30;
     private static final int MAX_CHART_LIMIT = 30;
+    private static final int MAX_PLAYLIST_TOTAL = 36;
+    private static final int MAX_PLAYLIST_TRACKS = 100;
     private static final long RUNTIME_TTL_MILLIS = 6 * 60 * 60 * 1000L;
     private static final long SEARCH_TTL_MILLIS = 2 * 60 * 1000L;
     private static final long CHART_TTL_MILLIS = 10 * 60 * 1000L;
+    private static final long PLAYLIST_TTL_MILLIS = 10 * 60 * 1000L;
     private static final String SOURCE_CACHE_DIR = "music-sources";
     private static final String LOCAL_SOURCE_PREFIX = "local://";
     private static final String CHART_FALLBACK_QUERY = "热门";
@@ -68,6 +72,8 @@ public class MusicSourceService {
     );
     /** 本站已实现榜单适配的平台。平台是否出现在前台，仍由当前音源声明决定。 */
     private static final Set<String> CHART_PLATFORM_CODES = PLATFORM_LABELS.keySet();
+    /** 本站已实现平台歌单读取适配的平台。 */
+    private static final Set<String> PLAYLIST_PLATFORM_CODES = PLATFORM_LABELS.keySet();
     /** 站内搜索当前使用网易云公开曲库，只有音源包含网易云时搜索结果才能播放。 */
     private static final Set<String> SEARCH_PLATFORM_CODES = Set.of("wy");
     private static final Map<String, String> QUALITY_LABELS = Map.of(
@@ -83,9 +89,12 @@ public class MusicSourceService {
     private final Map<String, RuntimeEntry> runtimes = new ConcurrentHashMap<>();
     private final Map<String, SearchEntry> searches = new HashMap<>();
     private final Map<String, ChartEntry> charts = new HashMap<>();
+    private final Map<String, ChartEntry> playlistLists = new HashMap<>();
+    private final Map<String, ChartEntry> playlistDetails = new HashMap<>();
     private final Object runtimeLock = new Object();
     private final Object searchLock = new Object();
     private final Object chartLock = new Object();
+    private final Object playlistLock = new Object();
 
     public MusicSourceService(SiteConfigService siteConfigService, ObjectMapper objectMapper,
                               StoragePathResolver storagePaths) {
@@ -131,7 +140,7 @@ public class MusicSourceService {
 
     /**
      * 当前音源实际支持的前台能力。平台名称、actions、音质均来自音源脚本，
-     * 本站只追加“是否有榜单适配 / 是否能承接站内搜索”这两项站点能力。
+     * 本站只追加“是否有榜单适配 / 是否能读取平台歌单 / 是否能承接站内搜索”这三项站点能力。
      */
     public Map<String, Object> platformCapabilities() {
         Map<String, String> cfg = siteConfigService.get();
@@ -140,6 +149,7 @@ public class MusicSourceService {
         boolean configured = local ? sourceScriptReady(cfg) : !url.isBlank();
         List<Map<String, Object>> platforms = new ArrayList<>();
         List<String> chartCodes = new ArrayList<>();
+        List<String> playlistCodes = new ArrayList<>();
         List<String> searchCodes = new ArrayList<>();
         List<String> allQualities = new ArrayList<>();
         List<String> allActions = new ArrayList<>();
@@ -158,6 +168,7 @@ public class MusicSourceService {
                             || actions.stream().anyMatch(action -> "musicUrl".equalsIgnoreCase(action));
                     if (!canPlay) continue;
                     boolean charts = CHART_PLATFORM_CODES.contains(code);
+                    boolean playlists = PLAYLIST_PLATFORM_CODES.contains(code);
                     boolean search = SEARCH_PLATFORM_CODES.contains(code);
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("code", code);
@@ -167,6 +178,7 @@ public class MusicSourceService {
                     item.put("qualities", new ArrayList<>(info.qualities()));
                     item.put("canPlay", true);
                     item.put("charts", charts);
+                    item.put("playlists", playlists);
                     item.put("search", search);
                     platforms.add(item);
                     for (String quality : new ArrayList<>(info.qualities())) {
@@ -176,6 +188,7 @@ public class MusicSourceService {
                         if (!action.isBlank() && !allActions.contains(action)) allActions.add(action);
                     }
                     if (charts) chartCodes.add(code);
+                    if (playlists) playlistCodes.add(code);
                     if (search) searchCodes.add(code);
                 }
             } catch (RuntimeException e) {
@@ -189,6 +202,7 @@ public class MusicSourceService {
                 String normalized = code.trim().toLowerCase(Locale.ROOT);
                 if (normalized.isBlank()) continue;
                 boolean charts = CHART_PLATFORM_CODES.contains(normalized);
+                boolean playlists = PLAYLIST_PLATFORM_CODES.contains(normalized);
                 boolean search = SEARCH_PLATFORM_CODES.contains(normalized);
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("code", normalized);
@@ -198,6 +212,7 @@ public class MusicSourceService {
                 item.put("qualities", split(cfg.getOrDefault("musicSourceQualities", "")));
                 item.put("canPlay", true);
                 item.put("charts", charts);
+                item.put("playlists", playlists);
                 item.put("search", search);
                 platforms.add(item);
                 for (String quality : split(cfg.getOrDefault("musicSourceQualities", ""))) {
@@ -205,6 +220,7 @@ public class MusicSourceService {
                 }
                 if (!allActions.contains("musicUrl")) allActions.add("musicUrl");
                 if (charts) chartCodes.add(normalized);
+                if (playlists) playlistCodes.add(normalized);
                 if (search) searchCodes.add(normalized);
             }
         }
@@ -226,6 +242,7 @@ public class MusicSourceService {
         }
         source.put("platformCount", platforms.size());
         source.put("chartCount", chartCodes.size());
+        source.put("playlistCount", playlistCodes.size());
         source.put("searchCount", searchCodes.size());
         source.put("qualities", allQualities);
         source.put("actions", allActions);
@@ -238,6 +255,7 @@ public class MusicSourceService {
         data.put("actions", allActions);
         data.put("platforms", platforms);
         data.put("chartPlatforms", chartCodes);
+        data.put("playlistPlatforms", playlistCodes);
         data.put("searchPlatforms", searchCodes);
         data.put("message", message);
         return data;
@@ -636,6 +654,539 @@ public class MusicSourceService {
             charts.put(cacheKey, new ChartEntry(System.currentTimeMillis(), data));
         }
         return data;
+    }
+
+    /**
+     * 当前音源各平台推荐歌单。只读取当前音源声明的平台，并把各平台结果交错排列，
+     * 避免前台又变成按平台分组的列表。
+     */
+    public Map<String, Object> playlists(int limit) {
+        int total = Math.max(1, Math.min(MAX_PLAYLIST_TOTAL, limit));
+        String sourceUrl = requireSourceUrl();
+        LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        List<String> codes = new ArrayList<>();
+        for (String code : runtime.platforms().keySet()) {
+            String normalized = String.valueOf(code == null ? "" : code).trim().toLowerCase(Locale.ROOT);
+            if (PLAYLIST_PLATFORM_CODES.contains(normalized) && !codes.contains(normalized)) {
+                codes.add(normalized);
+            }
+        }
+        if (codes.isEmpty()) throw new BizException("当前音源没有可读取歌单的平台");
+        int perPlatform = Math.max(1, Math.min(8, (total + codes.size() - 1) / codes.size()));
+        String cacheKey = sourceUrl + "|" + String.join(",", codes) + ":" + perPlatform;
+        synchronized (playlistLock) {
+            ChartEntry entry = playlistLists.get(cacheKey);
+            if (entry != null && System.currentTimeMillis() - entry.createdAt < PLAYLIST_TTL_MILLIS) {
+                return entry.data;
+            }
+        }
+
+        Map<String, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
+        List<CompletableFuture<List<Map<String, Object>>>> futures = new ArrayList<>();
+        for (String code : codes) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    return fetchPlaylists(code, perPlatform);
+                } catch (Exception e) {
+                    log.debug("读取平台歌单失败 platform={}: {}", code, e.toString());
+                    return List.of();
+                }
+            }));
+        }
+        int index = 0;
+        for (String code : codes) {
+            List<Map<String, Object>> list = List.of();
+            try {
+                list = futures.get(index).get(18, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.debug("读取平台歌单超时 platform={}: {}", code, e.toString());
+            }
+            grouped.put(code, list == null ? List.of() : list);
+            index += 1;
+        }
+
+        List<Map<String, Object>> items = new ArrayList<>();
+        int maxSize = grouped.values().stream().mapToInt(List::size).max().orElse(0);
+        for (int i = 0; i < maxSize && items.size() < total; i++) {
+            for (String code : codes) {
+                List<Map<String, Object>> list = grouped.getOrDefault(code, List.of());
+                if (i >= list.size()) continue;
+                items.add(list.get(i));
+                if (items.size() >= total) break;
+            }
+        }
+        if (items.isEmpty()) throw new BizException("暂时无法读取平台歌单，请稍后重试");
+
+        List<String> labels = new ArrayList<>();
+        for (String code : codes) labels.add(platformLabel(runtime, code));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("platforms", codes);
+        data.put("platformLabels", labels);
+        data.put("updatedAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        data.put("total", items.size());
+        data.put("items", items);
+        data.put("message", "已读取 " + labels.size() + " 个平台的推荐歌单");
+        synchronized (playlistLock) {
+            if (playlistLists.size() > 20) playlistLists.clear();
+            playlistLists.put(cacheKey, new ChartEntry(System.currentTimeMillis(), data));
+        }
+        return data;
+    }
+
+    private List<Map<String, Object>> fetchPlaylists(String code, int size) throws Exception {
+        return switch (code) {
+            case "wy" -> playlistsNetease(size);
+            case "tx" -> playlistsQq(size);
+            case "kg" -> playlistsKugou(size);
+            case "kw" -> playlistsKuwo(size);
+            case "mg" -> playlistsMigu(size);
+            default -> List.of();
+        };
+    }
+
+    private List<Map<String, Object>> playlistsNetease(int size) throws Exception {
+        JsonNode root = getJson("https://music.163.com/api/personalized/playlist?limit="
+                + Math.max(1, Math.min(20, size)));
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (JsonNode item : root.path("result")) {
+            if (items.size() >= size) break;
+            String id = item.path("id").asText("").trim();
+            if (id.isBlank()) continue;
+            items.add(playlistItem("wy", id,
+                    item.path("name").asText("未命名歌单"),
+                    item.path("picUrl").asText(""),
+                    item.path("playCount").asLong(0),
+                    item.path("trackCount").asInt(0),
+                    "网易云音乐",
+                    item.path("copywriter").asText(""),
+                    "https://music.163.com/#/playlist?id=" + id));
+        }
+        return items;
+    }
+
+    private List<Map<String, Object>> playlistsQq(int size) throws Exception {
+        String url = "https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_diss_by_tag.fcg?picmid=1&rnd=0.2"
+                + "&g_tk=5381&loginUin=0&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8"
+                + "&notice=0&platform=yqq.json&needNewCode=0&categoryId=10000000&sortId=5"
+                + "&sin=0&ein=" + Math.max(1, Math.min(20, size));
+        JsonNode root = getJsonRaw(url, "https://y.qq.com/");
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (JsonNode item : root.path("data").path("list")) {
+            if (items.size() >= size) break;
+            String id = item.path("dissid").asText("").trim();
+            if (id.isBlank()) continue;
+            items.add(playlistItem("tx", id,
+                    item.path("dissname").asText("未命名歌单"),
+                    item.path("imgurl").asText(""),
+                    item.path("listennum").asLong(0),
+                    0,
+                    item.path("creator").path("name").asText("QQ 音乐"),
+                    item.path("introduction").asText(""),
+                    "https://y.qq.com/n/ryqq/playlist/" + id));
+        }
+        return items;
+    }
+
+    private List<Map<String, Object>> playlistsKugou(int size) throws Exception {
+        JsonNode root = getJsonRaw("https://m.kugou.com/plist/index&json=true", "https://www.kugou.com/");
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (JsonNode item : root.path("plist").path("list").path("info")) {
+            if (items.size() >= size) break;
+            String id = item.path("specialid").asText("").trim();
+            if (id.isBlank()) continue;
+            String cover = item.path("imgurl").asText("").replace("{size}", "400");
+            items.add(playlistItem("kg", id,
+                    item.path("specialname").asText("未命名歌单"),
+                    cover,
+                    item.path("playcount").asLong(0),
+                    item.path("songcount").asInt(0),
+                    "酷狗音乐",
+                    "",
+                    "https://www.kugou.com/yy/special/single/" + id + ".html"));
+        }
+        return items;
+    }
+
+    private List<Map<String, Object>> playlistsKuwo(int size) throws Exception {
+        String url = "https://wapi.kuwo.cn/api/www/classify/playlist/getRcmPlayList?pn=1&rn="
+                + Math.max(1, Math.min(20, size)) + "&httpsStatus=1";
+        JsonNode root = getJsonRaw(url, "https://www.kuwo.cn/");
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (JsonNode item : root.path("data").path("data")) {
+            if (items.size() >= size) break;
+            String id = item.path("id").asText("").trim();
+            if (id.isBlank()) continue;
+            String cover = item.path("img500").asText("");
+            if (cover.isBlank()) cover = item.path("img").asText("");
+            items.add(playlistItem("kw", id,
+                    item.path("name").asText("未命名歌单"),
+                    cover,
+                    item.path("listencnt").asLong(0),
+                    item.path("total").asInt(0),
+                    item.path("uname").asText("酷我音乐"),
+                    "",
+                    "https://www.kuwo.cn/playlist_detail/" + id));
+        }
+        return items;
+    }
+
+    private List<Map<String, Object>> playlistsMigu(int size) throws Exception {
+        JsonNode root = getJsonRaw("https://app.c.nf.migu.cn/pc/bmw/page-data/playlist-square-recommend/v1.0?templateVersion=2&pageNo=1",
+                "https://music.migu.cn/");
+        List<Map<String, Object>> items = new ArrayList<>();
+        collectMiguPlaylists(root.path("data"), items, new LinkedHashMap<>(), size);
+        return items;
+    }
+
+    private void collectMiguPlaylists(JsonNode node, List<Map<String, Object>> items,
+                                      Map<String, Boolean> seen, int limit) {
+        if (node == null || items.size() >= limit) return;
+        if (node.isArray()) {
+            for (JsonNode child : node) {
+                if (items.size() >= limit) return;
+                collectMiguPlaylists(child, items, seen, limit);
+            }
+            return;
+        }
+        if (!node.isObject()) return;
+
+        String resType = node.path("resType").asText("");
+        String action = node.path("action").asText("");
+        boolean playlistNode = "2021".equals(resType) || action.startsWith("mgmusic://song-list-info");
+        if (playlistNode) {
+            String id = node.path("resId").asText("").trim();
+            if (id.isBlank()) {
+                java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?:id=)(\\d+)").matcher(action);
+                if (matcher.find()) id = matcher.group(1);
+            }
+            String title = node.path("txt").asText("").trim();
+            if (title.isBlank()) title = node.path("logEvent").path("contentName").asText("").trim();
+            String cover = node.path("img").asText("");
+            if (cover.isBlank()) cover = node.path("img2").asText("");
+            if (!id.isBlank() && !title.isBlank() && seen.putIfAbsent(id, Boolean.TRUE) == null) {
+                String pageUrl = "https://music.migu.cn/v5/#/playlist?playlistId=" + id;
+                items.add(playlistItem("mg", id, title, cover, 0, 0, "咪咕音乐", "", pageUrl));
+            }
+            return;
+        }
+        if (node.isObject()) {
+            java.util.Iterator<JsonNode> fields = node.elements();
+            while (fields.hasNext()) {
+                if (items.size() >= limit) return;
+                collectMiguPlaylists(fields.next(), items, seen, limit);
+            }
+        }
+    }
+
+    private Map<String, Object> playlistItem(String source, String id, String title, String cover,
+                                             long playCount, int trackCount, String creator,
+                                             String description, String pageUrl) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", id);
+        item.put("platform", source);
+        item.put("source", source);
+        item.put("title", title == null || title.isBlank() ? "未命名歌单" : title.trim());
+        item.put("cover", secureUrl(cover));
+        item.put("playCount", Math.max(0, playCount));
+        item.put("trackCount", Math.max(0, trackCount));
+        item.put("creator", creator == null ? "" : creator.trim());
+        item.put("description", description == null ? "" : description.trim());
+        item.put("pageUrl", pageUrl == null ? "" : pageUrl);
+        return item;
+    }
+
+    /** 当前音源下某个平台的歌单详情。 */
+    public Map<String, Object> playlistDetail(String platform, String playlistId) {
+        String code = String.valueOf(platform == null ? "" : platform).trim().toLowerCase(Locale.ROOT);
+        String id = String.valueOf(playlistId == null ? "" : playlistId).trim();
+        if (!PLAYLIST_PLATFORM_CODES.contains(code)) throw new BizException("不支持的平台");
+        if (!id.matches("[0-9A-Za-z_-]{1,80}")) throw new BizException("歌单 ID 不合法");
+        String sourceUrl = requireSourceUrl();
+        LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
+        String platformLabel = platformLabel(runtime, code);
+        if (!runtime.platforms().containsKey(code)) throw new BizException(platformLabel + "未包含在当前导入的音源中");
+
+        String cacheKey = sourceUrl + "|" + code + ":" + id;
+        synchronized (playlistLock) {
+            ChartEntry entry = playlistDetails.get(cacheKey);
+            if (entry != null && System.currentTimeMillis() - entry.createdAt < PLAYLIST_TTL_MILLIS) {
+                return entry.data;
+            }
+        }
+
+        Map<String, Object> detail;
+        try {
+            detail = switch (code) {
+                case "wy" -> playlistDetailNetease(id);
+                case "tx" -> playlistDetailQq(id);
+                case "kg" -> playlistDetailKugou(id);
+                case "kw" -> playlistDetailKuwo(id);
+                default -> playlistDetailMigu(id);
+            };
+        } catch (Exception e) {
+            log.warn("读取歌单详情失败 platform={} id={}: {}", code, id, e.toString());
+            throw new BizException("暂时无法读取" + platformLabel + "歌单，请稍后重试");
+        }
+        detail.put("platform", code);
+        detail.put("source", code);
+        detail.put("platformLabel", platformLabel);
+        detail.put("updatedAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        if (!detail.containsKey("trackCount")) detail.put("trackCount", 0);
+        if (!detail.containsKey("tracks")) detail.put("tracks", List.of());
+        List<Map<String, Object>> tracks = (List<Map<String, Object>>) detail.get("tracks");
+        detail.put("total", tracks.size());
+        synchronized (playlistLock) {
+            if (playlistDetails.size() > 80) playlistDetails.clear();
+            playlistDetails.put(cacheKey, new ChartEntry(System.currentTimeMillis(), detail));
+        }
+        return detail;
+    }
+
+    private Map<String, Object> playlistDetailNetease(String id) throws Exception {
+        JsonNode root;
+        try {
+            root = getJson("https://music.163.com/api/v6/playlist/detail?id=" + id + "&n=1000&s=0");
+        } catch (Exception e) {
+            // 网易接口偶尔返回 -462 限流；旧详情接口仍可读，作为一次退避。
+            root = getJsonRaw("https://music.163.com/api/playlist/detail?id=" + id, "https://music.163.com/");
+        }
+        JsonNode playlist = root.path("result").isObject() ? root.path("result") : root.path("playlist");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        // 歌单详情默认只带前 10 首；用 trackIds 批量补全，最多读取 100 首。
+        List<Long> trackIds = new ArrayList<>();
+        for (JsonNode item : playlist.path("trackIds")) {
+            if (item.path("id").canConvertToLong()) trackIds.add(item.path("id").asLong());
+            if (trackIds.size() >= MAX_PLAYLIST_TRACKS) break;
+        }
+        Map<Long, JsonNode> details = trackIds.isEmpty() ? Map.of() : fetchSongDetails(trackIds);
+        Map<Long, JsonNode> playlistTracks = new LinkedHashMap<>();
+        for (JsonNode song : playlist.path("tracks")) {
+            if (song.path("id").canConvertToLong()) playlistTracks.put(song.path("id").asLong(), song);
+        }
+        if (trackIds.isEmpty()) trackIds.addAll(playlistTracks.keySet().stream().limit(MAX_PLAYLIST_TRACKS).toList());
+        for (Long trackId : trackIds) {
+            JsonNode song = details.get(trackId);
+            if (song == null) song = playlistTracks.get(trackId);
+            if (song == null) continue;
+            JsonNode artists = song.path("ar").isArray() ? song.path("ar") : song.path("artists");
+            JsonNode album = song.path("al").isObject() ? song.path("al") : song.path("album");
+            long durationMs = song.path("dt").asLong(song.path("duration").asLong(0));
+            tracks.add(chartTrack("wy", String.valueOf(trackId),
+                    song.path("name").asText("未命名歌曲"),
+                    joinArtists(artists),
+                    album.path("name").asText(""),
+                    album.path("picUrl").asText(""),
+                    durationMs / 1000,
+                    song.path("fee").asInt(0),
+                    "https://music.163.com/#/song?id=" + trackId));
+        }
+        Map<String, Object> detail = playlistDetailData("wy", id,
+                playlist.path("name").asText("未命名歌单"),
+                playlist.path("coverImgUrl").asText(""),
+                playlist.path("creator").path("nickname").asText("网易云音乐"),
+                playlist.path("description").asText(""),
+                playlist.path("trackCount").asInt(tracks.size()),
+                playlist.path("playCount").asLong(0),
+                "https://music.163.com/#/playlist?id=" + id,
+                tracks);
+        return detail;
+    }
+
+    private Map<String, Object> playlistDetailQq(String id) throws Exception {
+        JsonNode dir = null;
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        // QQ 接口单页最多返回 30 首，按 song_begin 继续翻页，直到取满 100 首。
+        for (int begin = 0; begin < MAX_PLAYLIST_TRACKS; begin += 30) {
+            ObjectNode payload = objectMapper.createObjectNode();
+            ObjectNode req = payload.putObject("req_0");
+            req.put("module", "music.srfDissInfo.aiDissInfo");
+            req.put("method", "uniform_get_Dissinfo");
+            ObjectNode param = req.putObject("param");
+            param.put("disstid", Long.parseLong(id));
+            param.put("enc_host_uin", "");
+            param.put("tag", 1);
+            param.put("userinfo", 1);
+            param.put("song_begin", begin);
+            param.put("song_num", 30);
+            String url = "https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data="
+                    + URLEncoder.encode(objectMapper.writeValueAsString(payload), StandardCharsets.UTF_8);
+            JsonNode root = getJsonRaw(url, "https://y.qq.com/");
+            JsonNode data = root.path("req_0").path("data");
+            if (!data.path("dirinfo").isObject()) throw new IOException("QQ 歌单不存在");
+            if (dir == null) dir = data.path("dirinfo");
+            JsonNode songList = data.path("songlist");
+            if (!songList.isArray() || songList.isEmpty()) break;
+            for (JsonNode song : songList) {
+                if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+                String songId = song.path("mid").asText("").trim();
+                if (songId.isBlank()) continue;
+                String albumMid = song.path("album").path("mid").asText("");
+                String cover = albumMid.isBlank() ? "" : "https://y.gtimg.cn/music/photo_new/T002R300x300M000" + albumMid + ".jpg";
+                int fee = song.path("pay").isObject() ? song.path("pay").path("payplay").asInt(0) : 0;
+                tracks.add(chartTrack("tx", songId,
+                        song.path("name").asText("未命名歌曲"),
+                        joinArtists(song.path("singer")),
+                        song.path("album").path("name").asText(""),
+                        cover,
+                        song.path("interval").asLong(0),
+                        fee,
+                        "https://y.qq.com/n/ryqq/songDetail/" + songId));
+            }
+            if (songList.size() < 30) break;
+        }
+        if (dir == null) throw new IOException("QQ 歌单不存在");
+        return playlistDetailData("tx", id,
+                dir.path("title").asText("未命名歌单"),
+                dir.path("picurl").asText(""),
+                dir.path("creator").path("nick").asText(dir.path("host_nick").asText("QQ 音乐")),
+                dir.path("desc").asText(""),
+                dir.path("songnum").asInt(tracks.size()),
+                dir.path("listennum").asLong(0),
+                "https://y.qq.com/n/ryqq/playlist/" + id,
+                tracks);
+    }
+
+    private Map<String, Object> playlistDetailKugou(String id) throws Exception {
+        List<Map<String, Object>> metaItems;
+        try {
+            metaItems = playlistsKugou(20);
+        } catch (Exception e) {
+            metaItems = List.of();
+        }
+        Map<String, Object> meta = findPlaylist(metaItems, id);
+        String url = "https://mobiles.kugou.com/api/v3/special/song?specialid=" + id
+                + "&page=1&pagesize=" + MAX_PLAYLIST_TRACKS + "&plat=0&version=8000";
+        JsonNode root = getJsonRaw(url, "https://www.kugou.com/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : root.path("data").path("info")) {
+            if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+            String hash = song.path("hash").asText("").trim();
+            if (hash.isBlank()) continue;
+            String filename = song.path("filename").asText("").trim();
+            String title = song.path("remark").asText("").trim();
+            String artist = "未知歌手";
+            int dash = filename.indexOf(" - ");
+            if (dash > 0) {
+                artist = filename.substring(0, dash).trim();
+                if (title.isBlank()) title = filename.substring(dash + 3).trim();
+            } else if (title.isBlank()) {
+                title = filename;
+            }
+            if (title.isBlank()) title = "未命名歌曲";
+            int fee = song.path("pay_type").asInt(0) > 0 ? 1 : 0;
+            tracks.add(chartTrack("kg", hash, title, artist, "", "",
+                    song.path("duration").asLong(0), fee,
+                    "https://www.kugou.com/song/#hash=" + hash));
+        }
+        String pageUrl = "https://www.kugou.com/yy/special/single/" + id + ".html";
+        return playlistDetailData("kg", id,
+                meta == null ? "酷狗歌单" : String.valueOf(meta.getOrDefault("title", "酷狗歌单")),
+                meta == null ? "" : String.valueOf(meta.getOrDefault("cover", "")),
+                "酷狗音乐",
+                "",
+                meta == null ? tracks.size() : ((Number) meta.getOrDefault("trackCount", tracks.size())).intValue(),
+                meta == null ? 0L : ((Number) meta.getOrDefault("playCount", 0L)).longValue(),
+                pageUrl, tracks);
+    }
+
+    private Map<String, Object> playlistDetailKuwo(String id) throws Exception {
+        String url = "https://wapi.kuwo.cn/api/www/playlist/playListInfo?pid=" + id + "&pn=1&rn="
+                + MAX_PLAYLIST_TRACKS + "&httpsStatus=1";
+        JsonNode root = getJsonRaw(url, "https://www.kuwo.cn/");
+        JsonNode data = root.path("data");
+        JsonNode musicList = data.path("musicList");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : musicList) {
+            if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+            String rawId = song.path("musicrid").asText("").trim();
+            if (rawId.isBlank()) continue;
+            String songId = rawId.replaceFirst("^MUSIC_", "");
+            String cover = song.path("albumpic").asText("");
+            tracks.add(chartTrack("kw", songId,
+                    cleanKuwoText(song.path("name").asText("未命名歌曲")),
+                    cleanKuwoText(song.path("artist").asText("未知歌手")),
+                    cleanKuwoText(song.path("album").asText("")),
+                    cover,
+                    song.path("duration").asLong(0),
+                    song.path("isListenFee").asInt(0) > 0 ? 1 : 0,
+                    "https://www.kuwo.cn/play_detail/" + songId));
+        }
+        String cover = data.path("img500").asText("");
+        if (cover.isBlank()) cover = data.path("img").asText("");
+        return playlistDetailData("kw", id,
+                data.path("name").asText("未命名歌单"),
+                cover,
+                data.path("userName").asText(data.path("uname").asText("酷我音乐")),
+                data.path("tag").asText(""),
+                data.path("total").asInt(tracks.size()),
+                data.path("listencnt").asLong(0),
+                "https://www.kuwo.cn/playlist_detail/" + id,
+                tracks);
+    }
+
+    private Map<String, Object> playlistDetailMigu(String id) throws Exception {
+        JsonNode metaRoot = getJsonRaw("https://c.musicapp.migu.cn/MIGUM3.0/resource/playlist/v2.0?playlistId=" + id,
+                "https://music.migu.cn/");
+        JsonNode meta = metaRoot.path("data");
+        JsonNode songsRoot = getJsonRaw("https://app.c.nf.migu.cn/MIGUM3.0/resource/playlist/song/v2.0?pageNo=1&pageSize="
+                + MAX_PLAYLIST_TRACKS + "&playlistId=" + id, "https://music.migu.cn/");
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (JsonNode song : songsRoot.path("data").path("songList")) {
+            if (tracks.size() >= MAX_PLAYLIST_TRACKS) break;
+            String songId = song.path("copyrightId").asText("").trim();
+            if (songId.isBlank()) songId = song.path("contentId").asText("").trim();
+            if (songId.isBlank()) continue;
+            String cover = song.path("img1").asText("");
+            if (cover.startsWith("/")) cover = "https://d.musicapp.migu.cn" + cover;
+            int fee = 0;
+            for (JsonNode tag : song.path("showTags")) {
+                String value = tag.asText("");
+                if (value.contains("vip")) { fee = 1; break; }
+            }
+            tracks.add(chartTrack("mg", songId,
+                    song.path("songName").asText("未命名歌曲"),
+                    joinArtists(song.path("singerList")),
+                    song.path("album").asText(""),
+                    cover,
+                    song.path("duration").asLong(0),
+                    fee,
+                    "https://music.migu.cn/v3/music/song/" + songId));
+        }
+        String cover = meta.path("imgItem").path("img").asText("");
+        if (cover.isBlank()) cover = meta.path("originalImgUrl").asText("");
+        return playlistDetailData("mg", id,
+                meta.path("title").asText("未命名歌单"),
+                cover,
+                meta.path("ownerName").asText("咪咕音乐"),
+                meta.path("summary").asText(""),
+                meta.path("musicNum").asInt(tracks.size()),
+                meta.path("opNumItem").path("playNum").asLong(0),
+                "https://music.migu.cn/v5/#/playlist?playlistId=" + id,
+                tracks);
+    }
+
+    private Map<String, Object> playlistDetailData(String platform, String id, String title, String cover,
+                                                    String creator, String description, int trackCount,
+                                                    long playCount, String pageUrl,
+                                                    List<Map<String, Object>> tracks) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("id", id);
+        detail.put("title", title == null || title.isBlank() ? "未命名歌单" : title.trim());
+        detail.put("cover", secureUrl(cover));
+        detail.put("creator", creator == null ? "" : creator.trim());
+        detail.put("description", description == null ? "" : description.trim());
+        detail.put("trackCount", Math.max(trackCount, tracks.size()));
+        detail.put("playCount", Math.max(0, playCount));
+        detail.put("pageUrl", pageUrl);
+        detail.put("tracks", tracks);
+        return detail;
+    }
+
+    private Map<String, Object> findPlaylist(List<Map<String, Object>> items, String id) {
+        for (Map<String, Object> item : items) {
+            if (String.valueOf(item.get("id")).equals(id)) return item;
+        }
+        return null;
     }
 
     private List<Map<String, Object>> chartNetease(int size) throws Exception {
