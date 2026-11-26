@@ -2817,8 +2817,9 @@ onBeforeUnmount(() => {
 .sm-volume-wrap { position: relative; display: flex; align-items: center; }
 .sm-volume-pop {
   position: absolute;
-  right: -3px;
+  right: 50%;
   bottom: calc(100% + 7px);
+  transform: translateX(50%);
   z-index: 30;
   display: grid;
   justify-items: center;
