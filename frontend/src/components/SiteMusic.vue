@@ -38,6 +38,8 @@ const duration = ref(0)
 const mode = ref('loop')
 const volume = ref(0.8)
 const muted = ref(false)
+const volumePopoverOpen = ref(false)
+const volumeWrap = ref(null)
 const searchKeyword = ref('')
 const searchResults = ref([])
 const searchLoading = ref(false)
@@ -166,7 +168,7 @@ const sourceFeatureLabel = computed(() => {
   if (hasPlaylists.value) features.push('歌单')
   if (hasRanking.value) features.push('排行榜')
   if (hasSearch.value) features.push('搜索')
-  features.push('队列', '音量')
+  features.push('播放列表', '音量')
   return features.join(' / ')
 })
 const activeChartTracks = computed(() => Array.isArray(playlistDetail.value?.tracks) ? playlistDetail.value.tracks : [])
@@ -258,7 +260,9 @@ const progressPercent = computed(() => currentDuration.value > 0
 const volumePercent = computed(() => Math.round((muted.value ? 0 : volume.value) * 100))
 const modeMeta = computed(() => MODES.find((item) => item.id === mode.value) || MODES[0])
 const searchHintVisible = computed(() => !searchKeyword.value.trim() && !searchResults.value.length && !searchLoading.value)
-const quietEmpty = computed(() => queue.value.length === 0 && !currentTrack.value)
+const playedQueue = computed(() => queue.value
+  .map((track, index) => ({ track, index }))
+  .filter((item) => item.track.played))
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds <= 0) return '00:00'
@@ -289,6 +293,7 @@ function loadPersistedState() {
           duration: Number(track.duration) || 0,
           fee: Number(track.fee) || 0,
           pageUrl: track.pageUrl || '',
+          played: Boolean(track.played),
           originSource: track.originSource || '',
           originId: track.originId || '',
           fallbackOriginalSource: track.fallbackOriginalSource || '',
@@ -304,6 +309,8 @@ function loadPersistedState() {
     currentIndex.value = queue.value.length
       ? (Number.isInteger(index) && index >= 0 && index < queue.value.length ? index : 0)
       : -1
+    const restored = queue.value[currentIndex.value]
+    if (restored) restored.played = true
   } catch (e) {
     /* 本地状态损坏时忽略即可 */
   }
@@ -326,6 +333,7 @@ function persistState() {
         duration: track.duration,
         fee: track.fee,
         pageUrl: track.pageUrl,
+        played: Boolean(track.played),
         originSource: track.originSource || '',
         originId: track.originId || '',
         fallbackOriginalSource: track.fallbackOriginalSource || '',
@@ -339,6 +347,7 @@ function persistState() {
 
 watch(queue, persistState, { deep: true })
 watch([mode, volume, muted], persistState)
+watch(view, () => { volumePopoverOpen.value = false })
 watch(volume, (value) => {
   if (audio.value) audio.value.volume = Math.min(1, Math.max(0, value))
 })
@@ -491,7 +500,7 @@ function computePanelPlacement() {
     }
     return
   }
-  const panelWidth = Math.min(392, viewportWidth - margin * 2)
+  const panelWidth = Math.min(364, viewportWidth - margin * 2)
   const leftSpace = Math.max(0, rect.left - gap - margin)
   const rightSpace = Math.max(0, viewportWidth - rect.right - gap - margin)
   let horizontal = 'left'
@@ -506,7 +515,7 @@ function computePanelPlacement() {
   if (vertical === 'above' && topSpace < 320 && bottomSpace > topSpace) vertical = 'below'
   if (vertical === 'below' && bottomSpace < 320 && topSpace > bottomSpace) vertical = 'above'
   const availableHeight = vertical === 'above' ? topSpace : bottomSpace
-  const maxHeight = Math.min(690, Math.max(240, availableHeight))
+  const maxHeight = Math.min(640, Math.max(240, availableHeight))
   panelPlacement.value = {
     compact: false,
     horizontal,
@@ -543,6 +552,7 @@ function openPanel() {
 function closePanel() {
   panelOpen.value = false
   platformMenuOpen.value = false
+  volumePopoverOpen.value = false
   if (fabFocusTimer) clearTimeout(fabFocusTimer)
   fabFocusTimer = setTimeout(() => fab.value?.focus({ preventScroll: true }), 190)
 }
@@ -872,7 +882,8 @@ function addTrackToQueue(track) {
     source,
     url: source === 'local' ? String(track.url || '') : '',
     urlError: '',
-    urlLoading: false
+    urlLoading: false,
+    played: false
   })
   return queue.value.length - 1
 }
@@ -924,6 +935,14 @@ function toggleSearchTrack(track) {
     return
   }
   selectSearchResult(track)
+}
+
+function toggleQueueItem(index) {
+  if (index === currentIndex.value) {
+    togglePlayback()
+    return
+  }
+  playIndex(index, true)
 }
 
 function selectChartTrack(track) {
@@ -1139,6 +1158,7 @@ function selectSearchResult(track) {
 function playIndex(index, autoplay = true) {
   const track = queue.value[index]
   if (!track) return
+  track.played = true
   currentIndex.value = index
   progress.value = 0
   duration.value = track.duration || 0
@@ -1546,6 +1566,10 @@ function onAudioError() {
 
 function onKeydown(event) {
   if (event.key !== 'Escape') return
+  if (volumePopoverOpen.value) {
+    volumePopoverOpen.value = false
+    return
+  }
   if (platformMenuOpen.value) {
     platformMenuOpen.value = false
     return
@@ -1554,6 +1578,9 @@ function onKeydown(event) {
 }
 
 function onDocumentClick(event) {
+  if (volumePopoverOpen.value && volumeWrap.value && !volumeWrap.value.contains(event.target)) {
+    volumePopoverOpen.value = false
+  }
   if (!platformMenuOpen.value) return
   if (platformMenu.value?.contains(event.target)) return
   platformMenuOpen.value = false
@@ -1678,7 +1705,7 @@ onBeforeUnmount(() => {
           <button v-if="hasCharts" type="button" :class="{ on: view === 'charts' || view === 'playlist' }" @click="showChartsView">歌单</button>
           <button v-if="hasRanking" type="button" :class="{ on: view === 'ranking' }" @click="showRankingView">排行榜</button>
           <button type="button" :class="{ on: view === 'queue' }" @click="view = 'queue'">
-            播放列表 <em>{{ queue.length }}</em>
+            播放列表 <em>{{ playedQueue.length }}</em>
           </button>
           <button v-if="hasSearch" type="button" :class="{ on: view === 'search' }" @click="showSearchView">搜索</button>
         </nav>
@@ -1948,116 +1975,51 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-else-if="view === 'queue'" class="sm-body sm-queue-body">
-          <div v-if="currentTrack" class="sm-now">
-            <div class="sm-now-cover">
-              <img v-if="currentTrack.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
-              <span v-if="!currentTrack.cover">{{ coverLetter(currentTrack) }}</span>
-              <i v-if="playing" class="sm-now-playing" aria-hidden="true"><b></b><b></b><b></b></i>
-            </div>
-            <div class="sm-now-copy">
-              <strong>{{ currentTrack.title }}</strong>
-              <span>{{ currentTrack.artist }}<template v-if="currentTrack.album"> · {{ currentTrack.album }}</template></span>
-              <small v-if="currentTrack.urlLoading">正在获取播放地址…</small>
-              <small v-else-if="currentTrack.urlError" class="danger">{{ currentTrack.urlError }}</small>
-            </div>
-            <span v-if="currentTrack.fee > 0" class="sm-vip">VIP</span>
-          </div>
-
-          <div v-if="currentTrack" class="sm-progress">
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="0.1"
-              :value="progressPercent"
-              aria-label="播放进度"
-              :style="{ '--sm-progress': progressPercent + '%' }"
-              @input="seek"
-            />
-            <div class="sm-time-row">
-              <span>{{ formatTime(progress) }}</span>
-              <span>{{ formatTime(currentDuration) }}</span>
-            </div>
-          </div>
-
-          <div class="sm-controls">
-            <button type="button" class="sm-mode" :aria-label="'播放模式：' + modeMeta.label" :title="modeMeta.hint" @click="cycleMode">
-              <svg v-if="mode === 'shuffle'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h3l4.5 6L9 18H6" /><path d="m18 3 3 3-3 3M3 18h3l2-2.7M14 9l4 9h3M18 21l3-3" /></svg>
-              <svg v-else-if="mode === 'single'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M17 2l3 3-3 3M20 5H8a5 5 0 0 0-5 5v1M7 22l-3-3 3-3M4 19h12a5 5 0 0 0 5-5v-1" /><path d="M12 10v4M10.7 11.1 12 10l1.3 1.1" /></svg>
-              <svg v-else-if="mode === 'sequence'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h14M14 2l4 4-4 4M20 18H6M10 14l-4 4 4 4" /></svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M17 2l3 3-3 3M20 5H8a5 5 0 0 0-5 5v1M7 22l-3-3 3-3M4 19h12a5 5 0 0 0 5-5v-1" /></svg>
-              <span>{{ modeMeta.label }}</span>
-            </button>
-            <button type="button" class="sm-step" aria-label="上一首" @click="step(-1)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 5v14M18 5 9 12l9 7V5Z" /></svg>
-            </button>
-            <button type="button" class="sm-play" :aria-label="playing ? '暂停' : '播放'" :disabled="loadingTrack" @click="togglePlayback">
-              <span v-if="loadingTrack" class="sm-spinner" aria-hidden="true"></span>
-              <svg v-else-if="playing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M7 5v14M17 5v14" /></svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="m8 5 11 7-11 7V5Z" /></svg>
-            </button>
-            <button type="button" class="sm-step" aria-label="下一首" @click="step(1)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 5v14M6 5l9 7-9 7V5Z" /></svg>
-            </button>
-            <button type="button" class="sm-volume-toggle" :aria-label="muted ? '取消静音' : '静音'" @click="toggleMute">
-              <svg v-if="muted || volume === 0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="m17 9 4 4M21 9l-4 4" /></svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13" /></svg>
-            </button>
-          </div>
-
-          <div class="sm-volume">
-            <span>{{ muted ? '已静音' : '音量' }}</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              :value="volumePercent"
-              aria-label="音量"
-              :style="{ '--sm-volume': volumePercent + '%' }"
-              @input="setVolume"
-            />
-            <strong>{{ volumePercent }}</strong>
-          </div>
-
-          <div class="sm-list-head">
+          <div class="sm-list-head sm-queue-head">
             <div>
-              <strong>播放队列</strong>
-              <span>{{ queue.length }} 首</span>
+              <span class="sm-chart-kicker">PLAYED</span>
+              <strong>播放列表</strong>
+              <span>{{ playedQueue.length }} 首</span>
             </div>
             <button v-if="queue.length" type="button" class="sm-text-btn" @click="clearQueue">清空</button>
           </div>
 
-          <div class="sm-track-list" role="list" aria-label="播放队列">
+          <div v-if="playedQueue.length" class="sm-track-list" role="list" aria-label="播放列表">
             <div
-              v-for="(track, index) in queue"
-              :key="track.id + '-' + index"
+              v-for="item in playedQueue"
+              :key="item.track.id + '-' + item.index"
               class="sm-track"
-              :class="{ active: index === currentIndex }"
+              :class="{ active: item.index === currentIndex }"
               role="listitem"
             >
-              <button type="button" class="sm-track-main" @click="playIndex(index, true)">
-                <span class="sm-track-cover" :class="{ image: track.cover }">
-                  <img v-if="track.cover" :src="track.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
-                  <template v-else>{{ coverLetter(track) }}</template>
-                  <i v-if="index === currentIndex && playing" class="sm-mini-eq" aria-hidden="true"><b></b><b></b><b></b></i>
+              <button type="button" class="sm-track-main" @click="toggleQueueItem(item.index)">
+                <span class="sm-track-cover" :class="{ image: item.track.cover }">
+                  <img v-if="item.track.cover" :src="item.track.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
+                  <template v-else>{{ coverLetter(item.track) }}</template>
+                  <i v-if="item.index === currentIndex && playing" class="sm-mini-eq" aria-hidden="true"><b></b><b></b><b></b></i>
                 </span>
                 <span class="sm-track-copy">
-                  <strong>{{ track.title }}</strong>
-                  <small>{{ track.artist }}<template v-if="track.urlError"> · 播放失败</template></small>
+                  <strong>{{ item.track.title }}</strong>
+                  <small>{{ item.track.artist }}<template v-if="item.track.urlError"> · 播放失败</template></small>
                 </span>
-                <span class="sm-track-duration">{{ track.duration ? formatTime(track.duration) : '—' }}</span>
+                <span class="sm-track-duration">{{ item.track.duration ? formatTime(item.track.duration) : '—' }}</span>
               </button>
-              <button type="button" class="sm-track-remove" aria-label="从队列移除" @click="removeTrack(index)">
+              <button type="button" class="sm-track-remove" aria-label="从播放列表移除" @click="removeTrack(item.index)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m7 7 10 10M17 7 7 17" /></svg>
               </button>
             </div>
           </div>
 
-          <div v-if="quietEmpty" class="sm-empty">
+          <div v-else-if="queue.length" class="sm-empty sm-queue-empty">
             <span class="sm-empty-orb">♪</span>
-            <strong>还没有播放队列</strong>
-            <p>{{ hasSource ? '搜索一首歌，或者从搜索结果里挑一首开始。' : '从本地音乐里挑一首开始播放。' }}</p>
+            <strong>还没有开始播放</strong>
+            <p>从歌单、排行榜或搜索结果里选一首歌，播放过的曲目才会出现在这里。</p>
+          </div>
+
+          <div v-else class="sm-empty">
+            <span class="sm-empty-orb">♪</span>
+            <strong>还没有播放音乐</strong>
+            <p>{{ hasSource ? '搜索一首歌，或者从歌单里挑一首开始。' : '从本地音乐里挑一首开始播放。' }}</p>
             <button type="button" class="sm-empty-action" @click="openSearchOrLocal">{{ hasSource ? '去搜索' : '浏览本地音乐' }}</button>
           </div>
         </div>
@@ -2135,10 +2097,96 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <footer class="sm-foot">
+        <div v-if="currentTrack" class="sm-nowbar">
+          <div class="sm-nowbar-progress">
+            <span>{{ formatTime(progress) }}</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="0.1"
+              :value="progressPercent"
+              aria-label="播放进度"
+              :style="{ '--sm-progress': progressPercent + '%' }"
+              @input="seek"
+            />
+            <span>{{ formatTime(currentDuration) }}</span>
+          </div>
+
+          <div class="sm-nowbar-row">
+            <button type="button" class="sm-nowbar-track" aria-label="查看播放列表" @click="view = 'queue'">
+              <span class="sm-nowbar-cover">
+                <img v-if="currentTrack.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" />
+                <span v-else>{{ coverLetter(currentTrack) }}</span>
+                <i v-if="playing" class="sm-mini-eq" aria-hidden="true"><b></b><b></b><b></b></i>
+              </span>
+              <span class="sm-nowbar-copy">
+                <strong>{{ currentTrack.title }}</strong>
+                <small>
+                  <template v-if="currentTrack.urlLoading">正在获取播放地址…</template>
+                  <template v-else-if="currentTrack.urlError">播放失败</template>
+                  <template v-else>{{ currentTrack.artist }}<template v-if="currentTrack.album"> · {{ currentTrack.album }}</template></template>
+                </small>
+              </span>
+            </button>
+
+            <div class="sm-nowbar-actions">
+              <button type="button" class="sm-dock-mode" :aria-label="'播放模式：' + modeMeta.label" :title="modeMeta.hint" @click="cycleMode">
+                <svg v-if="mode === 'shuffle'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h3l4.5 6L9 18H6" /><path d="m18 3 3 3-3 3M3 18h3l2-2.7M14 9l4 9h3M18 21l3-3" /></svg>
+                <svg v-else-if="mode === 'single'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M17 2l3 3-3 3M20 5H8a5 5 0 0 0-5 5v1M7 22l-3-3 3-3M4 19h12a5 5 0 0 0 5-5v-1" /><path d="M12 10v4M10.7 11.1 12 10l1.3 1.1" /></svg>
+                <svg v-else-if="mode === 'sequence'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h14M14 2l4 4-4 4M20 18H6M10 14l-4 4 4 4" /></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M17 2l3 3-3 3M20 5H8a5 5 0 0 0-5 5v1M7 22l-3-3 3-3M4 19h12a5 5 0 0 0 5-5v-1" /></svg>
+              </button>
+              <button type="button" class="sm-step" aria-label="上一首" @click="step(-1)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 5v14M18 5 9 12l9 7V5Z" /></svg>
+              </button>
+              <button type="button" class="sm-play" :aria-label="playing ? '暂停' : '播放'" :disabled="loadingTrack" @click="togglePlayback">
+                <span v-if="loadingTrack" class="sm-spinner" aria-hidden="true"></span>
+                <svg v-else-if="playing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M7 5v14M17 5v14" /></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="m8 5 11 7-11 7V5Z" /></svg>
+              </button>
+              <button type="button" class="sm-step" aria-label="下一首" @click="step(1)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 5v14M6 5l9 7-9 7V5Z" /></svg>
+              </button>
+              <div ref="volumeWrap" class="sm-volume-wrap">
+                <button
+                  type="button"
+                  class="sm-volume-toggle"
+                  :aria-label="volumePopoverOpen ? '收起音量条' : '调节音量'"
+                  :title="volumePopoverOpen ? '收起音量条' : '调节音量'"
+                  :aria-expanded="volumePopoverOpen"
+                  @click.stop="volumePopoverOpen = !volumePopoverOpen"
+                >
+                  <svg v-if="muted || volume === 0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="m17 9 4 4M21 9l-4 4" /></svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+                </button>
+                <div v-if="volumePopoverOpen" class="sm-volume-pop" role="group" aria-label="音量调节" @click.stop>
+                  <strong>{{ volumePercent }}%</strong>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    orient="vertical"
+                    :value="volumePercent"
+                    aria-label="音量"
+                    :aria-valuetext="volumePercent + '%'"
+                    :style="{ '--sm-volume': volumePercent + '%' }"
+                    @input="setVolume"
+                  />
+                  <button type="button" class="sm-volume-mute" :aria-label="muted ? '取消静音' : '静音'" :title="muted ? '取消静音' : '静音'" @click="toggleMute">
+                    <svg v-if="muted || volume === 0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="m17 9 4 4M21 9l-4 4" /></svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9h4l5-4v14l-5-4H4V9Z" /><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer v-if="!currentTrack" class="sm-foot">
           <span>{{ footerSourceLabel }}</span>
-          <span v-if="currentTrack">{{ playing ? '正在播放' : '已暂停' }} · {{ currentTrack.title }}</span>
-          <span v-else>{{ sourceActive ? sourceFeatureLabel : '本地音乐 / 队列 / 音量' }}</span>
+          <span>{{ sourceActive ? sourceFeatureLabel : '本地音乐 / 播放列表 / 音量' }}</span>
         </footer>
       </aside>
     </transition>
@@ -2186,15 +2234,15 @@ onBeforeUnmount(() => {
 .sm-panel {
   position: fixed;
   right: 22px;
-  bottom: 90px;
+  bottom: 84px;
   display: flex;
   flex-direction: column;
-  width: 392px;
-  max-width: calc(100vw - 32px);
-  max-height: min(82dvh, 690px);
+  width: 364px;
+  max-width: calc(100vw - 24px);
+  max-height: min(80dvh, 640px);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
-  border-radius: 22px;
+  border-radius: 19px;
   background: color-mix(in srgb, var(--paper) 94%, transparent);
   box-shadow: 0 28px 80px rgba(14, 35, 30, .26), inset 0 1px 0 rgba(255, 255, 255, .7);
   backdrop-filter: blur(26px);
@@ -2204,8 +2252,8 @@ onBeforeUnmount(() => {
 .sm-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 15px 12px;
+  gap: 8px;
+  padding: 11px 13px 9px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
   user-select: none;
 }
@@ -2213,35 +2261,35 @@ onBeforeUnmount(() => {
 .sm-brand {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
   flex: 1;
 }
 .sm-brand-mark {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 9px;
   background: linear-gradient(145deg, var(--accent), color-mix(in srgb, var(--accent) 58%, #8d6bff));
   color: #fff;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
   box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 .sm-brand-mark svg { width: 15px; height: 15px; opacity: .92; }
-.sm-brand > div { display: grid; gap: 2px; min-width: 0; }
-.sm-brand strong { color: var(--ink); font-size: 14px; letter-spacing: .01em; }
-.sm-brand small { overflow: hidden; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-brand > div { display: grid; gap: 1px; min-width: 0; }
+.sm-brand strong { color: var(--ink); font-size: 13px; letter-spacing: .01em; }
+.sm-brand small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .sm-menu { position: relative; flex: 0 1 auto; min-width: 0; }
 .sm-platform-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 132px;
+  max-width: 124px;
   min-width: 0;
-  padding: 6px 9px;
+  padding: 5px 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 7%, var(--paper));
@@ -2405,25 +2453,25 @@ onBeforeUnmount(() => {
 .sm-tabs {
   display: flex;
   gap: 2px;
-  margin: 10px 15px 0;
+  margin: 8px 13px 0;
   padding: 3px;
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: 10px;
+  border-radius: 9px;
   background: color-mix(in srgb, var(--accent) 4%, var(--paper));
 }
 .sm-tabs button {
   flex: 1;
-  padding: 7px 9px;
+  padding: 6px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
 }
 .sm-tabs button.on { background: var(--paper); color: var(--ink); box-shadow: 0 3px 10px rgba(17, 24, 39, .06); }
-.sm-tabs em { color: var(--accent-ink); font-size: 9px; font-style: normal; }
+.sm-tabs em { color: var(--accent-ink); font-size: 8.5px; font-style: normal; }
 
 .sm-chart-body { display: flex; flex-direction: column; gap: 9px; }
 .sm-ranking-body { display: flex; flex-direction: column; gap: 9px; }
@@ -2635,9 +2683,9 @@ onBeforeUnmount(() => {
 .sm-chart-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
-  padding: 6px 4px;
+  padding: 5px 4px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -2649,11 +2697,11 @@ onBeforeUnmount(() => {
 .sm-chart-row:hover .sm-chart-play { background: var(--accent); border-color: var(--accent); color: #fff; }
 .sm-chart-rank { width: 18px; flex: 0 0 18px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: center; }
 .sm-chart-rank.top { color: var(--accent-ink); }
-.sm-chart-cover { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; overflow: hidden; border-radius: 9px; background: color-mix(in srgb, var(--accent) 12%, var(--paper)); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
+.sm-chart-cover { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--paper)); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
 .sm-chart-cover.image { background: var(--paper); }
 .sm-chart-cover img { width: 100%; height: 100%; object-fit: cover; }
 .sm-chart-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
-.sm-chart-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sm-chart-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .sm-chart-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .sm-chart-duration { flex: 0 0 auto; color: var(--muted); font-size: 8.5px; font-variant-numeric: tabular-nums; }
 .sm-chart-play { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
@@ -2668,10 +2716,10 @@ onBeforeUnmount(() => {
 .sm-local-head strong { overflow: hidden; color: var(--ink); font-size: 16px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .sm-local-head small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
 .sm-local-list { display: flex; flex-direction: column; gap: 2px; padding-bottom: 3px; }
-.sm-local-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 5px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.sm-local-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 5px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .sm-local-row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .sm-local-row:hover .sm-local-play { border-color: var(--accent); background: var(--accent); color: #fff; }
-.sm-local-cover { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 18%, var(--paper)), color-mix(in srgb, #8d6bff 12%, var(--paper))); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
+.sm-local-cover { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 18%, var(--paper)), color-mix(in srgb, #8d6bff 12%, var(--paper))); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
 .sm-local-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .sm-local-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .sm-local-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -2680,7 +2728,7 @@ onBeforeUnmount(() => {
 .sm-local-play svg { width: 13px; height: 13px; }
 .sm-local-empty { padding-top: 18px; }
 
-.sm-body { min-height: 0; flex: 1; overflow-y: auto; padding: 12px 15px 4px; scrollbar-width: thin; }
+.sm-body { min-height: 0; flex: 1; overflow-y: auto; padding: 10px 13px 4px; scrollbar-width: thin; }
 .sm-queue-body { display: flex; flex-direction: column; gap: 11px; }
 .sm-now { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 11px; border: 1px solid color-mix(in srgb, var(--accent) 13%, var(--line)); border-radius: 13px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, var(--paper)), var(--paper)); }
 .sm-now-cover { position: relative; display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 54px; overflow: hidden; border-radius: 12px; background: linear-gradient(145deg, var(--accent), #8d6bff); color: #fff; font-size: 20px; font-weight: 800; box-shadow: 0 7px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
@@ -2730,7 +2778,81 @@ onBeforeUnmount(() => {
 .sm-volume input::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--accent); }
 .sm-volume strong { min-width: 22px; color: var(--ink-soft); font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; }
 
+.sm-nowbar {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  padding: 6px 13px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
+  background: color-mix(in srgb, var(--paper) 95%, transparent);
+  box-shadow: 0 -10px 24px color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.sm-nowbar-progress { display: flex; align-items: center; gap: 6px; }
+.sm-nowbar-progress span { flex: 0 0 30px; color: var(--muted); font-size: 7.5px; font-variant-numeric: tabular-nums; }
+.sm-nowbar-progress span:last-child { text-align: right; }
+.sm-nowbar-progress input { flex: 1; height: 13px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
+.sm-nowbar-progress input::-webkit-slider-runnable-track { height: 3px; border-radius: 999px; background: linear-gradient(90deg, var(--accent) var(--sm-progress), color-mix(in srgb, var(--muted) 16%, var(--paper)) var(--sm-progress)); }
+.sm-nowbar-progress input::-moz-range-track { height: 3px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 16%, var(--paper)); }
+.sm-nowbar-progress input::-webkit-slider-thumb { width: 10px; height: 10px; margin-top: -3.5px; appearance: none; border: 1.5px solid var(--paper); border-radius: 50%; background: var(--accent); }
+.sm-nowbar-progress input::-moz-range-thumb { width: 9px; height: 9px; border: 1.5px solid var(--paper); border-radius: 50%; background: var(--accent); }
+.sm-nowbar-row { display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 2px; }
+.sm-nowbar-track { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; padding: 4px 8px 4px 4px; border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line)); border-radius: 999px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--paper)), var(--paper)); color: var(--ink); text-align: left; cursor: pointer; }
+.sm-nowbar-track:hover { border-color: color-mix(in srgb, var(--accent) 32%, var(--line)); }
+.sm-nowbar-cover { position: relative; display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; overflow: hidden; border-radius: 8px; background: linear-gradient(145deg, var(--accent), #8d6bff); color: #fff; font-size: 13px; font-weight: 800; }
+.sm-nowbar-cover img { width: 100%; height: 100%; object-fit: cover; }
+.sm-nowbar-copy { display: grid; gap: 1px; min-width: 0; flex: 1; }
+.sm-nowbar-copy strong { overflow: hidden; color: var(--ink); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-nowbar-copy small { overflow: hidden; color: var(--muted); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-nowbar-actions { display: flex; align-items: center; gap: 0; flex: 0 0 auto; }
+.sm-dock-mode { display: grid; place-items: center; width: 25px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.sm-dock-mode:hover { background: var(--accent-soft); color: var(--ink); }
+.sm-dock-mode svg { width: 14px; height: 14px; }
+.sm-nowbar .sm-step { width: 28px; height: 28px; }
+.sm-nowbar .sm-step svg { width: 15px; height: 15px; }
+.sm-nowbar .sm-play { width: 36px; height: 36px; flex-basis: 36px; box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 24%, transparent); }
+.sm-nowbar .sm-play svg { width: 17px; height: 17px; }
+.sm-nowbar .sm-spinner { width: 14px; height: 14px; border-width: 1.5px; }
+.sm-nowbar .sm-volume-toggle { width: 28px; height: 28px; }
+.sm-nowbar .sm-volume-toggle svg { width: 16px; height: 16px; }
+.sm-volume-wrap { position: relative; display: flex; align-items: center; }
+.sm-volume-pop {
+  position: absolute;
+  right: -3px;
+  bottom: calc(100% + 7px);
+  z-index: 30;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  width: 46px;
+  padding: 8px 7px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 12px 32px rgba(14, 35, 30, .2);
+}
+.sm-volume-pop strong { color: var(--ink-soft); font-size: 8.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sm-volume-pop input {
+  width: 18px;
+  height: 92px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  cursor: pointer;
+}
+.sm-volume-pop input::-webkit-slider-runnable-track { width: 4px; height: 92px; border-radius: 999px; background: linear-gradient(to top, var(--accent) var(--sm-volume), color-mix(in srgb, var(--muted) 16%, var(--paper)) var(--sm-volume)); }
+.sm-volume-pop input::-moz-range-track { width: 4px; height: 92px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 16%, var(--paper)); }
+.sm-volume-pop input::-moz-range-progress { width: 4px; border-radius: 999px; background: var(--accent); }
+.sm-volume-pop input::-webkit-slider-thumb { width: 12px; height: 12px; appearance: none; border: 2px solid var(--paper); border-radius: 50%; background: var(--accent); box-shadow: 0 1px 5px rgba(0, 0, 0, .2); }
+.sm-volume-pop input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid var(--paper); border-radius: 50%; background: var(--accent); }
+.sm-volume-mute { display: grid; place-items: center; width: 23px; height: 23px; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--accent) 7%, var(--paper)); color: var(--muted); cursor: pointer; }
+.sm-volume-mute:hover { color: var(--ink); }
+.sm-volume-mute svg { width: 14px; height: 14px; }
+
 .sm-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; padding: 4px 1px 0; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.sm-queue-head { margin-top: 0; padding-top: 0; border-top: 0; }
 .sm-list-head > div { display: flex; align-items: baseline; gap: 6px; }
 .sm-list-head strong { color: var(--ink); font-size: 11px; }
 .sm-list-head span { color: var(--muted); font-size: 9px; }
@@ -2783,9 +2905,9 @@ onBeforeUnmount(() => {
 .sm-search-error p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .sm-result-list { display: flex; flex-direction: column; gap: 1px; padding-bottom: 2px; }
 .sm-result { border-radius: 9px; }
-.sm-result-main { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 4px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.sm-result-main { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 4px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .sm-result-main:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.sm-result-cover { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--paper)); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
+.sm-result-cover { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--paper)); color: var(--accent-ink); font-size: 13px; font-weight: 700; }
 .sm-result-cover.image { background: var(--paper); }
 .sm-result-cover img { width: 100%; height: 100%; object-fit: cover; }
 .sm-result-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
@@ -2800,7 +2922,7 @@ onBeforeUnmount(() => {
 .sm-result-main:hover .sm-result-add { border-color: var(--accent); background: var(--accent); color: #fff; }
 .sm-result-more { margin: 2px 0 0; color: var(--muted); font-size: 8.5px; text-align: center; }
 
-.sm-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 15px 11px; border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent); color: var(--muted); font-size: 8.5px; }
+.sm-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 13px 8px; border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent); color: var(--muted); font-size: 8px; }
 .sm-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sm-fab-slot { display: flex; align-items: center; justify-content: flex-end; pointer-events: none; }
@@ -2839,16 +2961,19 @@ onBeforeUnmount(() => {
 
 @media (max-width: 920px) {
   .sm-app { right: 12px; bottom: 84px; }
-  .sm-panel { position: fixed; left: 12px; right: 12px; bottom: 12px; width: auto; max-width: none; max-height: calc(100dvh - 24px); border-radius: 20px; }
+  .sm-panel { position: fixed; left: 10px; right: 10px; bottom: 10px; width: auto; max-width: none; max-height: calc(100dvh - 20px); border-radius: 17px; }
 }
 @media (max-width: 520px) {
-  .sm-panel { left: 0; right: 0; bottom: 0; max-height: calc(100dvh - 10px); border-radius: 18px 18px 0 0; }
-  .sm-head { padding: 12px 13px 10px; }
-  .sm-platform-btn { max-width: 108px; font-size: 9.5px; padding: 5px 8px; }
-  .sm-platform-pop { width: 214px; max-height: 430px; }
-.sm-source-pill { max-width: 94px; }
-  .sm-source-meta { margin: 7px 13px 0; }
-  .sm-foot { padding-bottom: calc(11px + env(safe-area-inset-bottom)); }
+  .sm-panel { left: 8px; right: 8px; bottom: 8px; max-height: calc(100dvh - 16px); border-radius: 16px; }
+  .sm-head { padding: 10px 12px 8px; }
+  .sm-platform-btn { max-width: 104px; font-size: 9px; padding: 5px 7px; }
+  .sm-platform-pop { width: 208px; max-height: 430px; }
+  .sm-source-pill { max-width: 94px; }
+  .sm-source-meta { margin: 6px 12px 0; }
+  .sm-tabs { margin: 7px 12px 0; }
+  .sm-body { padding: 9px 12px 3px; }
+  .sm-nowbar { padding: 6px 12px calc(7px + env(safe-area-inset-bottom)); }
+  .sm-foot { padding-bottom: calc(7px + env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab.playing .sm-fab-art, .sm-fab.playing .sm-fab-ring { animation: none; }
