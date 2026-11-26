@@ -1,11 +1,15 @@
 package com.deek.blog.service;
 
+import com.deek.blog.common.BizException;
 import com.deek.blog.entity.SiteConfig;
 import com.deek.blog.repository.SiteConfigRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -13,10 +17,11 @@ import java.util.Set;
 public class SiteConfigService {
 
     private static final Set<String> PUBLIC_KEYS = Set.of(
-            "siteName", "siteDesc", "siteKeywords", "announcement", "announcementEnabled",
+            "siteName", "siteDesc", "siteKeywords", "siteUrl", "announcement", "announcementEnabled",
             "announcementTitle", "announcementLink", "heroTitle", "heroSubtitle",
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
+            "frontNavItems",
             "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
             "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform",
             "musicSourceUrl", "musicSourceName", "musicSourceVersion", "musicSourceDescription",
@@ -32,10 +37,11 @@ public class SiteConfigService {
             "maintenanceEnabled", "readOnlyMode", "maintenanceMessage", "readOnlyMessage");
 
     private static final Set<String> ALLOWED_KEYS = Set.of(
-            "siteName", "siteDesc", "siteKeywords", "announcement", "announcementEnabled",
+            "siteName", "siteDesc", "siteKeywords", "siteUrl", "announcement", "announcementEnabled",
             "announcementTitle", "announcementLink", "heroTitle", "heroSubtitle",
             "policeRecord", "customHead", "customFooter", "footer",
             "icp", "github", "email", "about", "avatar", "logo",
+            "frontNavItems",
             "musicEnabled", "musicSource", "musicUrl", "musicTitle", "musicArtist", "musicCover",
             "musicPlaylistUrl", "musicPlaylistTitle", "musicPlaylistPlatform",
             "musicSourceUrl", "musicSourceName", "musicSourceVersion", "musicSourceDescription",
@@ -68,9 +74,12 @@ public class SiteConfigService {
             "otaDownloadProxyPrefix");
 
     private final SiteConfigRepository repository;
+    private final String fallbackSiteUrl;
 
-    public SiteConfigService(SiteConfigRepository repository) {
+    public SiteConfigService(SiteConfigRepository repository,
+                             @Value("${app.site-url:http://localhost:8080}") String fallbackSiteUrl) {
         this.repository = repository;
+        this.fallbackSiteUrl = String.valueOf(fallbackSiteUrl == null ? "" : fallbackSiteUrl).trim();
     }
 
     public Map<String, String> defaults() {
@@ -78,6 +87,7 @@ public class SiteConfigService {
         map.put("siteName", "墨记");
         map.put("siteDesc", "一个写字的地方：代码、生活与漫长的思考。");
         map.put("siteKeywords", "个人博客,Java,Spring Boot,Vue,技术随笔");
+        map.put("siteUrl", "");
         map.put("announcement", "");
         map.put("announcementEnabled", "false");
         map.put("announcementTitle", "站点公告");
@@ -93,6 +103,8 @@ public class SiteConfigService {
         map.put("email", "");
         map.put("avatar", "");
         map.put("logo", "");
+        map.put("frontNavItems", "[{\"label\":\"首页\",\"path\":\"/\",\"visible\":true,\"newTab\":false},"
+                + "{\"label\":\"关于\",\"path\":\"/about\",\"visible\":true,\"newTab\":false}]");
         map.put("musicEnabled", "false");
         map.put("musicSource", "audio");
         map.put("musicUrl", "");
@@ -141,7 +153,28 @@ public class SiteConfigService {
         map.put("readOnlyMode", "false");
         map.put("maintenanceMessage", "站点正在维护升级，预计很快恢复。请稍后刷新页面。");
         map.put("readOnlyMessage", "站点当前为只读模式，浏览不受影响，暂时不能发布内容、评论或修改资料。");
-        map.put("about", "这里记录我在工程与生活中的一些片段。写下来，是为了把想清楚的事情留给以后的自己。");
+        map.put("about", """
+                这里记录我在工程与生活中的一些片段，也记录这套博客本身的生长过程。
+
+                ## 关于这个项目
+
+                「墨记」是一个持续迭代的个人博客项目，目标是把写作、阅读、评论和站点管理放进一套轻量、可自托管的系统里。它不依赖大型内容平台，文章、站点配置和文件都保存在自己的数据库与存储里。
+
+                ### 技术栈
+
+                - 后端：Spring Boot 4、Java 17、Spring Security、JPA
+                - 前端：Vue 3、Vite、原生 CSS
+                - 数据：默认 H2，可切换 MySQL
+                - 部署：单 jar 运行，支持后台 OTA 更新与 GitHub Release
+
+                ### 已经具备
+
+                文章与标签、评论审核、通知铃铛、站点音乐（LX 音源与本地音乐）、本地与 WebDAV/OpenList 存储、SMTP 邮件、找回密码、AI 写作助手、版本更新提示，以及可配置的前台导航和访问域名。
+
+                ### 为什么写
+
+                把想清楚的事情留给以后的自己，也让每一次改动都有迹可循。这里没有固定的更新频率，只有持续把事情做完整的耐心。
+                """);
         map.put("smtpEnabled", "false");
         map.put("smtpHost", "");
         map.put("smtpPort", "465");
@@ -214,6 +247,71 @@ public class SiteConfigService {
         return visible;
     }
 
+    /** 站点对外访问地址。后台配置优先，未配置时回退到启动参数 app.site-url。 */
+    public String publicSiteUrl() {
+        String configured = get().getOrDefault("siteUrl", "").trim();
+        try {
+            if (!configured.isBlank()) return normalizeSiteUrl(configured);
+            return normalizeSiteUrl(fallbackSiteUrl);
+        } catch (BizException e) {
+            return normalizeFallbackSiteUrl();
+        }
+    }
+
+    private String normalizeFallbackSiteUrl() {
+        try {
+            return normalizeSiteUrl(fallbackSiteUrl);
+        } catch (BizException e) {
+            return "http://localhost:8080";
+        }
+    }
+
+    /**
+     * 访问域名允许只填域名，也允许带 http(s) 协议和子路径；统一去掉末尾斜杠。
+     * 不接受账号、查询参数、锚点和非 HTTP 协议，避免生成邮件链接时夹带意外内容。
+     */
+    private String normalizeSiteUrl(String raw) {
+        String value = String.valueOf(raw == null ? "" : raw).trim();
+        if (value.isBlank()) return "";
+        if (value.contains(" ") || value.contains("\n") || value.contains("\r")) {
+            throw new BizException("访问域名不能包含空白字符");
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (lower.matches("^[a-z][a-z0-9+.-]*://.*")
+                && !lower.startsWith("http://")
+                && !lower.startsWith("https://")) {
+            throw new BizException("访问域名只支持 http:// 或 https://");
+        }
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            value = "https://" + value;
+        }
+        URI uri;
+        try {
+            uri = URI.create(value);
+        } catch (IllegalArgumentException e) {
+            throw new BizException("访问域名格式不正确");
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            throw new BizException("访问域名只支持 http:// 或 https://");
+        }
+        if (uri.getHost() == null || uri.getHost().isBlank()) {
+            throw new BizException("访问域名缺少有效主机名");
+        }
+        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new BizException("访问域名不能包含账号、查询参数或锚点");
+        }
+        String host = uri.getHost();
+        String authority = host;
+        if (uri.getPort() > 0) authority += ":" + uri.getPort();
+        String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+        while (path.endsWith("/") && path.length() > 1) {
+            path = path.substring(0, path.length() - 1);
+        }
+        if (path.equals("/")) path = "";
+        return scheme + "://" + authority + path;
+    }
+
     /** 仅供后端内部状态使用，不进入后台配置与公开接口。 */
     public String internalValue(String key, String fallback) {
         if (key == null || key.isBlank()) {
@@ -247,6 +345,9 @@ public class SiteConfigService {
                 return;
             }
             String v = value == null ? "" : value;
+            if ("siteUrl".equals(key)) {
+                v = normalizeSiteUrl(v);
+            }
             if (v.length() > 4000) {
                 v = v.substring(0, 4000);
             }

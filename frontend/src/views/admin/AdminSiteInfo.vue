@@ -488,6 +488,11 @@ onMounted(load)
               <input id="siteDesc" v-model="config.siteDesc" type="text" maxlength="200" />
             </div>
             <div class="field span-2">
+              <label for="siteUrl">访问站点域名 <span class="meta">用于找回密码等站外链接</span></label>
+              <input id="siteUrl" v-model="config.siteUrl" type="text" maxlength="300" placeholder="https://blog.example.com" />
+              <p class="meta">可填写完整域名或带子路径的地址；不填时使用启动参数 app.site-url。保存后无需重启。</p>
+            </div>
+            <div class="field span-2">
               <label for="heroTitle">首页主标题 <span class="meta">留空使用站点名称</span></label>
               <input id="heroTitle" v-model="config.heroTitle" maxlength="64" placeholder="例如 在代码与生活之间写字" />
             </div>
@@ -515,6 +520,7 @@ onMounted(load)
               </span>
               <strong>{{ config.siteName || '未命名站点' }}</strong>
             </div>
+            <p class="meta site-url-preview">{{ config.siteUrl || '尚未配置独立访问域名' }}</p>
           </section>
         </aside>
       </div>
@@ -886,6 +892,7 @@ onMounted(load)
 
 <style scoped>
 .site-announcement-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); color: var(--ink-soft); font-size: 12px; }
+.site-url-preview { margin: 10px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .music-settings-grid { align-items: start; }
 .music-source-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, var(--accent-soft)); }

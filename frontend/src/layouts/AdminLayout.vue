@@ -32,6 +32,7 @@ const sections = [
   { key: 'tags', label: '标签管理', to: '/admin/tags', icon: 'tags' },
   { key: 'announcements', label: '公告管理', to: '/admin/announcements', icon: 'announcements' },
   { key: 'site-info', label: '站点信息', to: '/admin/site-info', icon: 'site' },
+  { key: 'navigation', label: '导航管理', to: '/admin/navigation', icon: 'navigation' },
   { key: 'notifications', label: '通知设置', to: '/admin/notifications', icon: 'notifications' },
   { key: 'storage', label: '存储管理', to: '/admin/storage', icon: 'storage' },
   { key: 'settings', label: '站点设置', to: '/admin/settings', icon: 'settings' }
@@ -51,7 +52,7 @@ const navGroups = [
     label: '设置',
     hint: 'SETTINGS',
     icon: 'settings',
-    items: ['users', 'roles', 'site-info', 'notifications', 'storage', 'settings'].map((key) => sections.find((item) => item.key === key))
+    items: ['users', 'roles', 'site-info', 'navigation', 'notifications', 'storage', 'settings'].map((key) => sections.find((item) => item.key === key))
   }
 ]
 const groupedSections = navGroups.flatMap((group) => group.items)
@@ -123,6 +124,9 @@ const sectionTabs = {
   tags: [
     { key: 'all', label: '标签目录' }
   ],
+  navigation: [
+    { key: 'nav', label: '导航标签' }
+  ],
   notifications: [
     { key: 'all', label: '全部通知' },
     { key: 'published', label: '已发布' },
@@ -150,6 +154,7 @@ const currentSection = computed(() => {
   if (path.startsWith('/admin/comments')) return sections.find((s) => s.key === 'comments')
   if (path.startsWith('/admin/tags')) return sections.find((s) => s.key === 'tags')
   if (path.startsWith('/admin/site-info')) return sections.find((s) => s.key === 'site-info')
+  if (path.startsWith('/admin/navigation')) return sections.find((s) => s.key === 'navigation')
   if (path.startsWith('/admin/notifications')) return sections.find((s) => s.key === 'notifications')
   if (path.startsWith('/admin/storage')) return sections.find((s) => s.key === 'storage')
   if (path.startsWith('/admin/settings')) return sections.find((s) => s.key === 'settings')

@@ -21,6 +21,8 @@ export const state = reactive({
     siteName: '墨记',
     siteDesc: '一个写字的地方：代码、生活与漫长的思考。',
     siteKeywords: '',
+    siteUrl: '',
+    frontNavItems: '[{"label":"首页","path":"/","visible":true,"newTab":false},{"label":"关于","path":"/about","visible":true,"newTab":false}]',
     announcement: '',
     announcementEnabled: 'false',
     announcementTitle: '站点公告',

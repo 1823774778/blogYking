@@ -14,7 +14,6 @@ import com.deek.blog.repository.ResetTokenRepository;
 import com.deek.blog.repository.UserRepository;
 import com.deek.blog.role.RoleService;
 import com.deek.blog.security.JwtUtil;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -42,15 +41,13 @@ public class AuthService {
     private final SiteConfigService siteConfigService;
     private final RoleService roleService;
     private final ActivityNoticeService activityNoticeService;
-    private final String siteUrl;
     private final SecureRandom random = new SecureRandom();
 
     public AuthService(UserRepository userRepository, ResetTokenRepository resetTokenRepository,
                        PasswordEncoder passwordEncoder, JwtUtil jwtUtil, MailService mailService,
                        RegistrationCodeService registrationCodeService, CaptchaService captchaService,
                        SiteConfigService siteConfigService, RoleService roleService,
-                       ActivityNoticeService activityNoticeService,
-                       @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
+                       ActivityNoticeService activityNoticeService) {
         this.userRepository = userRepository;
         this.resetTokenRepository = resetTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -61,7 +58,6 @@ public class AuthService {
         this.siteConfigService = siteConfigService;
         this.roleService = roleService;
         this.activityNoticeService = activityNoticeService;
-        this.siteUrl = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
     }
 
     @Transactional
@@ -169,7 +165,7 @@ public class AuthService {
         rt.setExpiresAt(LocalDateTime.now().plusMinutes(RESET_EXPIRE_MINUTES));
         resetTokenRepository.save(rt);
 
-        String link = siteUrl + "/reset-password?token=" + token;
+        String link = siteConfigService.publicSiteUrl() + "/reset-password?token=" + token;
         mailService.sendResetPassword(user.getEmail(), link, RESET_EXPIRE_MINUTES);
         return new MsgResp("重置链接已发送至邮箱，30 分钟内有效",
                 mailService.isEnabled() ? null : link);

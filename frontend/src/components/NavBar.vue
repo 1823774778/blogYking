@@ -12,6 +12,28 @@ const menuOpen = ref(false)
 const menuRef = ref(null)
 const logoFailed = ref(false)
 const showSiteLogo = computed(() => Boolean(state.site.logo) && !logoFailed.value)
+const defaultNavItems = [
+  { label: '首页', path: '/', visible: true, newTab: false },
+  { label: '关于', path: '/about', visible: true, newTab: false }
+]
+const navItems = computed(() => {
+  let parsed
+  try {
+    parsed = JSON.parse(state.site.frontNavItems || '[]')
+  } catch {
+    parsed = []
+  }
+  if (!Array.isArray(parsed)) return defaultNavItems
+  const visible = parsed
+    .filter((item) => item && item.visible !== false && String(item.label || '').trim() && String(item.path || '').trim())
+    .slice(0, 8)
+    .map((item) => ({
+      label: String(item.label).trim(),
+      path: String(item.path).trim(),
+      newTab: Boolean(item.newTab)
+    }))
+  return visible.length ? visible : defaultNavItems
+})
 const notifOpen = ref(false)
 const notifRef = ref(null)
 const notifications = ref([])
@@ -35,6 +57,22 @@ watch(() => state.site.logo, () => {
 
 function onLogoError() {
   logoFailed.value = true
+}
+
+function isExternalPath(path) {
+  return /^https?:\/\//i.test(String(path || ''))
+}
+
+function navActive(item) {
+  if (isExternalPath(item.path)) return false
+  if (item.path === '/') return route.path === '/'
+  return route.path === item.path || route.path.startsWith(`${item.path}/`)
+}
+
+function navIcon(item) {
+  if (item.path === '/') return 'home'
+  if (item.path.startsWith('/about')) return 'about'
+  return 'link'
 }
 
 async function logout() {
@@ -181,20 +219,41 @@ onBeforeUnmount(() => {
         <span class="logo-name">{{ state.site.siteName }}</span>
       </router-link>
 
-      <nav class="nav-links">
-        <router-link to="/" :class="{ active: route.path === '/' }">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-            <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2v-9Z" />
-          </svg>
-          首页
-        </router-link>
-        <router-link to="/about" :class="{ active: route.path === '/about' }">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 11v6M12 7.5v.5" />
-          </svg>
-          关于
-        </router-link>
+      <nav class="nav-links" aria-label="顶部导航">
+        <template v-for="(item, index) in navItems" :key="`${item.path}-${index}`">
+          <a
+            v-if="isExternalPath(item.path)"
+            :href="item.path"
+            :target="item.newTab ? '_blank' : undefined"
+            :rel="item.newTab ? 'noopener noreferrer' : undefined"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M10 13a5 5 0 0 0 7.1 0l2.4-2.4a5 5 0 0 0-7.1-7.1L11 5" />
+              <path d="M14 11a5 5 0 0 0-7.1 0L4.5 13.4a5 5 0 0 0 7.1 7.1L13 19" />
+            </svg>
+            {{ item.label }}
+          </a>
+          <router-link
+            v-else
+            :to="item.path"
+            :target="item.newTab ? '_blank' : undefined"
+            :rel="item.newTab ? 'noopener noreferrer' : undefined"
+            :class="{ active: navActive(item) }"
+          >
+            <svg v-if="navIcon(item) === 'home'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2v-9Z" />
+            </svg>
+            <svg v-else-if="navIcon(item) === 'about'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v6M12 7.5v.5" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M10 13a5 5 0 0 0 7.1 0l2.4-2.4a5 5 0 0 0-7.1-7.1L11 5" />
+              <path d="M14 11a5 5 0 0 0-7.1 0L4.5 13.4a5 5 0 0 0 7.1 7.1L13 19" />
+            </svg>
+            {{ item.label }}
+          </router-link>
+        </template>
       </nav>
 
       <div class="nav-right">

@@ -31,7 +31,6 @@ public class MailService {
     private final String envPassword;
     private final boolean envSsl;
     private final boolean envStarttls;
-    private final String siteUrl;
 
     public MailService(SiteConfigService siteConfigService, MailTemplateService templateService,
                        @Value("${app.mail.enabled:false}") boolean envEnabled,
@@ -40,8 +39,7 @@ public class MailService {
                        @Value("${spring.mail.username:}") String envUsername,
                        @Value("${spring.mail.password:}") String envPassword,
                        @Value("${spring.mail.properties.mail.smtp.ssl.enable:true}") boolean envSsl,
-                       @Value("${spring.mail.properties.mail.smtp.starttls.enable:false}") boolean envStarttls,
-                       @Value("${app.site-url:http://localhost:8080}") String siteUrl) {
+                       @Value("${spring.mail.properties.mail.smtp.starttls.enable:false}") boolean envStarttls) {
         this.siteConfigService = siteConfigService;
         this.templateService = templateService;
         this.envEnabled = envEnabled;
@@ -51,7 +49,6 @@ public class MailService {
         this.envPassword = envPassword == null ? "" : envPassword;
         this.envSsl = envSsl;
         this.envStarttls = envStarttls;
-        this.siteUrl = siteUrl == null ? "" : siteUrl.trim();
     }
 
     public boolean isEnabled() {
@@ -132,7 +129,7 @@ public class MailService {
         Map<String, String> vars = new LinkedHashMap<>(templateService.placeholders(kind));
         Map<String, String> config = siteConfigService.get();
         vars.put("siteName", config.getOrDefault("siteName", "墨记"));
-        vars.put("siteUrl", siteUrl);
+        vars.put("siteUrl", siteConfigService.publicSiteUrl());
         vars.put("year", String.valueOf(Year.now().getValue()));
         return vars;
     }

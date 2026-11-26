@@ -6,6 +6,7 @@ import com.deek.blog.service.storage.StoragePathResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +30,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,6 +40,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 /**
  * LX 音源导入、歌曲搜索与播放地址解析。
@@ -119,6 +122,11 @@ public class MusicSourceService {
 
     public String configuredSourceUrl() {
         return String.valueOf(siteConfigService.get().getOrDefault("musicSourceUrl", "")).trim();
+    }
+
+    @PostConstruct
+    void pruneLegacyScriptsOnStart() {
+        pruneSourceScripts(configuredScriptFileName());
     }
 
     public Map<String, Object> status() {
@@ -321,6 +329,8 @@ public class MusicSourceService {
             testPlayback(runtime, data);
             persistVerifiedSource(key, "file", original, data, relativePath, hash);
             registerRuntime(key, hash, runtime, relativePath);
+            // 新脚本已落库并成为当前音源，旧的上传文件不再需要保留。
+            pruneSourceScripts(fileName);
             data.put("verifiedAt", siteConfigService.get().getOrDefault("musicSourceVerifiedAt", ""));
             return data;
         } catch (RuntimeException e) {
@@ -1921,6 +1931,8 @@ public class MusicSourceService {
                 return entry;
             }
             try {
+                Map<String, String> cfg = siteConfigService.get();
+                boolean localSource = isLocalSource(cfg);
                 String cached = refresh ? null : readCachedScript(url);
                 String script = cached != null ? cached : downloadScript(url);
                 String hash = sha256(script);
@@ -1928,8 +1940,16 @@ public class MusicSourceService {
                         && now - entry.createdAt < RUNTIME_TTL_MILLIS) {
                     return entry;
                 }
-                String fileName = "source-" + hash.substring(0, 12) + ".js";
-                String scriptPath = writeScriptCache(fileName, script);
+                String scriptPath;
+                if (localSource) {
+                    // 本地音源的真实文件就是上传时保存的 upload-<hash>.js，
+                    // 运行时直接复用它，避免再生成一份 source-<hash>.js 造成历史脚本堆积。
+                    String fileName = url.substring(LOCAL_SOURCE_PREFIX.length());
+                    scriptPath = SOURCE_CACHE_DIR + "/" + fileName;
+                } else {
+                    String fileName = "source-" + hash.substring(0, 12) + ".js";
+                    scriptPath = writeScriptCache(fileName, script);
+                }
                 LxSourceRuntime runtime = createRuntimeWithTimeout(script);
                 if (entry != null) entry.runtime.close();
                 RuntimeEntry next = new RuntimeEntry(hash, runtime, now, scriptPath);
@@ -2113,6 +2133,39 @@ public class MusicSourceService {
             Path target = sourceDir.resolve(fileName).normalize();
             if (target.startsWith(sourceDir)) Files.deleteIfExists(target);
         } catch (Exception ignored) {
+        }
+    }
+
+    private String configuredScriptFileName() {
+        String path = String.valueOf(siteConfigService.get().getOrDefault("musicSourceScriptPath", ""))
+                .trim().replace('\\', '/');
+        if (path.isBlank()) return "";
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    /** 音源缓存目录只保留当前脚本；未配置当前脚本时保留最近写入的一个。 */
+    private void pruneSourceScripts(String keepFileName) {
+        try (Stream<Path> entries = Files.list(sourceDir)) {
+            List<Path> scripts = entries
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".js"))
+                    .sorted(Comparator.comparingLong((Path path) -> path.toFile().lastModified()).reversed())
+                    .toList();
+            if (scripts.isEmpty()) return;
+            String keep = keepFileName == null ? "" : keepFileName.trim();
+            if (keep.isBlank()) keep = scripts.get(0).getFileName().toString();
+            for (Path script : scripts) {
+                if (keep.equals(script.getFileName().toString())) continue;
+                try {
+                    Files.deleteIfExists(script);
+                    log.info("已清理历史音源脚本：{}", script.getFileName());
+                } catch (IOException e) {
+                    log.warn("清理历史音源脚本失败 {}: {}", script.getFileName(), e.getMessage());
+                }
+            }
+        } catch (IOException e) {
+            log.warn("扫描音源脚本缓存失败：{}", e.getMessage());
         }
     }
 

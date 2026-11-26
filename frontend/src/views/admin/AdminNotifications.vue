@@ -254,7 +254,7 @@ onMounted(() => { load(); loadPrefs() })
 
     <section v-else class="adm-card adm-table-card">
       <div class="adm-table-wrap">
-        <table class="table adm-table">
+        <table class="table adm-table notify-table">
           <thead>
             <tr>
               <th>通知</th>
@@ -275,7 +275,7 @@ onMounted(() => { load(); loadPrefs() })
                 <button class="badge" :class="item.published ? 'on' : 'off'" type="button" @click="togglePublished(item)">{{ item.published ? '已发布' : '未发布' }}</button>
               </td>
               <td>{{ item.pinned ? '是' : '—' }}</td>
-              <td class="meta">{{ formatDateTime(item.createdAt) }}</td>
+              <td class="notify-time">{{ formatDateTime(item.createdAt) }}</td>
               <td class="align-right">
                 <div class="adm-row-actions">
                   <button class="btn-text" type="button" @click="openEdit(item)">编辑</button>
@@ -354,7 +354,18 @@ onMounted(() => { load(); loadPrefs() })
 .notify-pref-sub { margin-top: 8px; min-height: 50px; }
 .notify-pref-row:has(input:disabled) { opacity: .55; cursor: not-allowed; }
 .notify-pref-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.notify-toolbar { margin: 16px 0 14px; }
-.notify-type-filter { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 12px; }
-@media (max-width: 780px) { .notify-pref-grid { grid-template-columns: 1fr; } .notify-toolbar { flex-wrap: wrap; } }
+.notify-toolbar { margin: 16px 0 14px; padding: 0; border: 0; border-radius: 0; background: transparent; gap: 10px; }
+.notify-toolbar .adm-search { flex: 1; }
+.notify-type-filter { flex: 0 0 124px; min-height: 40px; height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); font-size: 12px; }
+.notify-table { table-layout: fixed; min-width: 760px; }
+.notify-table th:nth-child(1), .notify-table td:nth-child(1) { width: 46%; }
+.notify-table th:nth-child(2), .notify-table td:nth-child(2) { width: 8%; }
+.notify-table th:nth-child(3), .notify-table td:nth-child(3) { width: 11%; }
+.notify-table th:nth-child(4), .notify-table td:nth-child(4) { width: 7%; }
+.notify-table th:nth-child(5), .notify-table td:nth-child(5) { width: 17%; }
+.notify-table th:nth-child(6), .notify-table td:nth-child(6) { width: 11%; }
+.notify-time { display: table-cell !important; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.notify-table td:nth-child(6), .notify-table th:nth-child(6) { padding-right: 24px; }
+.notify-table .adm-row-actions { justify-content: flex-end; }
+@media (max-width: 780px) { .notify-pref-grid { grid-template-columns: 1fr; } .notify-toolbar { flex-wrap: wrap; } .notify-type-filter { flex: 1 1 auto; } }
 </style>

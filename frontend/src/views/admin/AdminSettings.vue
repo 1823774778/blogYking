@@ -81,13 +81,19 @@ const currentTemplate = computed(() =>
   mailTemplateKinds.find((item) => item.key === templateKind.value) || mailTemplateKinds[0]
 )
 
+const previewBaseUrl = computed(() => {
+  const raw = String(config.value.siteUrl || '').trim().replace(/\/+$/, '')
+  if (!raw) return 'https://your-blog.example.com'
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+})
+
 const previewVars = computed(() => ({
   siteName: config.value.siteName || '墨记',
-  siteUrl: 'https://your-blog.example.com',
+  siteUrl: previewBaseUrl.value,
   year: String(new Date().getFullYear()),
   code: '836214',
   expireMinutes: '10',
-  link: 'https://your-blog.example.com/reset-password?token=demo-token',
+  link: `${previewBaseUrl.value}/reset-password?token=demo-token`,
   sentAt: '2026-11-20 18:30',
   email: 'reader@example.com'
 }))

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import http from '../../api'
 import { toast } from '../../state'
 import { formatDateTime } from '../../utils'
@@ -9,6 +9,19 @@ const config = ref({})
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const storageModalOpen = ref(false)
+const storageDialog = ref(null)
+const storageTrigger = ref(null)
+const storageDraft = reactive({
+  storageProvider: 'local',
+  storageEndpoint: '',
+  storageUsername: '',
+  storagePassword: '',
+  storagePathPrefix: 'blog',
+  storagePublicBaseUrl: ''
+})
+const storageKeys = ['storageProvider', 'storageEndpoint', 'storageUsername', 'storagePassword',
+  'storagePathPrefix', 'storagePublicBaseUrl']
 const files = reactive({ items: [], total: 0, page: 0, size: 20, categories: [] })
 const filters = reactive({ keyword: '', category: '', uploader: '' })
 let searchTimer = null
@@ -30,16 +43,19 @@ const providerMeta = {
   openlist: { label: 'OpenList', kicker: 'OPENLIST' }
 }
 
-const formProvider = computed(() => String(config.value.storageProvider || 'local'))
-const savedProvider = computed(() => String(overview.value?.provider || 'local'))
+const formProvider = computed(() => String(storageDraft.storageProvider || 'local'))
+const savedProvider = computed(() => String(overview.value?.provider || config.value.storageProvider || 'local'))
 const isLocal = computed(() => savedProvider.value === 'local')
 const savedMeta = computed(() => providerMeta[savedProvider.value] || providerMeta.local)
 const formMeta = computed(() => providerMeta[formProvider.value] || providerMeta.local)
-const providerChanged = computed(() => formProvider.value !== savedProvider.value)
 const categoryOptions = computed(() => files.categories?.length
   ? files.categories
   : (overview.value?.categories || []))
-const totalCategoryCount = computed(() => categoryOptions.value.length)
+const savedHint = computed(() => {
+  if (savedProvider.value === 'local') return '文件保存在当前 jar 同级的 local-storage 目录。'
+  if (savedProvider.value === 'openlist') return 'OpenList 使用 WebDAV 协议，地址通常是 https://域名/dav。'
+  return '填写完整的 WebDAV 根地址，账号密码使用 Basic Auth。'
+})
 
 function boolValue(value) {
   return String(value).toLowerCase() === 'true'
@@ -113,9 +129,31 @@ function scheduleSearch() {
   searchTimer = setTimeout(() => loadFiles(0), 280)
 }
 
-function chooseCategory(category) {
-  filters.category = filters.category === category ? '' : category
-  loadFiles(0)
+function syncStorageDraft() {
+  for (const key of storageKeys) storageDraft[key] = config.value[key] || ''
+  storageDraft.storageProvider = String(config.value.storageProvider || savedProvider.value || 'local')
+  storageDraft.storagePathPrefix = config.value.storagePathPrefix || 'blog'
+}
+
+function openStorageModal() {
+  syncStorageDraft()
+  storageModalOpen.value = true
+  nextTick(() => storageDialog.value?.focus())
+}
+
+function closeStorageModal() {
+  storageModalOpen.value = false
+  nextTick(() => storageTrigger.value?.focus())
+}
+
+function onStorageKeydown(event) {
+  if (event.key === 'Escape' && storageModalOpen.value) closeStorageModal()
+}
+
+function storagePayload() {
+  const payload = {}
+  for (const key of storageKeys) payload[key] = storageDraft[key] == null ? '' : storageDraft[key]
+  return payload
 }
 
 async function refresh() {
@@ -128,8 +166,9 @@ async function saveStorage(silent = false) {
   if (saving.value) return false
   saving.value = true
   try {
-    const res = await http.put('/admin/config', config.value)
+    const res = await http.put('/admin/config', storagePayload())
     config.value = res.data
+    syncStorageDraft()
     await loadOverview()
     if (isLocal.value) await loadFiles(0)
     if (!silent) toast('存储设置已保存')
@@ -142,10 +181,12 @@ async function saveStorage(silent = false) {
   }
 }
 
-async function testStorage() {
+async function saveStorageAndClose() {
+  if (await saveStorage(false)) closeStorageModal()
+}
+
+async function runStorageTest() {
   if (testing.value) return
-  const saved = await saveStorage(true)
-  if (!saved) return
   if (formProvider.value === 'local') {
     toast('当前是本地存储，无需测试线上连接', 'error')
     return
@@ -159,6 +200,29 @@ async function testStorage() {
   } finally {
     testing.value = false
   }
+}
+
+async function testSavedStorage() {
+  if (savedProvider.value === 'local') {
+    toast('当前是本地存储，无需测试线上连接', 'error')
+    return
+  }
+  if (testing.value) return
+  testing.value = true
+  try {
+    const res = await http.post('/admin/storage/test')
+    toast(res.data.message || '连接成功')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    testing.value = false
+  }
+}
+
+async function testDraftStorage() {
+  const saved = await saveStorage(true)
+  if (!saved) return
+  await runStorageTest()
 }
 
 async function removeFile(file) {
@@ -182,11 +246,14 @@ function copyUrl(file) {
 }
 
 onMounted(async () => {
+  document.addEventListener('keydown', onStorageKeydown)
   await Promise.all([loadOverview(), loadConfig()])
+  syncStorageDraft()
   if (isLocal.value) await loadFiles(0)
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onStorageKeydown)
   if (searchTimer) clearTimeout(searchTimer)
   filesRequest++
 })
@@ -207,7 +274,7 @@ onBeforeUnmount(() => {
     <section class="adm-card storage-mode-card">
       <div class="adm-card-head">
         <div>
-          <span class="adm-card-kicker">{{ formMeta.kicker }}</span>
+          <span class="adm-card-kicker">{{ savedMeta.kicker }}</span>
           <h2>存储方式</h2>
         </div>
         <span class="adm-status" :class="overview?.configured ? 'is-published' : 'is-draft'">
@@ -216,90 +283,28 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="storage-mode-row">
-        <div class="field storage-provider-field">
-          <label for="storageProvider">存储方式</label>
-          <select id="storageProvider" v-model="config.storageProvider">
-            <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-          <p class="meta">
-            {{ formProvider === 'local' ? '文件保存在当前 jar 同级的 local-storage 目录，并按类型自动分文件夹。' :
-              formProvider === 'openlist' ? 'OpenList 使用 WebDAV 协议，地址通常是 https://域名/dav。' :
-              '填写完整的 WebDAV 根地址，账号密码使用 Basic Auth。' }}
-          </p>
+        <div class="storage-provider-field">
+          <span class="storage-current-kicker">CURRENT PROVIDER</span>
+          <div class="storage-current-row">
+            <strong>{{ savedMeta.label }}</strong>
+            <button ref="storageTrigger" class="btn btn-sm" type="button" @click="openStorageModal">配置存储方式</button>
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="testing || isLocal" @click="testSavedStorage">{{ testing ? '测试中…' : '测试连接' }}</button>
+          </div>
+          <p class="meta storage-provider-hint">{{ savedHint }}</p>
         </div>
         <div class="storage-mode-facts">
           <span>当前使用</span>
           <strong>{{ savedMeta.label }}</strong>
-          <small v-if="providerChanged">保存后切换为 {{ formMeta.label }}</small>
-          <small v-else>{{ isLocal ? overview?.root || '—' : overview?.endpoint || '—' }}</small>
+          <small>{{ isLocal ? overview?.root || '—' : overview?.endpoint || '—' }}</small>
         </div>
-      </div>
-
-      <div v-if="formProvider !== 'local'" class="form-grid storage-cloud-fields">
-          <div class="field span-2">
-            <label for="storageEndpoint">{{ formProvider === 'openlist' ? 'OpenList 地址' : 'WebDAV 地址' }}</label>
-            <input id="storageEndpoint" v-model="config.storageEndpoint" type="url" :placeholder="formProvider === 'openlist' ? 'https://openlist.example.com/dav' : 'https://dav.example.com/remote.php/dav/files/user'" />
-            <p class="meta">
-              {{ formProvider === 'openlist' ? '可填写 https://域名/dav；只填域名时会自动补 /dav。' : '填写 WebDAV 根地址，例如 Nextcloud、群晖或通用 WebDAV 服务地址。' }}
-            </p>
-          </div>
-          <div class="field">
-            <label for="storageUsername">用户名</label>
-            <input id="storageUsername" v-model="config.storageUsername" type="text" placeholder="WebDAV 用户名" autocomplete="username" />
-          </div>
-          <div class="field">
-            <label for="storagePassword">密码</label>
-            <input id="storagePassword" v-model="config.storagePassword" type="password" :placeholder="config.storagePasswordSet === 'true' ? '已设置，留空保持不变' : 'WebDAV 密码'" autocomplete="new-password" />
-          </div>
-
-        <div class="field">
-          <label for="storagePathPrefix">路径前缀</label>
-          <input id="storagePathPrefix" v-model="config.storagePathPrefix" type="text" placeholder="blog" />
-          <p class="meta">云端对象路径：前缀 / 分类文件夹 / 文件名。</p>
-        </div>
-        <div class="field">
-          <label for="storagePublicBaseUrl">公开访问域名</label>
-          <input id="storagePublicBaseUrl" v-model="config.storagePublicBaseUrl" type="url" placeholder="https://cdn.example.com" />
-          <p class="meta">留空时按服务商规则拼接；OpenList 默认使用 /d/ 直链。</p>
-        </div>
-      </div>
-
-      <div class="adm-form-actions">
-        <button class="btn" type="button" :disabled="saving || testing" @click="saveStorage(false)">{{ saving ? '保存中…' : '保存存储设置' }}</button>
-        <button class="btn btn-ghost" type="button" :disabled="testing || saving || formProvider === 'local'" @click="testStorage">{{ testing ? '测试中…' : '测试连接' }}</button>
-        <span v-if="providerChanged" class="meta">测试连接会先保存当前表单</span>
       </div>
     </section>
 
     <template v-if="isLocal">
       <section class="adm-mini-stats">
         <div><span>当前存储</span><strong>本地目录</strong></div>
-        <div><span>分类文件夹</span><strong>{{ totalCategoryCount }}</strong></div>
         <div><span>文件总数</span><strong>{{ overview?.localFiles ?? '—' }}</strong></div>
         <div><span>占用空间</span><strong>{{ formatBytes(overview?.localBytes) }}</strong></div>
-      </section>
-
-      <section class="adm-card storage-category-card">
-        <div class="adm-card-head">
-          <div><span class="adm-card-kicker">FOLDERS</span><h2>文件分类文件夹</h2></div>
-          <button v-if="filters.category" class="btn-text" type="button" @click="chooseCategory(filters.category)">查看全部</button>
-        </div>
-        <div class="storage-category-grid">
-          <button
-            v-for="category in categoryOptions"
-            :key="category.key"
-            class="storage-category-folder"
-            :class="{ 'is-active': filters.category === category.key }"
-            type="button"
-            @click="chooseCategory(category.key)"
-          >
-            <span class="storage-folder-icon" aria-hidden="true">{{ category.label.slice(0, 1) }}</span>
-            <span class="storage-folder-copy">
-              <b>{{ category.label }}</b>
-              <small>{{ category.count || 0 }} 个 · {{ formatBytes(category.bytes) }}</small>
-            </span>
-          </button>
-        </div>
       </section>
 
       <div class="adm-toolbar storage-search-toolbar">
@@ -380,7 +385,7 @@ onBeforeUnmount(() => {
 
       <section class="adm-card">
         <div class="adm-card-head"><div><span class="adm-card-kicker">LOCAL PATH</span><h2>本地存储位置</h2></div></div>
-        <p class="adm-note">文件保存在当前 jar 同级的 <code>{{ overview?.jarDirectory || '—' }}/local-storage</code>，访问前缀为 <code>/uploads/</code>。分类文件夹：<code>images/</code>、<code>audio/</code>、<code>video/</code>、<code>documents/</code>、<code>archives/</code>、<code>other/</code>。</p>
+        <p class="adm-note">文件保存在当前 jar 同级的 <code>{{ overview?.jarDirectory || '—' }}/local-storage</code>，访问前缀为 <code>/uploads/</code>。存储文件按实际类型自动归档，无需在页面上单独管理文件夹。</p>
         <p class="meta">实际根目录：<code>{{ overview?.root || '—' }}</code></p>
       </section>
     </template>
@@ -390,14 +395,80 @@ onBeforeUnmount(() => {
         <div><span class="adm-card-kicker">{{ savedMeta.kicker }}</span><h2>{{ savedMeta.label }} 线上存储</h2></div>
         <span class="adm-status" :class="overview?.configured ? 'is-published' : 'is-draft'">{{ overview?.configured ? '已连接配置' : '待完善' }}</span>
       </div>
-      <p class="adm-note">当前已切换为线上存储，本页只显示云端连接与存储配置，不显示本地文件列表、本地目录统计或分类文件夹。</p>
+      <p class="adm-note">当前已切换为线上存储，本页只显示云端连接与存储配置，不显示本地文件列表或本地目录统计。</p>
       <dl class="adm-facts storage-online-facts">
         <div><dt>存储方式</dt><dd>{{ savedMeta.label }}</dd></div>
         <div><dt>Endpoint / 地址</dt><dd class="adm-break">{{ overview?.endpoint || '—' }}</dd></div>
         <div><dt>路径前缀</dt><dd>{{ overview?.pathPrefix || '—' }}</dd></div>
         <div><dt>公开域名</dt><dd class="adm-break">{{ overview?.publicBaseUrl || '（按服务商规则拼接）' }}</dd></div>
       </dl>
-      <p class="meta">上传的图片、头像和音频会按分类前缀写入 {{ savedMeta.label }}，返回地址会直接写入文章或站点配置。需要回到本地存储时，在上方存储方式中切换并保存。</p>
+      <p class="meta">上传的图片、头像和音频会按分类前缀写入 {{ savedMeta.label }}，返回地址会直接写入文章或站点配置。需要回到本地存储时，点击「配置存储方式」切换并保存。</p>
     </section>
+
+    <div v-if="storageModalOpen" class="adm-modal-wrap" @click.self="closeStorageModal">
+      <div ref="storageDialog" class="adm-modal storage-config-modal" role="dialog" aria-modal="true" aria-labelledby="storageDialogTitle" tabindex="-1">
+        <div class="adm-modal-head">
+          <div><span class="adm-card-kicker">{{ formMeta.kicker }}</span><h2 id="storageDialogTitle">配置存储方式</h2><p class="meta">保存后立即切换；密码留空会沿用已保存的值。</p></div>
+          <button class="adm-drawer-close" type="button" aria-label="关闭" @click="closeStorageModal">×</button>
+        </div>
+        <div class="form-grid">
+          <div class="field span-2">
+            <label for="storageProvider">存储方式</label>
+            <select id="storageProvider" v-model="storageDraft.storageProvider">
+              <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <p class="meta">
+              {{ formProvider === 'local' ? '文件保存在当前 jar 同级的 local-storage 目录。' :
+                formProvider === 'openlist' ? 'OpenList 使用 WebDAV 协议，地址通常是 https://域名/dav。' :
+                '填写完整的 WebDAV 根地址，账号密码使用 Basic Auth。' }}
+            </p>
+          </div>
+          <template v-if="formProvider !== 'local'">
+            <div class="field span-2">
+              <label for="storageEndpoint">{{ formProvider === 'openlist' ? 'OpenList 地址' : 'WebDAV 地址' }}</label>
+              <input id="storageEndpoint" v-model="storageDraft.storageEndpoint" type="url" :placeholder="formProvider === 'openlist' ? 'https://openlist.example.com/dav' : 'https://dav.example.com/remote.php/dav/files/user'" />
+              <p class="meta">{{ formProvider === 'openlist' ? '可填写 https://域名/dav；只填域名时会自动补 /dav。' : '填写 WebDAV 根地址，例如 Nextcloud、群晖或通用 WebDAV 服务地址。' }}</p>
+            </div>
+            <div class="field">
+              <label for="storageUsername">用户名</label>
+              <input id="storageUsername" v-model="storageDraft.storageUsername" type="text" placeholder="WebDAV 用户名" autocomplete="username" />
+            </div>
+            <div class="field">
+              <label for="storagePassword">密码</label>
+              <input id="storagePassword" v-model="storageDraft.storagePassword" type="password" :placeholder="config.storagePasswordSet === 'true' ? '已设置，留空保持不变' : 'WebDAV 密码'" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="storagePathPrefix">路径前缀</label>
+              <input id="storagePathPrefix" v-model="storageDraft.storagePathPrefix" type="text" placeholder="blog" />
+              <p class="meta">云端对象路径：路径前缀 / 文件名。</p>
+            </div>
+            <div class="field">
+              <label for="storagePublicBaseUrl">公开访问域名</label>
+              <input id="storagePublicBaseUrl" v-model="storageDraft.storagePublicBaseUrl" type="url" placeholder="https://cdn.example.com" />
+              <p class="meta">留空时按服务商规则拼接；OpenList 默认使用 /d/ 直链。</p>
+            </div>
+          </template>
+        </div>
+        <div class="adm-modal-actions storage-modal-actions">
+          <button class="btn btn-ghost" type="button" :disabled="saving || testing" @click="testDraftStorage">{{ testing ? '测试中…' : '测试连接' }}</button>
+          <button class="btn btn-ghost" type="button" :disabled="saving" @click="closeStorageModal">取消</button>
+          <button class="btn" type="button" :disabled="saving || testing" @click="saveStorageAndClose">{{ saving ? '保存中…' : '保存存储设置' }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.storage-current-kicker { display: block; margin-bottom: 8px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .14em; }
+.storage-current-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.storage-current-row strong { margin-right: 6px; color: var(--ink); font-size: 18px; }
+.storage-provider-hint { margin: 10px 0 0; max-width: 560px; }
+.storage-config-modal { width: min(720px, calc(100vw - 32px)); }
+.storage-modal-actions { justify-content: flex-end; }
+@media (max-width: 680px) {
+  .storage-current-row { align-items: stretch; flex-direction: column; }
+  .storage-current-row strong { margin-right: 0; }
+  .storage-modal-actions { flex-wrap: wrap; }
+}
+</style>
