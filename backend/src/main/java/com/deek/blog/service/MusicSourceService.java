@@ -42,8 +42,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * LX 音源导入、歌曲搜索与播放地址解析。
  *
- * <p>自定义音源协议只提供 musicUrl，不提供搜索；本站搜索固定使用网易云公开曲库，
- * 再由导入的音源解析播放地址。付费/版权受限歌曲不会绕过平台限制。</p>
+ * <p>自定义音源协议只提供 musicUrl，不提供搜索；本站站内搜索使用当前音源声明的
+ * 可搜索平台，再由导入的音源解析播放地址。付费/版权受限歌曲不会绕过平台限制。</p>
  */
 @Service
 public class MusicSourceService {
@@ -78,8 +78,8 @@ public class MusicSourceService {
     private static final Set<String> CHART_PLATFORM_CODES = PLATFORM_LABELS.keySet();
     /** 本站已实现平台歌单读取适配的平台。 */
     private static final Set<String> PLAYLIST_PLATFORM_CODES = PLATFORM_LABELS.keySet();
-    /** 站内搜索当前使用网易云公开曲库，只有音源包含网易云时搜索结果才能播放。 */
-    private static final Set<String> SEARCH_PLATFORM_CODES = Set.of("wy");
+    /** 站内搜索已适配的平台；实际检索范围还要与当前音源声明的平台取交集。 */
+    private static final Set<String> SEARCH_PLATFORM_CODES = PLATFORM_LABELS.keySet();
     private static final Map<String, String> QUALITY_LABELS = Map.of(
             "128k", "标准",
             "320k", "高品质",
@@ -334,6 +334,10 @@ public class MusicSourceService {
         }
     }
 
+    /**
+     * 按当前音源声明的可搜索平台并行检索，再按平台轮流合并。
+     * 单平台失败不影响其他平台；结果携带 platformLabel，前端可标识来源。
+     */
     public Map<String, Object> search(String keyword, int limit) {
         String text = String.valueOf(keyword == null ? "" : keyword).trim();
         if (text.isEmpty()) throw new BizException("请输入要搜索的歌曲或歌手");
@@ -341,11 +345,12 @@ public class MusicSourceService {
         int size = Math.max(1, Math.min(MAX_SEARCH_LIMIT, limit));
         String sourceUrl = requireSourceUrl();
         LxSourceRuntime runtime = loadRuntime(sourceUrl, false);
-        if (!runtime.platforms().containsKey("wy")) {
-            throw new BizException("当前音源没有提供网易云平台，暂时无法使用站内搜索");
+        List<String> codes = searchablePlatformCodes(runtime);
+        if (codes.isEmpty()) {
+            throw new BizException("当前音源没有可搜索平台");
         }
 
-        String cacheKey = text.toLowerCase(Locale.ROOT) + ":" + size;
+        String cacheKey = text.toLowerCase(Locale.ROOT) + ":" + size + ":" + String.join(",", codes);
         synchronized (searches) {
             SearchEntry entry = searches.get(cacheKey);
             if (entry != null && System.currentTimeMillis() - entry.createdAt < SEARCH_TTL_MILLIS) {
@@ -353,44 +358,126 @@ public class MusicSourceService {
             }
         }
 
-        try {
-            JsonNode root = searchNetease(text, size);
-            JsonNode songs = root.path("result").path("songs");
-            List<Long> ids = new ArrayList<>();
-            List<JsonNode> sourceSongs = new ArrayList<>();
-            for (JsonNode song : songs) {
-                if (song.path("id").canConvertToLong()) {
-                    ids.add(song.path("id").asLong());
-                    sourceSongs.add(song);
+        int perPlatform = Math.max(6, Math.min(size, (size + codes.size() - 1) / codes.size() + 2));
+        final String query = text;
+        List<CompletableFuture<List<Map<String, Object>>>> tasks = new ArrayList<>();
+        for (String code : codes) {
+            tasks.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    return searchPlatformTracks(code, query, perPlatform);
+                } catch (Exception e) {
+                    log.warn("音乐平台搜索失败 platform={} keyword={}: {}", code, query, e.toString());
+                    return null;
                 }
+            }));
+        }
+
+        Map<String, List<Map<String, Object>>> byPlatform = new LinkedHashMap<>();
+        List<String> failedPlatforms = new ArrayList<>();
+        for (int i = 0; i < codes.size(); i += 1) {
+            String code = codes.get(i);
+            try {
+                List<Map<String, Object>> tracks = tasks.get(i).get(15, TimeUnit.SECONDS);
+                if (tracks == null) {
+                    failedPlatforms.add(code);
+                    continue;
+                }
+                List<Map<String, Object>> labeled = new ArrayList<>();
+                for (Map<String, Object> track : tracks) {
+                    Map<String, Object> copy = new LinkedHashMap<>(track);
+                    copy.put("source", code);
+                    copy.put("platform", code);
+                    copy.put("platformLabel", platformLabel(runtime, code));
+                    labeled.add(copy);
+                }
+                byPlatform.put(code, labeled);
+            } catch (Exception e) {
+                failedPlatforms.add(code);
+                log.warn("音乐平台搜索超时 platform={} keyword={}: {}", code, text, e.toString());
             }
-            Map<Long, JsonNode> details = ids.isEmpty() ? Map.of() : fetchSongDetails(ids);
-            List<Map<String, Object>> tracks = new ArrayList<>();
-            for (int i = 0; i < sourceSongs.size(); i += 1) {
-                JsonNode song = sourceSongs.get(i);
-                long id = ids.get(i);
-                JsonNode detail = details.getOrDefault(id, song);
-                tracks.add(toSearchTrack(id, song, detail));
-            }
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("keyword", text);
-            data.put("total", root.path("result").path("songCount").asInt(tracks.size()));
-            data.put("loaded", tracks.size());
-            data.put("platform", "wy");
-            data.put("platformLabel", platformLabel(runtime, "wy"));
-            data.put("source", describe(runtime, sourceUrl));
-            data.put("tracks", tracks);
-            synchronized (searches) {
-                if (searches.size() > 60) searches.clear();
-                searches.put(cacheKey, new SearchEntry(System.currentTimeMillis(), data));
-            }
-            return data;
-        } catch (BizException e) {
-            throw e;
-        } catch (Exception e) {
-            log.warn("音乐搜索失败 keyword={}: {}", text, e.toString());
+        }
+        if (byPlatform.isEmpty()) {
             throw new BizException("搜索暂时不可用，请稍后重试");
         }
+
+        List<Map<String, Object>> merged = new ArrayList<>();
+        Map<String, Boolean> seen = new HashMap<>();
+        int cursor = 0;
+        while (merged.size() < size) {
+            boolean progressed = false;
+            for (List<Map<String, Object>> tracks : byPlatform.values()) {
+                if (cursor >= tracks.size()) continue;
+                progressed = true;
+                Map<String, Object> track = tracks.get(cursor);
+                String dedupeKey = normalizeSongText(String.valueOf(track.get("title")))
+                        + "|" + normalizeSongText(String.valueOf(track.get("artist")));
+                if (seen.putIfAbsent(dedupeKey, Boolean.TRUE) != null) continue;
+                merged.add(track);
+                if (merged.size() >= size) break;
+            }
+            if (!progressed) break;
+            cursor += 1;
+        }
+
+        List<Map<String, Object>> platformInfo = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> entry : byPlatform.entrySet()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("code", entry.getKey());
+            item.put("label", platformLabel(runtime, entry.getKey()));
+            item.put("count", entry.getValue().size());
+            platformInfo.add(item);
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("keyword", text);
+        data.put("total", merged.size());
+        data.put("loaded", merged.size());
+        data.put("platform", codes.size() > 1 ? "multi" : codes.get(0));
+        data.put("platformLabel", codes.size() > 1 ? "多平台" : platformLabel(runtime, codes.get(0)));
+        data.put("platforms", platformInfo);
+        data.put("failedPlatforms", failedPlatforms);
+        data.put("source", describe(runtime, sourceUrl));
+        data.put("tracks", merged);
+        synchronized (searches) {
+            if (searches.size() > 60) searches.clear();
+            searches.put(cacheKey, new SearchEntry(System.currentTimeMillis(), data));
+        }
+        return data;
+    }
+
+    private List<String> searchablePlatformCodes(LxSourceRuntime runtime) {
+        List<String> codes = new ArrayList<>();
+        for (LxSourceRuntime.PlatformInfo info : runtime.platforms().values()) {
+            String code = String.valueOf(info.code() == null ? "" : info.code()).trim().toLowerCase(Locale.ROOT);
+            if (code.isBlank() || codes.contains(code) || !SEARCH_PLATFORM_CODES.contains(code)) continue;
+            List<String> actions = info.actions();
+            boolean canPlay = actions.isEmpty()
+                    || actions.stream().anyMatch(action -> "musicUrl".equalsIgnoreCase(action));
+            if (canPlay) codes.add(code);
+        }
+        return codes;
+    }
+
+    private List<Map<String, Object>> searchNeteaseTracks(String text, int size) throws Exception {
+        JsonNode root = searchNetease(text, size);
+        JsonNode songs = root.path("result").path("songs");
+        List<Long> ids = new ArrayList<>();
+        List<JsonNode> sourceSongs = new ArrayList<>();
+        for (JsonNode song : songs) {
+            if (song.path("id").canConvertToLong()) {
+                ids.add(song.path("id").asLong());
+                sourceSongs.add(song);
+            }
+        }
+        Map<Long, JsonNode> details = ids.isEmpty() ? Map.of() : fetchSongDetails(ids);
+        List<Map<String, Object>> tracks = new ArrayList<>();
+        for (int i = 0; i < sourceSongs.size(); i += 1) {
+            JsonNode song = sourceSongs.get(i);
+            long id = ids.get(i);
+            JsonNode detail = details.getOrDefault(id, song);
+            tracks.add(toSearchTrack(id, song, detail));
+        }
+        return tracks;
     }
 
     /**
@@ -478,13 +565,7 @@ public class MusicSourceService {
 
     private List<Map<String, Object>> searchPlatformTracks(String code, String text, int size) throws Exception {
         return switch (code) {
-            case "wy" -> {
-                Map<String, Object> data = search(text, size);
-                Object tracks = data.get("tracks");
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> list = tracks instanceof List<?> ? (List<Map<String, Object>>) tracks : List.of();
-                yield list;
-            }
+            case "wy" -> searchNeteaseTracks(text, size);
             case "tx" -> searchQq(text, size);
             case "kg" -> searchKugou(text, size);
             case "kw" -> searchKuwo(text, size);

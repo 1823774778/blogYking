@@ -192,9 +192,11 @@ const hasRanking = computed(() => sourceActive.value && rankingPlatforms.value.l
 const menuPlatforms = computed(() => sourcePlatforms.value
   .filter((platform) => platform.playlists || platform.charts))
 const menuViewTarget = computed(() => view.value === 'ranking' ? 'ranking' : 'charts')
-// 搜索当前由网易云曲库承接；音源没有声明网易云时，搜索结果无法播放，所以整个搜索入口隐藏。
+// 搜索使用当前音源实际声明的平台；后端并行检索后合并，不再固定网易云。
 const searchPlatforms = computed(() => sourcePlatforms.value.filter((platform) => platform.search))
-const searchPlatformLabel = computed(() => searchPlatforms.value[0]?.label || '网易云')
+const searchPlatformSummary = computed(() => searchPlatforms.value.length > 1
+  ? `${searchPlatforms.value.length} 个平台`
+  : (searchPlatforms.value[0]?.label || '当前音源'))
 const hasSearch = computed(() => sourceActive.value && searchPlatforms.value.length > 0)
 const playlistCards = computed(() => playlistItems.value)
 const hasPlaylists = computed(() => hasCharts.value)
@@ -2887,7 +2889,7 @@ onBeforeUnmount(() => {
           <div v-if="searchHintVisible" class="sm-search-hint">
             <span class="sm-search-hint-kicker">SEARCH</span>
             <strong>想听点什么？</strong>
-            <p>搜索{{ searchPlatformLabel }}曲库，播放地址由 {{ sourceName }} 解析。</p>
+            <p>在{{ searchPlatformSummary }}中搜索歌曲或歌手，播放地址由 {{ sourceName }} 解析。</p>
             <div class="sm-suggestions">
               <button v-for="item in SUGGESTIONS" :key="item" type="button" @click="searchSuggestion(item)">{{ item }}</button>
             </div>
@@ -2916,7 +2918,7 @@ onBeforeUnmount(() => {
                 </span>
                 <span class="sm-result-copy">
                   <strong>{{ track.title }}</strong>
-                  <small>{{ track.artist }}<template v-if="track.album"> · {{ track.album }}</template></small>
+                  <small>{{ track.artist }}<template v-if="track.platformLabel"> · <span class="sm-result-platform">{{ track.platformLabel }}</span></template><template v-if="track.album"> · {{ track.album }}</template></small>
                 </span>
                 <span v-if="track.fee > 0" class="sm-vip">VIP</span>
                 <span v-else class="sm-result-duration">{{ track.duration ? formatTime(track.duration) : '' }}</span>
@@ -2927,7 +2929,7 @@ onBeforeUnmount(() => {
                 </span>
               </button>
             </div>
-            <p class="sm-result-more">搜索由{{ searchPlatformLabel }}曲库提供 · 点击歌曲加入播放队列</p>
+            <p class="sm-result-more">搜索结果来自{{ searchPlatformSummary }} · 点击歌曲加入播放队列</p>
           </div>
         </div>
 
@@ -3779,6 +3781,7 @@ onBeforeUnmount(() => {
 .sm-result-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .sm-result-copy strong { overflow: hidden; color: var(--ink-soft); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .sm-result-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.sm-result-platform { color: color-mix(in srgb, var(--accent) 58%, var(--muted)); font-weight: 600; }
 .sm-result-duration { flex: 0 0 auto; color: var(--muted); font-size: 8.5px; font-variant-numeric: tabular-nums; }
 .sm-result-add { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--line); border-radius: 50%; color: var(--accent-ink); font-size: 12px; font-weight: 700; }
 .sm-result-play { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); transition: background .16s ease, color .16s ease, border-color .16s ease; }
@@ -3815,7 +3818,7 @@ onBeforeUnmount(() => {
   transition: width .34s cubic-bezier(.22, .78, .25, 1), transform .2s ease, border-color .2s ease, box-shadow .2s ease;
 }
 .sm-fab-shell.hovered {
-  width: 292px;
+  width: 248px;
   transform: translateY(-3px);
   border-color: var(--accent);
   box-shadow: 0 16px 36px rgba(20, 45, 40, .22), 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
