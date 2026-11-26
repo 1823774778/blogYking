@@ -952,6 +952,8 @@ function computePanelPlacement() {
 function openPanel() {
   if (panelOpen.value) return
   if (fabFocusTimer) clearTimeout(fabFocusTimer)
+  fabFocusTimer = null
+  fabHovered.value = false
   computePanelPlacement()
   const target = resolveInitialView(view.value)
   panelOpen.value = true
@@ -976,10 +978,14 @@ function openPanel() {
 
 function closePanel() {
   panelOpen.value = false
+  fabHovered.value = false
   platformMenuOpen.value = false
   volumePopoverOpen.value = false
   if (fabFocusTimer) clearTimeout(fabFocusTimer)
-  fabFocusTimer = setTimeout(() => fab.value?.focus({ preventScroll: true }), 190)
+  fabFocusTimer = setTimeout(() => {
+    fab.value?.focus({ preventScroll: true })
+    fabFocusTimer = null
+  }, 190)
 }
 
 function togglePanel() {
@@ -1463,14 +1469,30 @@ function persistFabOffset() {
   }
 }
 
-function onFabPointerEnter() {
-  if (panelOpen.value || fabDrag || !currentTrack.value) return
-  const hoverCapable = window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
-  if (!hoverCapable) return
+function canExpandFab() {
+  if (panelOpen.value || fabDrag || !currentTrack.value) return false
+  if (window.innerWidth <= 920) return false
+  return Boolean(window.matchMedia?.('(hover: hover) and (pointer: fine)').matches)
+}
+
+function onFabPointerEnter(event) {
+  if (event?.pointerType && event.pointerType !== 'mouse') return
+  if (!canExpandFab()) return
   fabHovered.value = true
 }
 
 function onFabPointerLeave() {
+  fabHovered.value = false
+}
+
+function onFabFocusIn() {
+  if (fabFocusTimer) return
+  if (canExpandFab()) fabHovered.value = true
+}
+
+function onFabFocusOut(event) {
+  const next = event.relatedTarget
+  if (next instanceof Node && event.currentTarget.contains(next)) return
   fabHovered.value = false
 }
 
@@ -2026,6 +2048,16 @@ function startAudio(track, autoplay = true) {
       onAudioError()
     })
   }
+}
+
+function toggleFabPlayback() {
+  if (loadingTrack.value) return
+  if (!tabLeader) {
+    playing.value = !playing.value
+    requestRemotePlayback('toggle')
+    return
+  }
+  togglePlayback()
 }
 
 function togglePlayback() {
@@ -3001,6 +3033,8 @@ onBeforeUnmount(() => {
           :class="{ hovered: fabHovered && currentTrack, dragging: fabDragging, playing }"
           @pointerenter="onFabPointerEnter"
           @pointerleave="onFabPointerLeave"
+          @focusin="onFabFocusIn"
+          @focusout="onFabFocusOut"
         >
           <button
             ref="fab"
@@ -3018,18 +3052,24 @@ onBeforeUnmount(() => {
             <span v-if="playing" class="sm-fab-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
             <span class="sm-fab-ring" aria-hidden="true"></span>
           </button>
+          <span v-if="currentTrack" class="sm-fab-info" aria-hidden="true">
+            <strong>{{ currentTrack.title }}</strong>
+            <small>{{ currentTrack.artist || '未知歌手' }}</small>
+          </span>
           <button
             v-if="currentTrack"
             type="button"
             class="sm-fab-play"
-            :aria-label="playing ? '暂停' : '播放'"
-            :title="playing ? '暂停' : '播放'"
+            :aria-label="loadingTrack ? '正在加载' : (playing ? '暂停' : '播放')"
+            :aria-pressed="playing ? 'true' : 'false'"
+            :title="loadingTrack ? '正在加载' : (playing ? '暂停' : '播放')"
             :disabled="loadingTrack"
-            @click.stop="togglePlayback"
+            @pointerdown.stop
+            @click.stop.prevent="toggleFabPlayback"
           >
             <span v-if="loadingTrack" class="sm-spinner" aria-hidden="true"></span>
-            <svg v-else-if="playing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" aria-hidden="true"><path d="M7 5v14M17 5v14" /></svg>
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z" /></svg>
+            <svg v-else-if="playing" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2" /><rect x="14" y="5" width="4" height="14" rx="1.2" /></svg>
+            <svg v-else viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.4v13.2L19 12 8 5.4Z" /></svg>
           </button>
         </div>
       </transition>
@@ -3761,6 +3801,7 @@ onBeforeUnmount(() => {
   height: 54px;
   flex: 0 0 auto;
   padding: 0;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
   border-radius: 999px;
   background: color-mix(in srgb, var(--paper) 88%, transparent);
@@ -3770,11 +3811,11 @@ onBeforeUnmount(() => {
   pointer-events: auto;
   touch-action: none;
   user-select: none;
-  transition: width .24s cubic-bezier(.2, .85, .2, 1.08), transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  will-change: width;
+  transition: width .34s cubic-bezier(.22, .78, .25, 1), transform .2s ease, border-color .2s ease, box-shadow .2s ease;
 }
 .sm-fab-shell.hovered {
-  width: 108px;
-  padding-right: 8px;
+  width: 292px;
   transform: translateY(-3px);
   border-color: var(--accent);
   box-shadow: 0 16px 36px rgba(20, 45, 40, .22), 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
@@ -3787,10 +3828,11 @@ onBeforeUnmount(() => {
 }
 .sm-fab {
   position: relative;
+  z-index: 2;
   display: grid;
   place-items: center;
   width: 54px;
-  height: 52px;
+  height: 54px;
   flex: 0 0 54px;
   padding: 0;
   border: 0;
@@ -3802,6 +3844,7 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 .sm-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
+.sm-fab-shell:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
 .sm-fab-art { display: grid; will-change: transform; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent)); color: #fff; font-size: 17px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
 .sm-fab-art img { width: 100%; height: 100%; object-fit: cover; }
 .sm-fab-eq { position: absolute; right: 4px; bottom: 4px; display: flex; align-items: flex-end; gap: 2px; width: 18px; height: 18px; padding: 3px; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 28%, transparent); }
@@ -3812,38 +3855,67 @@ onBeforeUnmount(() => {
 .sm-fab-eq i:nth-child(4) { height: 10px; animation-delay: .09s; }
 .sm-fab-ring { position: absolute; inset: -4px; border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); border-radius: 50%; opacity: 0; animation: sm-pulse 2.2s ease-in-out infinite; }
 .sm-app:not(.expanded) .sm-fab-ring { opacity: .32; }
+.sm-fab-info {
+  position: absolute;
+  top: 50%;
+  left: 58px;
+  right: 58px;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-7px, -50%);
+  transition: opacity .12s ease, transform .24s cubic-bezier(.22, .78, .25, 1);
+}
+.sm-fab-info strong,
+.sm-fab-info small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-fab-info strong { color: var(--ink); font-size: 12.5px; font-weight: 650; line-height: 1.25; }
+.sm-fab-info small { color: var(--muted); font-size: 10.5px; line-height: 1.25; }
+.sm-fab-shell.hovered .sm-fab-info {
+  opacity: 1;
+  transform: translate(0, -50%);
+  transition-delay: .06s;
+}
 .sm-fab-shell.playing .sm-fab-art { animation: sm-disc-spin 7s linear infinite; }
 .sm-fab-shell.playing .sm-fab-ring { opacity: .72; border-style: dashed; animation: sm-disc-orbit 3.4s linear infinite; }
 .sm-fab-shell.playing { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, .7); }
 .sm-fab-play {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  z-index: 2;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-  margin-left: 2px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
   opacity: 0;
-  transform: translateX(-10px) scale(.72);
   pointer-events: none;
   cursor: pointer;
+  transform: translateY(-50%) scale(.78);
   box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 24%, transparent);
-  transition: opacity .18s ease, transform .22s cubic-bezier(.2, .85, .2, 1.08), background .18s ease;
+  transition: opacity .12s ease, transform .24s cubic-bezier(.22, .78, .25, 1), background .18s ease;
 }
 .sm-fab-shell.hovered .sm-fab-play {
   opacity: 1;
-  transform: none;
   pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+  transition-delay: .08s;
 }
 .sm-fab-play:hover { background: var(--accent-ink); }
-.sm-fab-play:disabled { opacity: .65; cursor: default; }
+.sm-fab-shell.hovered .sm-fab-play:active { transform: translateY(-50%) scale(.94); }
+.sm-fab-play:disabled { cursor: progress; }
+.sm-fab-shell.hovered .sm-fab-play:disabled { opacity: .9; }
 .sm-fab-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.sm-fab-play svg { width: 17px; height: 17px; }
-.sm-fab-play .sm-spinner { width: 15px; height: 15px; border-width: 1.5px; }
+.sm-fab-play svg { width: 18px; height: 18px; }
+.sm-fab-play .sm-spinner { width: 16px; height: 16px; border-width: 1.5px; }
 .sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .18s ease, transform .24s cubic-bezier(.2, .85, .2, 1.1); }
 .sm-fab-enter-from, .sm-fab-leave-to { opacity: 0; transform: scale(.66) rotate(-12deg); }
 
@@ -3926,8 +3998,18 @@ onBeforeUnmount(() => {
   .sm-nowbar { padding: 6px 12px calc(7px + env(safe-area-inset-bottom)); }
   .sm-foot { padding-bottom: calc(7px + env(safe-area-inset-bottom)); }
 }
+@media (hover: none), (pointer: coarse), (max-width: 920px) {
+  .sm-fab-shell, .sm-fab-shell.hovered {
+    width: 54px;
+    padding: 0;
+    transform: none;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  .sm-fab-info, .sm-fab-play { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab-shell.playing .sm-fab-art, .sm-fab-shell.playing .sm-fab-ring { animation: none; }
+  .sm-fab-shell, .sm-fab-info, .sm-fab-play { transition: none; }
   .sm-panel-enter-active, .sm-panel-leave-active, .sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .12s linear; }
   .sm-lyric-line, .sm-lyric-line.active, .sm-nowview-tabs button { transition: none; animation: none; transform: none; }
 }
