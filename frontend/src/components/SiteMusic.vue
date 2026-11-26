@@ -12,6 +12,13 @@ const MODES = [
 const SUGGESTIONS = ['晴天', '起风了', '慢慢喜欢你', '后来', '夜曲', '稻香', '孤勇者', '光年之外']
 const STORAGE_KEY = 'deek.music.player.v1'
 const FAB_OFFSET_KEY = 'deek.music.fab.offset.v1'
+const SYNC_CHANNEL_NAME = 'deek.music.sync.v1'
+const SYNC_STORAGE_KEY = 'deek.music.sync.message.v1'
+const SYNC_LEADER_LOCK = 'deek.music.leader.lock.v1'
+const FALLBACK_LEADER_KEY = 'deek.music.fallback-leader.v1'
+const FALLBACK_LEADER_TTL = 6000
+const FALLBACK_LEADER_HEARTBEAT = 1500
+const TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 const CHART_TTL_MILLIS = 10 * 60 * 1000
 const FALLBACK_PLATFORM_LABELS = {
   wy: '网易音乐',
@@ -87,6 +94,7 @@ const panelPlacement = ref(null)
 const fabOffset = ref({ x: 0, y: 0 })
 const fabDragging = ref(false)
 const fabMoved = ref(false)
+const fabHovered = ref(false)
 const compactViewport = ref(false)
 const searchInput = ref(null)
 const chartBody = ref(null)
@@ -97,10 +105,20 @@ let searchSeq = 0
 let playSeq = 0
 let fabDrag = null
 let fabMoveTimer = null
-let fabHoverTimer = null
 let fabFocusTimer = null
 let platformInitialized = false
 let sourceDetailsSeq = 0
+let tabChannel = null
+let tabLeader = false
+let tabLeaderId = ''
+let applyingSyncState = false
+let releaseLeaderLock = null
+let syncStateTimer = null
+let lastSyncTickAt = 0
+let fallbackLeaderTimer = null
+let fallbackLeaseOwned = false
+let tabSyncStarted = false
+let tabClosing = false
 const playlistDetailCache = new Map()
 const lyricCache = new Map()
 let lyricSeq = 0
@@ -191,12 +209,6 @@ const sourceFeatureLabel = computed(() => {
 const activeChartTracks = computed(() => Array.isArray(playlistDetail.value?.tracks) ? playlistDetail.value.tracks : [])
 const activePlatformInfo = computed(() => sourcePlatforms.value.find((platform) => platform.code === activePlatform.value))
 const activePlatformLabel = computed(() => platformDisplayName(activePlatform.value))
-const activeQualityText = computed(() => {
-  const qualities = Array.isArray(activePlatformInfo.value?.qualities) && activePlatformInfo.value.qualities.length
-    ? activePlatformInfo.value.qualities
-    : sourceQualities.value
-  return qualities.map(qualityText).join(' · ')
-})
 const activePlaylistCard = computed(() => playlistCards.value.find((item) =>
   item.platform === activePlatform.value && String(item.id) === activePlaylistId.value) || null)
 const activePlaylist = computed(() => {
@@ -261,11 +273,6 @@ const sourceQualities = computed(() => {
     .filter(Boolean)
     .filter((item, index, list) => list.indexOf(item) === index)
 })
-const qualityText = (quality) => {
-  const value = String(quality || '').trim()
-  const labels = { '128k': '128K', '320k': '320K', 'flac': 'FLAC', 'flac24': 'FLAC 24' }
-  return labels[value.toLowerCase()] || value.toUpperCase()
-}
 const resolveQuality = computed(() => sourceQualities.value.includes('320k') ? '320k' : (sourceQualities.value[0] || '128k'))
 
 function playbackQualityFor(track) {
@@ -389,6 +396,324 @@ function persistState() {
   }
 }
 
+function syncTrackSnapshot(track) {
+  return {
+    id: String(track.id || ''),
+    source: track.source || 'wy',
+    title: track.title || '未命名歌曲',
+    artist: track.artist || '未知歌手',
+    album: track.album || '',
+    cover: track.cover || '',
+    duration: Number(track.duration) || 0,
+    fee: Number(track.fee) || 0,
+    pageUrl: track.pageUrl || '',
+    played: Boolean(track.played),
+    originSource: track.originSource || '',
+    originId: track.originId || '',
+    fallbackOriginalSource: track.fallbackOriginalSource || '',
+    fallbackLabel: track.fallbackLabel || '',
+    quality: track.quality || '',
+    url: String(track.url || ''),
+    urlError: track.urlError || '',
+    urlLoading: Boolean(track.urlLoading)
+  }
+}
+
+function normalizeSyncedTrack(track) {
+  const source = String(track?.source || 'wy')
+  return {
+    id: String(track?.id || ''),
+    source,
+    title: track?.title || '未命名歌曲',
+    artist: track?.artist || '未知歌手',
+    album: track?.album || '',
+    cover: track?.cover || '',
+    duration: Number(track?.duration) || 0,
+    fee: Number(track?.fee) || 0,
+    pageUrl: track?.pageUrl || '',
+    played: Boolean(track?.played),
+    originSource: track?.originSource || '',
+    originId: track?.originId || '',
+    fallbackOriginalSource: track?.fallbackOriginalSource || '',
+    fallbackLabel: track?.fallbackLabel || '',
+    quality: track?.quality || '',
+    url: String(track?.url || ''),
+    urlError: track?.urlError || '',
+    urlLoading: Boolean(track?.urlLoading)
+  }
+}
+
+function buildSyncState() {
+  return {
+    queue: queue.value.slice(0, 100).map(syncTrackSnapshot),
+    currentIndex: currentIndex.value,
+    playing: Boolean(playing.value),
+    loadingTrack: Boolean(loadingTrack.value),
+    progress: Number(progress.value) || 0,
+    duration: Number(currentDuration.value) || 0,
+    mode: mode.value,
+    volume: volume.value,
+    muted: muted.value,
+    updatedAt: Date.now()
+  }
+}
+
+function postSyncMessage(message) {
+  const envelope = { ...message, senderId: TAB_ID, sentAt: Date.now() }
+  if (tabChannel) {
+    try {
+      tabChannel.postMessage(envelope)
+      return
+    } catch (e) {
+      /* BroadcastChannel 被关闭时退回本地存储消息 */
+    }
+  }
+  try {
+    localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify(envelope))
+  } catch (e) {
+    /* 隐私模式下没有跨标签同步能力 */
+  }
+}
+
+function sendSyncState() {
+  if (!tabLeader) return
+  tabLeaderId = TAB_ID
+  postSyncMessage({ type: 'state', state: buildSyncState() })
+}
+
+function requestRemotePlayback(action, payload = {}) {
+  postSyncMessage({ type: 'action', action, payload })
+}
+
+function scheduleSyncState() {
+  if (!tabLeader || applyingSyncState) return
+  if (syncStateTimer) return
+  syncStateTimer = setTimeout(() => {
+    syncStateTimer = null
+    if (tabLeader) sendSyncState()
+  }, 40)
+}
+
+function applySyncState(state) {
+  if (!state || tabLeader) return
+  const tracks = (Array.isArray(state.queue) ? state.queue : [])
+    .map(normalizeSyncedTrack)
+    .filter((track) => track.id)
+  const index = Number(state.currentIndex)
+  applyingSyncState = true
+  queue.value = tracks
+  currentIndex.value = tracks.length
+    ? (Number.isInteger(index) && index >= 0 && index < tracks.length ? index : 0)
+    : -1
+  playing.value = Boolean(state.playing)
+  loadingTrack.value = Boolean(state.loadingTrack)
+  mode.value = MODES.some((item) => item.id === state.mode) ? state.mode : 'loop'
+  if (Number.isFinite(Number(state.volume))) volume.value = Math.min(1, Math.max(0, Number(state.volume)))
+  if (typeof state.muted === 'boolean') muted.value = state.muted
+  duration.value = Number(state.duration) || currentTrack.value?.duration || 0
+  progress.value = Math.max(0, Number(state.progress) || 0)
+  applyingSyncState = false
+  if (audio.value && !audio.value.paused) audio.value.pause()
+  syncLyricIndex(progress.value)
+}
+
+function applySyncTick(message) {
+  if (!message || tabLeader) return
+  progress.value = Math.max(0, Number(message.progress) || 0)
+  if (Number.isFinite(Number(message.duration)) && Number(message.duration) > 0) {
+    duration.value = Number(message.duration)
+  }
+  syncLyricIndex(progress.value)
+}
+
+function handleSyncAction(message) {
+  if (!tabLeader) return
+  const action = message?.action
+  const payload = message?.payload && typeof message.payload === 'object' ? message.payload : {}
+  if (action === 'play-track' && payload.track) {
+    const index = addTrackToQueue(normalizeSyncedTrack(payload.track))
+    if (index >= 0) playIndex(index, true)
+  } else if (action === 'play-collection') {
+    const tracks = (Array.isArray(payload.tracks) ? payload.tracks : [])
+      .map(normalizeSyncedTrack)
+      .filter((track) => track.id)
+    playCollection(tracks)
+  } else if (action === 'play-index') {
+    playIndex(Number(payload.index), payload.autoplay !== false)
+  } else if (action === 'toggle') {
+    togglePlayback()
+  } else if (action === 'step') {
+    const delta = Number(payload.delta)
+    if (Number.isFinite(delta) && delta !== 0) step(delta)
+  } else if (action === 'cycle-mode') {
+    cycleMode()
+  } else if (action === 'seek') {
+    const percent = Number(payload.percent)
+    if (Number.isFinite(percent)) seekToTime((percent / 100) * currentDuration.value)
+  } else if (action === 'seek-time') {
+    seekToTime(Number(payload.time), payload.autoplay === true)
+  } else if (action === 'set-volume') {
+    applyVolumeValue(Number(payload.value))
+  } else if (action === 'set-muted') {
+    setMutedValue(Boolean(payload.muted))
+  } else if (action === 'remove') {
+    removeTrack(Number(payload.index))
+  } else if (action === 'clear') {
+    clearQueue()
+  }
+  scheduleSyncState()
+}
+
+function handleSyncMessage(message) {
+  if (!message || message.senderId === TAB_ID) return
+  if (message.type === 'hello') {
+    if (tabLeader) sendSyncState()
+    return
+  }
+  if (message.type === 'state') {
+    if (tabLeader) return
+    tabLeaderId = message.senderId || ''
+    applySyncState(message.state)
+    return
+  }
+  if (message.type === 'tick') {
+    if (tabLeader) return
+    if (!tabLeaderId) tabLeaderId = message.senderId || ''
+    if (message.senderId === tabLeaderId) applySyncTick(message)
+    return
+  }
+  if (message.type === 'action' && tabLeader) {
+    handleSyncAction(message)
+  }
+}
+
+function onSyncStorage(event) {
+  if (!event.key) return
+  if (event.key === SYNC_STORAGE_KEY && event.newValue) {
+    try {
+      handleSyncMessage(JSON.parse(event.newValue))
+    } catch (e) {
+      /* 忽略损坏的跨标签消息 */
+    }
+    return
+  }
+  if (event.key !== FALLBACK_LEADER_KEY || !fallbackLeaderTimer || !event.newValue) return
+  try {
+    const lease = JSON.parse(event.newValue)
+    if (lease?.id && lease.id !== TAB_ID && tabLeader) {
+      tabLeader = false
+      tabLeaderId = lease.id
+      fallbackLeaseOwned = false
+    }
+  } catch (e) {
+    /* 忽略损坏的 leader 租约 */
+  }
+}
+
+function beginTabLeadership() {
+  if (tabClosing || tabLeader) return
+  tabLeader = true
+  tabLeaderId = TAB_ID
+  sendSyncState()
+  resumeLeaderPlayback()
+}
+
+async function acquireTabLeadership() {
+  if (!navigator.locks?.request) {
+    startFallbackLeaderElection()
+    return
+  }
+  try {
+    await navigator.locks.request(SYNC_LEADER_LOCK, { mode: 'exclusive' }, async () => {
+      beginTabLeadership()
+      await new Promise((resolve) => { releaseLeaderLock = resolve })
+      releaseLeaderLock = null
+    })
+  } catch (e) {
+    startFallbackLeaderElection()
+  }
+}
+
+function readFallbackLease() {
+  try {
+    const lease = JSON.parse(localStorage.getItem(FALLBACK_LEADER_KEY) || 'null')
+    if (lease?.id && Number.isFinite(Number(lease.at))) return lease
+  } catch (e) {
+    /* 忽略损坏的 leader 租约 */
+  }
+  return null
+}
+
+function writeFallbackLease() {
+  try {
+    localStorage.setItem(FALLBACK_LEADER_KEY, JSON.stringify({ id: TAB_ID, at: Date.now() }))
+    fallbackLeaseOwned = true
+  } catch (e) {
+    /* 隐私模式下无法选出跨标签播放主控 */
+  }
+}
+
+function startFallbackLeaderElection() {
+  if (fallbackLeaderTimer) return
+  const lease = readFallbackLease()
+  if (!lease || lease.id === TAB_ID || Date.now() - Number(lease.at) > FALLBACK_LEADER_TTL) {
+    writeFallbackLease()
+    beginTabLeadership()
+  } else {
+    tabLeaderId = lease.id
+  }
+  fallbackLeaderTimer = setInterval(() => {
+    if (tabClosing) return
+    const current = readFallbackLease()
+    if (tabLeader) {
+      writeFallbackLease()
+      return
+    }
+    if (!current || Date.now() - Number(current.at) > FALLBACK_LEADER_TTL) {
+      writeFallbackLease()
+      beginTabLeadership()
+    } else if (current.id !== tabLeaderId) {
+      tabLeaderId = current.id
+    }
+  }, FALLBACK_LEADER_HEARTBEAT)
+}
+
+function initTabSync() {
+  if (tabSyncStarted) return
+  tabSyncStarted = true
+  try {
+    tabChannel = new BroadcastChannel(SYNC_CHANNEL_NAME)
+    tabChannel.addEventListener('message', (event) => handleSyncMessage(event.data))
+  } catch (e) {
+    tabChannel = null
+  }
+  window.addEventListener('storage', onSyncStorage)
+  postSyncMessage({ type: 'hello' })
+  acquireTabLeadership()
+}
+
+function releaseTabLeadership() {
+  tabClosing = true
+  if (releaseLeaderLock) {
+    const release = releaseLeaderLock
+    releaseLeaderLock = null
+    release()
+  }
+  if (fallbackLeaderTimer) {
+    clearInterval(fallbackLeaderTimer)
+    fallbackLeaderTimer = null
+  }
+  if (fallbackLeaseOwned) {
+    try {
+      localStorage.removeItem(FALLBACK_LEADER_KEY)
+    } catch (e) {
+      /* 隐私模式下忽略 */
+    }
+    fallbackLeaseOwned = false
+  }
+  tabLeader = false
+}
+
 watch(queue, persistState, { deep: true })
 watch([mode, volume, muted], persistState)
 watch([activePlatform, view, nowTab, activePlaylistId, lastBrowseView], persistState)
@@ -411,6 +736,8 @@ watch(volume, (value) => {
 watch(muted, (value) => {
   if (audio.value) audio.value.muted = value
 })
+watch(queue, scheduleSyncState, { deep: true })
+watch([currentIndex, playing, loadingTrack, mode, volume, muted, duration], scheduleSyncState)
 
 function isViewAllowed(candidate) {
   if (!candidate) return false
@@ -807,12 +1134,20 @@ function onLocalMusicChanged() {
 }
 
 function selectLocalTrack(track) {
+  if (!tabLeader) {
+    requestRemotePlayback('play-track', { track: syncTrackSnapshot(track) })
+    return
+  }
   const index = addTrackToQueue(track)
   playIndex(index, true)
 }
 
 function playAllLocal() {
   if (!localTracks.value.length) return
+  if (!tabLeader) {
+    requestRemotePlayback('play-collection', { tracks: localTracks.value.map(syncTrackSnapshot) })
+    return
+  }
   let firstIndex = -1
   for (const track of localTracks.value) {
     const index = addTrackToQueue(track)
@@ -1078,12 +1413,20 @@ function toggleQueueItem(index) {
 }
 
 function selectChartTrack(track) {
+  if (!tabLeader) {
+    requestRemotePlayback('play-track', { track: syncTrackSnapshot(track) })
+    return
+  }
   const index = addTrackToQueue(track)
   playIndex(index, true)
 }
 
 function playCollection(tracks) {
   if (!tracks.length) return
+  if (!tabLeader) {
+    requestRemotePlayback('play-collection', { tracks: tracks.map(syncTrackSnapshot) })
+    return
+  }
   let firstIndex = -1
   for (const track of tracks) {
     const index = addTrackToQueue(track)
@@ -1120,43 +1463,34 @@ function persistFabOffset() {
   }
 }
 
-function clearFabHoverTimer() {
-  if (fabHoverTimer) {
-    clearTimeout(fabHoverTimer)
-    fabHoverTimer = null
-  }
-}
-
 function onFabPointerEnter() {
-  if (panelOpen.value || fabDrag) return
+  if (panelOpen.value || fabDrag || !currentTrack.value) return
   const hoverCapable = window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
   if (!hoverCapable) return
-  clearFabHoverTimer()
-  fabHoverTimer = setTimeout(() => {
-    fabHoverTimer = null
-    if (!panelOpen.value && !fabDrag && !fabMoved.value) openPanel()
-  }, 420)
+  fabHovered.value = true
 }
 
 function onFabPointerLeave() {
-  clearFabHoverTimer()
+  fabHovered.value = false
 }
 
 function beginFabDrag(event) {
   if (event.pointerType === 'mouse' && event.button !== 0) return
-  clearFabHoverTimer()
+  fabHovered.value = true
   const element = event.currentTarget
   const rect = element.getBoundingClientRect()
+  const shell = element.closest('.sm-fab-shell')
+  const shellRect = shell?.getBoundingClientRect()
   fabDrag = {
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
     offsetX: fabOffset.value.x,
     offsetY: fabOffset.value.y,
-    rectLeft: rect.left - fabOffset.value.x,
-    rectTop: rect.top - fabOffset.value.y,
-    width: rect.width,
-    height: rect.height
+    rectLeft: (shellRect?.left ?? rect.left) - fabOffset.value.x,
+    rectTop: (shellRect?.top ?? rect.top) - fabOffset.value.y,
+    width: shellRect?.width || rect.width,
+    height: shellRect?.height || rect.height
   }
   fabDragging.value = true
   element.setPointerCapture?.(event.pointerId)
@@ -1271,6 +1605,10 @@ function searchSuggestion(keyword) {
 }
 
 function selectSearchResult(track) {
+  if (!tabLeader) {
+    requestRemotePlayback('play-track', { track: syncTrackSnapshot(track) })
+    return
+  }
   const existingIndex = queue.value.findIndex((item) => item.id === track.id && item.source === (track.source || 'wy'))
   let index = existingIndex
   if (index < 0) {
@@ -1290,6 +1628,10 @@ function selectSearchResult(track) {
 function playIndex(index, autoplay = true) {
   const track = queue.value[index]
   if (!track) return
+  if (!tabLeader) {
+    requestRemotePlayback('play-track', { track: syncTrackSnapshot(track) })
+    return
+  }
   track.played = true
   currentIndex.value = index
   progress.value = 0
@@ -1625,22 +1967,48 @@ function scrollActiveLyric(reset = false) {
 }
 
 function onAudioTimeUpdate() {
+  if (!tabLeader) return
   const element = audio.value
   progress.value = element?.currentTime || 0
   syncLyricIndex(progress.value)
+  if (Date.now() - lastSyncTickAt >= 800) {
+    lastSyncTickAt = Date.now()
+    postSyncMessage({
+      type: 'tick',
+      progress: progress.value,
+      duration: currentDuration.value,
+      playing: playing.value
+    })
+  }
+}
+
+function seekToTime(time, autoplay = false) {
+  const target = Math.max(0, Number(time) || 0)
+  if (!tabLeader) {
+    progress.value = target
+    syncLyricIndex(target)
+    requestRemotePlayback('seek-time', { time: target, autoplay })
+    return
+  }
+  const element = audio.value
+  if (!element) return
+  const max = currentDuration.value || Number(element.duration) || 0
+  const next = max > 0 ? Math.min(target, max) : target
+  element.currentTime = next
+  progress.value = next
+  syncLyricIndex(next)
+  if (autoplay && element.paused) element.play().catch(() => {})
+  lastSyncTickAt = 0
+  postSyncMessage({ type: 'tick', progress: progress.value, duration: currentDuration.value, playing: playing.value })
 }
 
 function seekToLyric(time) {
   if (!lyricHasTimed.value) return
-  const element = audio.value
-  if (!element || !Number.isFinite(time)) return
-  element.currentTime = Math.max(0, time)
-  progress.value = element.currentTime
-  syncLyricIndex(progress.value)
-  if (element.paused) element.play().catch(() => {})
+  seekToTime(time, true)
 }
 
 function startAudio(track, autoplay = true) {
+  if (!tabLeader) return
   const element = audio.value
   if (!element) return
   element.volume = Math.min(1, Math.max(0, volume.value))
@@ -1662,6 +2030,10 @@ function startAudio(track, autoplay = true) {
 
 function togglePlayback() {
   if (loadingTrack.value) return
+  if (!tabLeader) {
+    requestRemotePlayback('toggle')
+    return
+  }
   const track = currentTrack.value
   if (!track) {
     if (queue.value.length) playIndex(0, true)
@@ -1699,6 +2071,10 @@ function nextRandomIndex() {
 
 function step(delta) {
   if (!queue.value.length) return
+  if (!tabLeader) {
+    requestRemotePlayback('step', { delta })
+    return
+  }
   if (delta > 0 && mode.value === 'shuffle') {
     playIndex(nextRandomIndex(), true)
     return
@@ -1745,31 +2121,57 @@ function onEnded() {
 }
 
 function cycleMode() {
+  if (!tabLeader) {
+    requestRemotePlayback('cycle-mode')
+    return
+  }
   const index = MODES.findIndex((item) => item.id === mode.value)
   mode.value = MODES[(index + 1) % MODES.length].id
   toast(`播放模式：${modeMeta.value.label}`, 'info')
 }
 
 function seek(event) {
+  const percent = Number(event.target.value)
+  if (!tabLeader) {
+    const estimated = (percent / 100) * currentDuration.value
+    progress.value = estimated
+    syncLyricIndex(estimated)
+    requestRemotePlayback('seek', { percent })
+    return
+  }
   const element = audio.value
   if (!element || !currentDuration.value) return
-  const percent = Number(event.target.value)
-  element.currentTime = (percent / 100) * currentDuration.value
-  progress.value = element.currentTime
-  syncLyricIndex(progress.value)
+  seekToTime((percent / 100) * currentDuration.value)
+}
+
+function applyVolumeValue(value) {
+  const next = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.8
+  volume.value = next
+  if (next > 0 && muted.value) muted.value = false
+  if (audio.value) audio.value.volume = next
+}
+
+function setMutedValue(value) {
+  muted.value = Boolean(value)
+  if (audio.value) audio.value.muted = muted.value
 }
 
 function setVolume(event) {
   const next = Number(event.target.value) / 100
-  volume.value = Number.isFinite(next) ? Math.min(1, Math.max(0, next)) : 0.8
-  if (next > 0 && muted.value) muted.value = false
+  applyVolumeValue(next)
+  if (!tabLeader) requestRemotePlayback('set-volume', { value: volume.value })
 }
 
 function toggleMute() {
-  muted.value = !muted.value
+  setMutedValue(!muted.value)
+  if (!tabLeader) requestRemotePlayback('set-muted', { muted: muted.value })
 }
 
 function removeTrack(index) {
+  if (!tabLeader) {
+    requestRemotePlayback('remove', { index })
+    return
+  }
   const wasCurrent = index === currentIndex.value
   const wasPlaying = playing.value
   queue.value.splice(index, 1)
@@ -1792,6 +2194,10 @@ function removeTrack(index) {
 }
 
 function clearQueue() {
+  if (!tabLeader) {
+    requestRemotePlayback('clear')
+    return
+  }
   queue.value = []
   currentIndex.value = -1
   playing.value = false
@@ -1803,7 +2209,61 @@ function clearQueue() {
   }
 }
 
+function resumeLeaderPlayback() {
+  const track = currentTrack.value
+  const element = audio.value
+  if (!track || !element) return
+  element.volume = Math.min(1, Math.max(0, volume.value))
+  element.muted = muted.value
+  if (!track.url) return
+  element.load()
+  const restore = () => {
+    element.removeEventListener('canplay', restore)
+    if (!tabLeader) return
+    if (Number.isFinite(element.duration) && progress.value > 0) {
+      element.currentTime = Math.min(progress.value, element.duration)
+    }
+    if (playing.value) {
+      element.play().catch((error) => {
+        if (error?.name === 'AbortError') return
+        if (error?.name === 'NotAllowedError') {
+          playing.value = false
+          sendSyncState()
+          return
+        }
+        onAudioError()
+      })
+    }
+  }
+  element.addEventListener('canplay', restore, { once: true })
+}
+
+function onAudioPlay() {
+  if (!tabLeader) return
+  playing.value = true
+  scheduleSyncState()
+}
+
+function onAudioPause() {
+  if (!tabLeader) return
+  playing.value = false
+  scheduleSyncState()
+}
+
+function onAudioLoadedMetadata() {
+  if (!tabLeader) return
+  duration.value = audio.value?.duration || currentTrack.value?.duration || 0
+  scheduleSyncState()
+}
+
+function onAudioDurationChange() {
+  if (!tabLeader) return
+  duration.value = audio.value?.duration || currentTrack.value?.duration || 0
+  scheduleSyncState()
+}
+
 function onAudioError() {
+  if (!tabLeader) return
   const track = currentTrack.value
   if (!track?.url) return
   playing.value = false
@@ -1856,6 +2316,7 @@ function onDocumentClick(event) {
 }
 
 function onVisibilityChange() {
+  if (!tabLeader) return
   if (document.hidden) {
     playing.value = audio.value ? !audio.value.paused : false
   }
@@ -1881,6 +2342,7 @@ onMounted(() => {
     audio.value.volume = volume.value
     audio.value.muted = muted.value
   }
+  initTabSync()
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('visibilitychange', onVisibilityChange)
@@ -1891,13 +2353,19 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
   if (fabMoveTimer) clearTimeout(fabMoveTimer)
-  clearFabHoverTimer()
   if (fabFocusTimer) clearTimeout(fabFocusTimer)
+  if (syncStateTimer) clearTimeout(syncStateTimer)
   searchSeq += 1
   playSeq += 1
   playlistSeq.value += 1
   playlistDetailSeq.value += 1
   endFabDrag()
+  releaseTabLeadership()
+  if (tabChannel) {
+    try { tabChannel.close() } catch (e) { /* 已关闭 */ }
+    tabChannel = null
+  }
+  window.removeEventListener('storage', onSyncStorage)
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -1913,11 +2381,11 @@ onBeforeUnmount(() => {
       ref="audio"
       :src="currentTrack?.url || ''"
       preload="metadata"
-      @play="playing = true"
-      @pause="playing = false"
+      @play="onAudioPlay"
+      @pause="onAudioPause"
       @timeupdate="onAudioTimeUpdate"
-      @loadedmetadata="duration = audio?.duration || currentTrack?.duration || 0"
-      @durationchange="duration = audio?.duration || currentTrack?.duration || 0"
+      @loadedmetadata="onAudioLoadedMetadata"
+      @durationchange="onAudioDurationChange"
       @ended="onEnded"
       @error="onAudioError"
     ></audio>
@@ -1968,8 +2436,7 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <div v-if="sourceActive && (activeQualityText || sourceDetailsLoading || sourceMeta.initAlert)" class="sm-source-meta">
-          <span v-if="activeQualityText" class="sm-source-chip">音质 {{ activeQualityText }}</span>
+        <div v-if="sourceActive && (sourceDetailsLoading || sourceMeta.initAlert)" class="sm-source-meta">
           <span v-if="sourceDetailsLoading" class="sm-source-chip muted">读取音源能力…</span>
           <span v-if="sourceMeta.initAlert" class="sm-source-chip warn">音源提示</span>
         </div>
@@ -2528,26 +2995,43 @@ onBeforeUnmount(() => {
 
     <div class="sm-fab-slot" :style="fabStyle">
       <transition name="sm-fab">
-        <button
+        <div
           v-if="!panelOpen"
-          ref="fab"
-          type="button"
-          class="sm-fab"
-          :class="{ dragging: fabDragging, playing }"
-          aria-label="打开站点音乐"
-          title="打开站点音乐；桌面端鼠标悬停展开，按住可拖动"
+          class="sm-fab-shell"
+          :class="{ hovered: fabHovered && currentTrack, dragging: fabDragging, playing }"
           @pointerenter="onFabPointerEnter"
           @pointerleave="onFabPointerLeave"
-          @pointerdown="beginFabDrag"
-          @click="onFabClick"
         >
-          <span class="sm-fab-art">
-            <img v-if="currentTrack?.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" />
-            <template v-else>♪</template>
-          </span>
-          <span v-if="playing" class="sm-fab-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-          <span class="sm-fab-ring" aria-hidden="true"></span>
-        </button>
+          <button
+            ref="fab"
+            type="button"
+            class="sm-fab"
+            aria-label="打开站点音乐"
+            title="打开站点音乐；悬停展开播放控制，按住可拖动"
+            @pointerdown="beginFabDrag"
+            @click="onFabClick"
+          >
+            <span class="sm-fab-art">
+              <img v-if="currentTrack?.cover" :src="currentTrack.cover" alt="" referrerpolicy="no-referrer" />
+              <template v-else>♪</template>
+            </span>
+            <span v-if="playing" class="sm-fab-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span class="sm-fab-ring" aria-hidden="true"></span>
+          </button>
+          <button
+            v-if="currentTrack"
+            type="button"
+            class="sm-fab-play"
+            :aria-label="playing ? '暂停' : '播放'"
+            :title="playing ? '暂停' : '播放'"
+            :disabled="loadingTrack"
+            @click.stop="togglePlayback"
+          >
+            <span v-if="loadingTrack" class="sm-spinner" aria-hidden="true"></span>
+            <svg v-else-if="playing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" aria-hidden="true"><path d="M7 5v14M17 5v14" /></svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z" /></svg>
+          </button>
+        </div>
       </transition>
     </div>
   </div>
@@ -3268,13 +3752,56 @@ onBeforeUnmount(() => {
 .sm-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sm-fab-slot { display: flex; align-items: center; justify-content: flex-end; pointer-events: none; }
-.sm-fab-slot .sm-fab { pointer-events: auto; }
 
-.sm-fab { position: relative; display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 54px; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 50%; background: color-mix(in srgb, var(--paper) 88%, transparent); box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); backdrop-filter: blur(18px); cursor: grab; pointer-events: auto; touch-action: none; user-select: none; }
-.sm-fab.dragging { cursor: grabbing; transition: none; }
-.sm-fab:hover { transform: translateY(-3px) scale(1.03); border-color: var(--accent); box-shadow: 0 16px 36px rgba(20, 45, 40, .22), 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent); }
-.sm-fab.dragging:hover { transform: none; box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7); }
-.sm-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.sm-fab-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7);
+  backdrop-filter: blur(18px);
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  transition: width .24s cubic-bezier(.2, .85, .2, 1.08), transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.sm-fab-shell.hovered {
+  width: 108px;
+  padding-right: 8px;
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: 0 16px 36px rgba(20, 45, 40, .22), 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.sm-fab-shell.dragging {
+  cursor: grabbing;
+  transition: none;
+  transform: none;
+  box-shadow: 0 12px 30px rgba(20, 45, 40, .18), inset 0 1px 0 rgba(255, 255, 255, .7);
+}
+.sm-fab {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 52px;
+  flex: 0 0 54px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+.sm-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
 .sm-fab-art { display: grid; will-change: transform; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent)); color: #fff; font-size: 17px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
 .sm-fab-art img { width: 100%; height: 100%; object-fit: cover; }
 .sm-fab-eq { position: absolute; right: 4px; bottom: 4px; display: flex; align-items: flex-end; gap: 2px; width: 18px; height: 18px; padding: 3px; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 28%, transparent); }
@@ -3285,9 +3812,38 @@ onBeforeUnmount(() => {
 .sm-fab-eq i:nth-child(4) { height: 10px; animation-delay: .09s; }
 .sm-fab-ring { position: absolute; inset: -4px; border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); border-radius: 50%; opacity: 0; animation: sm-pulse 2.2s ease-in-out infinite; }
 .sm-app:not(.expanded) .sm-fab-ring { opacity: .32; }
-.sm-fab.playing .sm-fab-art { animation: sm-disc-spin 7s linear infinite; }
-.sm-fab.playing .sm-fab-ring { opacity: .72; border-style: dashed; animation: sm-disc-orbit 3.4s linear infinite; }
-.sm-fab.playing { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, .7); }
+.sm-fab-shell.playing .sm-fab-art { animation: sm-disc-spin 7s linear infinite; }
+.sm-fab-shell.playing .sm-fab-ring { opacity: .72; border-style: dashed; animation: sm-disc-orbit 3.4s linear infinite; }
+.sm-fab-shell.playing { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, .7); }
+.sm-fab-play {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  opacity: 0;
+  transform: translateX(-10px) scale(.72);
+  pointer-events: none;
+  cursor: pointer;
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 24%, transparent);
+  transition: opacity .18s ease, transform .22s cubic-bezier(.2, .85, .2, 1.08), background .18s ease;
+}
+.sm-fab-shell.hovered .sm-fab-play {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.sm-fab-play:hover { background: var(--accent-ink); }
+.sm-fab-play:disabled { opacity: .65; cursor: default; }
+.sm-fab-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.sm-fab-play svg { width: 17px; height: 17px; }
+.sm-fab-play .sm-spinner { width: 15px; height: 15px; border-width: 1.5px; }
 .sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .18s ease, transform .24s cubic-bezier(.2, .85, .2, 1.1); }
 .sm-fab-enter-from, .sm-fab-leave-to { opacity: 0; transform: scale(.66) rotate(-12deg); }
 
@@ -3371,7 +3927,7 @@ onBeforeUnmount(() => {
   .sm-foot { padding-bottom: calc(7px + env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab.playing .sm-fab-art, .sm-fab.playing .sm-fab-ring { animation: none; }
+  .sm-fab-ring, .sm-now-playing b, .sm-mini-eq b, .sm-fab-eq i, .sm-fab-shell.playing .sm-fab-art, .sm-fab-shell.playing .sm-fab-ring { animation: none; }
   .sm-panel-enter-active, .sm-panel-leave-active, .sm-fab-enter-active, .sm-fab-leave-active { transition: opacity .12s linear; }
   .sm-lyric-line, .sm-lyric-line.active, .sm-nowview-tabs button { transition: none; animation: none; transform: none; }
 }
