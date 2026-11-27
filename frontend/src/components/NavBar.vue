@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
     top: calc(100% + 8px);
     left: 10px;
     right: 10px;
-    z-index: 80;
+    z-index: 120;
     max-height: calc(100dvh - 86px);
     overflow-y: auto;
     padding: 8px;
