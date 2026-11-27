@@ -16,6 +16,7 @@ const routes = [
   { path: '/', component: () => import('./views/Home.vue'), meta: { title: '首页' } },
   { path: '/setup', component: () => import('./views/Setup.vue'), meta: { title: '初始化' } },
   { path: '/about', component: () => import('./views/About.vue'), meta: { title: '关于' } },
+  { path: '/notifications', component: () => import('./views/Notifications.vue'), meta: { title: '通知中心' } },
   { path: '/post/:id', component: () => import('./views/PostDetail.vue'), meta: { title: '文章' } },
   { path: '/login', component: () => import('./views/Login.vue'), meta: { title: '登录' } },
   { path: '/register', component: () => import('./views/Register.vue'), meta: { title: '注册' } },

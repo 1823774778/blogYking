@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
 import { state, clearAuth, toast, isAdmin } from '../state'
+import { isNoticeNew, markNoticesSeen, noticeChangeEvent } from '../notices'
 import { formatDateTime, initialOf } from '../utils'
 import ThemeMenu from './ThemeMenu.vue'
 
@@ -50,8 +51,6 @@ const searchLoading = ref(false)
 let searchTimer = null
 let searchSeq = 0
 let notifTimer = null
-
-const seenNoticeId = () => Number(localStorage.getItem('blog_notice_seen') || 0)
 
 watch(() => state.site.logo, () => {
   logoFailed.value = false
@@ -120,8 +119,7 @@ async function loadNotifications() {
   notifLoading.value = true
   try {
     notifications.value = (await http.get('/notifications', { params: { limit: 8 } })).data || []
-    const seen = seenNoticeId()
-    unreadCount.value = notifications.value.filter((n) => n.id > seen).length
+    unreadCount.value = notifications.value.filter(isNoticeNew).length
   } catch {
     /* 通知失败不影响导航 */
   } finally {
@@ -130,9 +128,13 @@ async function loadNotifications() {
 }
 
 function markNotificationsSeen() {
-  const latest = notifications.value.reduce((max, n) => Math.max(max, n.id), 0)
-  if (latest) localStorage.setItem('blog_notice_seen', String(latest))
+  const latest = notifications.value.reduce((max, n) => Math.max(max, Number(n.id) || 0), 0)
+  if (latest) markNoticesSeen(latest)
   unreadCount.value = 0
+}
+
+function syncNoticeCount() {
+  unreadCount.value = notifications.value.filter(isNoticeNew).length
 }
 
 function toggleNotifications() {
@@ -145,6 +147,11 @@ function toggleNotifications() {
   } else {
     markNotificationsSeen()
   }
+}
+
+function openAllNotifications() {
+  notifOpen.value = false
+  router.push('/notifications')
 }
 
 function toggleSearch() {
@@ -226,12 +233,14 @@ function onDocumentClick(e) {
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('keydown', onKeydown)
+  window.addEventListener(noticeChangeEvent, syncNoticeCount)
   loadNotifications()
   notifTimer = setInterval(loadNotifications, 60000)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('keydown', onKeydown)
+  window.removeEventListener(noticeChangeEvent, syncNoticeCount)
   clearTimeout(searchTimer)
   clearInterval(notifTimer)
 })
@@ -357,6 +366,12 @@ onBeforeUnmount(() => {
                 <p>{{ item.content }}</p>
               </article>
             </div>
+            <router-link class="notif-view-all" to="/notifications" @click="openAllNotifications">
+              <span>查看全部通知</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </router-link>
           </div>
         </div>
 
@@ -446,6 +461,24 @@ onBeforeUnmount(() => {
                     </svg>
                   </router-link>
                 </template>
+                <router-link
+                  to="/notifications"
+                  class="nav-mobile-notice"
+                  :class="{ active: route.path === '/notifications' }"
+                  @click="closeMobileNav"
+                >
+                  <span class="nav-mobile-link-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                      <path d="M10 21h4" />
+                    </svg>
+                  </span>
+                  <span>通知中心</span>
+                  <span v-if="unreadCount" class="nav-mobile-count">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+                  <svg class="nav-mobile-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="m9 5 7 7-7 7" />
+                  </svg>
+                </router-link>
               </div>
 
               <div v-if="state.user" class="nav-mobile-account">
@@ -639,6 +672,25 @@ onBeforeUnmount(() => {
   .nav-mobile-link-icon svg {
     width: 17px;
     height: 17px;
+  }
+
+  .nav-mobile-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    margin-left: auto;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+  }
+
+  .nav-mobile-count + .nav-mobile-arrow {
+    margin-left: 0;
   }
 
   .nav-mobile-arrow {

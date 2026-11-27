@@ -1,6 +1,7 @@
 package com.deek.blog.controller;
 
 import com.deek.blog.common.ApiResponse;
+import com.deek.blog.dto.NotificationDtos.NotificationPageView;
 import com.deek.blog.dto.NotificationDtos.NotificationView;
 import com.deek.blog.service.NotificationService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,5 +24,13 @@ public class NotificationController {
     @GetMapping
     public ApiResponse<List<NotificationView>> list(@RequestParam(defaultValue = "8") int limit) {
         return ApiResponse.ok(notificationService.publicList(limit));
+    }
+
+    @GetMapping("/history")
+    public ApiResponse<NotificationPageView> history(@RequestParam(defaultValue = "1") int page,
+                                                     @RequestParam(defaultValue = "8") int size,
+                                                     @RequestParam(defaultValue = "all") String type,
+                                                     @RequestParam(defaultValue = "") String keyword) {
+        return ApiResponse.ok(notificationService.publicPage(page, size, type, keyword));
     }
 }

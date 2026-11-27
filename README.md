@@ -41,6 +41,7 @@
 - 站点名称 / 描述 / 公告 / 页脚 / 备案号 / 社交链接 / 关于页，全部后台可改，立即生效
 - 访问站点域名：后台填写后，找回密码、邮件模板等站外链接自动使用该域名；未填写时回退到启动参数 `app.site-url`
 - 前台顶部导航标签：后台可新增、编辑、隐藏、排序和删除，支持站内页面与外部链接、新窗口打开；前台导航实时读取配置
+- 通知中心：独立 `/notifications` 页面归档站务公告、系统通知与版本更新，支持服务端分页、类型筛选、关键词搜索、置顶、NEW 未读标识、详情弹窗与全部已读；桌面铃铛和手机三杠菜单均可进入
 - 亮色 / 暗色主题，响应式布局，history 路由
 - OTA 版本探针：`/api/system/version`
 - GitHub Releases 发布探测：后台「更新」页显示最新版本、更新内容与历史版本
@@ -547,6 +548,8 @@ GH_REPO=1823774778/blogYking \
 | GET | `/api/me/favorites` `/api/me/likes` | 我的收藏 / 喜欢 |
 | POST | `/api/upload` | 上传图片（需登录，jpg/png/gif/webp，≤20MB） |
 | GET | `/api/meta/site` | 公开站点信息 |
+| GET | `/api/notifications` | 最近通知，参数 `limit`（最高 20），供顶部铃铛使用 |
+| GET | `/api/notifications/history` | 通知分页，参数 `page/size/type/keyword`；返回 `items/total/page/size/hasMore/latestId/latestAt/pinnedCount/typeCounts` |
 | GET | `/api/system/version` | OTA 版本探针 |
 | GET | `/api/admin/stats` | 后台统计 |
 | GET/POST/PUT/DELETE | `/api/admin/posts` | 文章管理 |

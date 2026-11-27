@@ -15,3 +15,6 @@ target/
 
 # 首次初始化向导生成的数据库/Redis 口令与管理员哈希（仅项目根目录）
 /config/
+
+# UI 设计中间产物
+/ui-design-runs/
