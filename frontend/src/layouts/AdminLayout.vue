@@ -26,7 +26,7 @@ const sections = [
   { key: 'dashboard', label: '仪表盘', to: '/admin', icon: 'dashboard' },
   { key: 'profile', label: '个人中心', to: '/admin/profile', icon: 'profile', permissions: ['system:profile'] },
   { key: 'my-posts', label: '我的文章', to: '/admin/my-posts', icon: 'posts', permissions: ['system:my-posts'] },
-  { key: 'my-comments', label: '我的评论', to: '/admin/my-comments', icon: 'comments', permissions: ['system:my-comments'] },
+  { key: 'article-comments', label: '文章评论', to: '/admin/article-comments', icon: 'comments', permissions: ['system:my-comments'] },
   { key: 'manage-posts', label: '文章管理', to: '/admin/manage/posts', icon: 'posts', permissions: ['system:posts'] },
   { key: 'manage-comments', label: '评论管理', to: '/admin/manage/comments', icon: 'comments', permissions: ['system:comments'] },
   { key: 'manage-tags', label: '标签管理', to: '/admin/manage/tags', icon: 'tags', permissions: ['system:tags'] },
@@ -64,7 +64,7 @@ const navGroups = computed(() => [
     icon: 'profile',
     items: [
       ...(showMyPosts.value ? [sectionByKey('my-posts')] : []),
-      ...(showMyComments.value ? [sectionByKey('my-comments')] : [])
+      ...(showMyComments.value ? [sectionByKey('article-comments')] : [])
     ].filter(visibleSection)
   },
   {
@@ -148,19 +148,8 @@ const sectionTabs = {
     { key: 'all', label: '角色列表' },
     { key: 'permissions', label: '权限目录' }
   ],
-  'my-posts': [
-    { key: 'all', label: '全部文章' },
-    { key: 'published', label: '已发布' },
-    { key: 'draft', label: '草稿' },
-    { key: 'pending', label: '待审核' },
-    { key: 'rejected', label: '已退回' }
-  ],
-  'my-comments': [
-    { key: 'all', label: '全部评论' },
-    { key: 'pending', label: '待审核' },
-    { key: 'visible', label: '已展示' },
-    { key: 'hidden', label: '已隐藏' }
-  ],
+  'my-posts': [],
+  'article-comments': [],
   'site-info': [
     { key: 'basic', label: '基础信息' },
     { key: 'appearance', label: '品牌与关于' },
@@ -197,7 +186,7 @@ const currentSection = computed(() => {
   if (path.startsWith('/admin/profile')) return sectionByKey('profile')
   if (path.startsWith('/admin/roles')) return sectionByKey('roles')
   if (path.startsWith('/admin/my-posts')) return sectionByKey('my-posts')
-  if (path.startsWith('/admin/my-comments')) return sectionByKey('my-comments')
+  if (path.startsWith('/admin/article-comments') || path.startsWith('/admin/my-comments')) return sectionByKey('article-comments')
   if (path.startsWith('/admin/manage/')) {
     const key = path.slice('/admin/manage/'.length).split('/')[0]
     return sectionByKey(manageSectionKeys[key] || 'manage-posts')

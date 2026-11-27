@@ -44,7 +44,6 @@ const promptDraft = reactive({
   aiArticleGeneratePrompt: '',
   aiArticleReviewPrompt: '',
   aiCommentReviewPrompt: '',
-  aiCommentSummaryPrompt: '',
   aiSummaryPrompt: ''
 })
 
@@ -124,7 +123,7 @@ const aiFeatures = [
     key: 'comment',
     enabledKey: 'aiCommentEnabled',
     title: 'AI 评论',
-    desc: '审核评论、总结评论区'
+    desc: '审核评论内容'
   },
   {
     key: 'summary',
@@ -146,8 +145,7 @@ const promptFields = computed(() => ({
     { key: 'aiArticleReviewPrompt', label: 'AI 审核文章提示词' }
   ],
   comment: [
-    { key: 'aiCommentReviewPrompt', label: 'AI 审核评论提示词' },
-    { key: 'aiCommentSummaryPrompt', label: 'AI 总结评论提示词' }
+    { key: 'aiCommentReviewPrompt', label: 'AI 审核评论提示词' }
   ],
   summary: [
     { key: 'aiSummaryPrompt', label: 'AI 摘要提示词' }

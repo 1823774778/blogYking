@@ -19,6 +19,20 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
 
     long countByPostId(Long postId);
 
+    @Query("""
+            select count(c) from Comment c
+            where c.postId in (select p.id from Post p where p.authorId = :authorId)
+            """)
+    long countByPostAuthorId(@Param("authorId") Long authorId);
+
+    @Query("""
+            select count(c) from Comment c
+            where c.postId in (select p.id from Post p where p.authorId = :authorId)
+              and c.status = :status
+            """)
+    long countByPostAuthorIdAndStatus(@Param("authorId") Long authorId,
+                                      @Param("status") String status);
+
     long countByStatus(String status);
 
     long countByUserId(Long userId);
@@ -50,6 +64,20 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
                                     @Param("status") String status,
                                     @Param("keyword") String keyword,
                                     Pageable pageable);
+
+    @Query("""
+            select c from Comment c
+            where c.postId in (select p.id from Post p where p.authorId = :authorId)
+              and (:status is null or c.status = :status)
+              and (:keyword is null
+                   or lower(c.content) like lower(concat('%', :keyword, '%'))
+                   or lower(coalesce(c.nickname, '')) like lower(concat('%', :keyword, '%')))
+            order by c.createdAt desc
+            """)
+    Page<Comment> adminSearchByPostAuthor(@Param("authorId") Long authorId,
+                                          @Param("status") String status,
+                                          @Param("keyword") String keyword,
+                                          Pageable pageable);
 
     void deleteByPostId(Long postId);
 }

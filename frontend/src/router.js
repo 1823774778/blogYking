@@ -78,16 +78,21 @@ const routes = [
       {
         path: 'my-posts',
         name: 'admin-my-posts',
-        component: () => import('./views/admin/AdminPosts.vue'),
-        props: { mine: true },
+        component: () => import('./views/admin/MyPosts.vue'),
         meta: { title: '我的文章', permissions: ['system:my-posts', 'system:posts'] }
       },
       {
+        path: 'article-comments',
+        name: 'admin-article-comments',
+        component: () => import('./views/admin/ArticleComments.vue'),
+        meta: { title: '文章评论', permissions: ['system:my-comments'] }
+      },
+      {
         path: 'my-comments',
-        name: 'admin-my-comments',
-        component: () => import('./views/admin/AdminComments.vue'),
-        props: { mine: true },
-        meta: { title: '我的评论', permissions: ['system:my-comments', 'system:comments'] }
+        redirect: (to) => ({
+          path: '/admin/article-comments',
+          query: typeof to.query.tab === 'string' ? { tab: to.query.tab } : {}
+        })
       },
       {
         path: 'users',

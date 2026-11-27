@@ -18,6 +18,7 @@ const replyTarget = ref(null)
 const replyContent = ref('')
 
 const roots = computed(() => comments.value.filter((c) => !c.parentId))
+const commentsEnabled = computed(() => String(state.site.commentEnabled ?? 'true') !== 'false')
 const loginLink = computed(() => `/login?redirect=${encodeURIComponent(route.fullPath)}`)
 
 function repliesOf(id) {
@@ -91,7 +92,7 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="comments">
+  <section v-if="commentsEnabled" class="comments">
     <div class="section-title">评论 · {{ comments.length }}</div>
 
     <div v-if="state.user" class="comment-form">

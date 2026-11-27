@@ -27,6 +27,7 @@ const tags = ref([])
 const toc = computed(() => markdownHeadings(detail.value?.content))
 const author = computed(() => detail.value?.post?.authorName || '站长')
 const covers = [coverDesk, coverKey, coverNight]
+const commentsEnabled = computed(() => String(state.site.commentEnabled ?? 'true') !== 'false')
 const coverSrc = computed(() => {
   if (detail.value?.post?.cover) return detail.value.post.cover
   const tagText = tags.value.join(' ')
@@ -188,7 +189,7 @@ watch(
           <MarkdownBody :content="detail.content" />
         </div>
 
-        <div v-if="detail.post.commentSummary" class="ff-comment-summary">
+        <div v-if="commentsEnabled && detail.post.commentSummary" class="ff-comment-summary">
           <div class="ff-comment-summary-head">
             <span class="ff-comment-summary-kicker">AI 评论总结</span>
             <span class="meta">{{ detail.post.commentSummaryAt ? formatDate(detail.post.commentSummaryAt) : '' }}</span>
@@ -196,7 +197,7 @@ watch(
           <p>{{ detail.post.commentSummary }}</p>
         </div>
 
-        <div class="ff-comments-card">
+        <div v-if="commentsEnabled" class="ff-comments-card">
           <CommentSection :post-id="detail.post.id" />
         </div>
       </div>

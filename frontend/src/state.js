@@ -49,6 +49,7 @@ export const state = reactive({
     musicPlaylistTitle: '',
     musicPlaylistPlatform: 'netease',
     commentReview: 'false',
+    commentEnabled: 'true',
     registrationEnabled: 'true',
     registrationVerifyEmail: 'true',
     passwordResetEnabled: 'true',

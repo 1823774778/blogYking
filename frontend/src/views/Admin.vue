@@ -34,7 +34,7 @@ const canStorage = computed(() => hasPermission('system:storage'))
 const canSettings = computed(() => hasPermission('system:settings'))
 const showAttention = computed(() => canManagePosts.value || canManageComments.value)
 const postsHome = computed(() => canManagePosts.value ? '/admin/manage/posts' : '/admin/my-posts')
-const commentsHome = computed(() => canManageComments.value ? '/admin/manage/comments' : '/admin/my-comments')
+const commentsHome = computed(() => canManageComments.value ? '/admin/manage/comments' : '/admin/article-comments')
 
 const activeTab = computed(() => String(route.query.tab || 'overview'))
 const attentionCount = computed(() =>
@@ -221,7 +221,7 @@ onMounted(async () => {
           <span class="adm-stat-foot">{{ stats?.drafts || 0 }} 篇草稿 · {{ stats?.pendingPosts || 0 }} 篇待审</span>
         </article>
         <article v-if="canAnyComments" class="adm-stat-card">
-          <div class="adm-stat-label">{{ canManageComments ? '评论' : '我的评论' }}</div>
+          <div class="adm-stat-label">{{ canManageComments ? '评论' : '文章评论' }}</div>
           <strong>{{ stats?.comments ?? '—' }}</strong>
           <span class="adm-stat-foot">{{ stats?.pendingComments || 0 }} 条待审核</span>
         </article>
@@ -255,7 +255,7 @@ onMounted(async () => {
           </router-link>
           <router-link v-if="canAnyComments" class="adm-quick-item" :to="commentsHome">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5Z" /></svg></span>
-            <span>{{ canManageComments ? '评论管理' : '我的评论' }}</span>
+            <span>{{ canManageComments ? '评论管理' : '文章评论' }}</span>
           </router-link>
           <router-link v-if="canTags" class="adm-quick-item" to="/admin/manage/tags">
             <span class="adm-quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h7l9 9-7 7-9-9V4Z" /><circle cx="8.5" cy="8.5" r="1.2" /></svg></span>

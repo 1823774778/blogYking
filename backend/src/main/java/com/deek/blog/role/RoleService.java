@@ -35,7 +35,7 @@ public class RoleService {
             new PermissionView("system:posts", "文章管理", "内容与用户"),
             new PermissionView("system:my-posts", "我的文章", "内容与用户"),
             new PermissionView("system:comments", "评论管理", "内容与用户"),
-            new PermissionView("system:my-comments", "我的评论", "内容与用户"),
+            new PermissionView("system:my-comments", "文章评论", "内容与用户"),
             new PermissionView("system:tags", "标签管理", "内容与用户"),
             new PermissionView("system:announcements", "公告管理", "站点"),
             new PermissionView("system:navigation", "导航管理", "站点"),

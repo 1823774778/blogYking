@@ -169,9 +169,9 @@ public class AdminController {
             data.put("pendingComments", commentRepository.countByStatus("PENDING"));
             data.put("hiddenComments", commentRepository.countByStatus("HIDDEN"));
         } else if (myComments) {
-            data.put("comments", commentRepository.countByUserId(userId));
-            data.put("pendingComments", commentRepository.countByUserIdAndStatus(userId, "PENDING"));
-            data.put("hiddenComments", commentRepository.countByUserIdAndStatus(userId, "HIDDEN"));
+            data.put("comments", commentRepository.countByPostAuthorId(userId));
+            data.put("pendingComments", commentRepository.countByPostAuthorIdAndStatus(userId, "PENDING"));
+            data.put("hiddenComments", commentRepository.countByPostAuthorIdAndStatus(userId, "HIDDEN"));
         } else {
             data.put("comments", 0);
             data.put("pendingComments", 0);
@@ -182,6 +182,7 @@ public class AdminController {
         data.put("disabledUsers", userAdmin ? userRepository.countByEnabledFalse() : 0);
         data.put("mutedUsers", userAdmin ? userRepository.countMuted(LocalDateTime.now()) : 0);
         data.put("commentReview", siteConfigService.get().getOrDefault("commentReview", "false"));
+        data.put("commentEnabled", siteConfigService.get().getOrDefault("commentEnabled", "true"));
         return ApiResponse.ok(data);
     }
 
@@ -250,13 +251,13 @@ public class AdminController {
                                                        @RequestParam(required = false) String status,
                                                        @RequestParam(defaultValue = "false") boolean mine) {
         if (mine) {
-            return ApiResponse.ok(commentService.adminListByUser(SecurityUtils.requireUserId(),
+            return ApiResponse.ok(commentService.adminListByPostAuthor(SecurityUtils.requireUserId(),
                     page, size, status, keyword));
         }
         if (SecurityUtils.hasPermission("system:comments")) {
             return ApiResponse.ok(commentService.adminList(page, size, status, keyword));
         }
-        return ApiResponse.ok(commentService.adminListByUser(SecurityUtils.requireUserId(),
+        return ApiResponse.ok(commentService.adminListByPostAuthor(SecurityUtils.requireUserId(),
                 page, size, status, keyword));
     }
 
