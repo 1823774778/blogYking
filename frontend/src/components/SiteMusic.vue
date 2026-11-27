@@ -4034,6 +4034,9 @@ onBeforeUnmount(() => {
   .sm-nowbar { padding: 6px 12px calc(7px + env(safe-area-inset-bottom)); }
   .sm-foot { padding-bottom: calc(7px + env(safe-area-inset-bottom)); }
 }
+@media (max-width: 760px) {
+  .sm-fab-slot { display: none !important; }
+}
 @media (hover: none), (pointer: coarse), (max-width: 920px) {
   .sm-fab-shell, .sm-fab-shell.hovered {
     width: 54px;

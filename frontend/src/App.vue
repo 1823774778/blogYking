@@ -110,39 +110,6 @@ onMounted(async () => {
       <div v-if="state.site.customFooter" class="shell footer-custom" v-html="state.site.customFooter"></div>
     </footer>
 
-    <nav v-if="showPublicChrome" class="ff-dock" aria-label="移动端导航">
-      <router-link to="/" :class="{ active: route.path === '/' }">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-          <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2v-9Z" />
-        </svg>
-        首页
-      </router-link>
-      <router-link to="/about" :class="{ active: route.path === '/about' }">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 11v6M12 7.5v.5" />
-        </svg>
-        关于
-      </router-link>
-      <router-link
-        v-if="state.user"
-        to="/profile"
-        :class="{ active: route.path.startsWith('/profile') }"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-          <circle cx="12" cy="8" r="3.2" />
-          <path d="M5 20a7 7 0 0 1 14 0" />
-        </svg>
-        我的
-      </router-link>
-      <router-link v-else to="/login" :class="{ active: route.path.startsWith('/login') }">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" />
-        </svg>
-        登录
-      </router-link>
-    </nav>
-
     <SiteMusic />
 
     <div class="toasts">

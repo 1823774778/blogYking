@@ -10,6 +10,8 @@ const route = useRoute()
 const router = useRouter()
 const menuOpen = ref(false)
 const menuRef = ref(null)
+const mobileNavOpen = ref(false)
+const mobileNavRef = ref(null)
 const logoFailed = ref(false)
 const showSiteLogo = computed(() => Boolean(state.site.logo) && !logoFailed.value)
 const defaultNavItems = [
@@ -55,6 +57,18 @@ watch(() => state.site.logo, () => {
   logoFailed.value = false
 })
 
+watch(() => route.fullPath, () => {
+  mobileNavOpen.value = false
+  menuOpen.value = false
+})
+
+function onKeydown(e) {
+  if (e.key === 'Escape') {
+    mobileNavOpen.value = false
+    menuOpen.value = false
+  }
+}
+
 function onLogoError() {
   logoFailed.value = true
 }
@@ -75,6 +89,20 @@ function navIcon(item) {
   return 'link'
 }
 
+function toggleMobileNav() {
+  mobileNavOpen.value = !mobileNavOpen.value
+  if (mobileNavOpen.value) {
+    menuOpen.value = false
+    if (notifOpen.value) markNotificationsSeen()
+    notifOpen.value = false
+    closeSearch()
+  }
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false
+}
+
 async function logout() {
   try {
     await http.post('/auth/logout')
@@ -83,6 +111,7 @@ async function logout() {
   }
   clearAuth()
   menuOpen.value = false
+  mobileNavOpen.value = false
   toast('已退出登录')
   router.push('/')
 }
@@ -109,6 +138,7 @@ function markNotificationsSeen() {
 function toggleNotifications() {
   notifOpen.value = !notifOpen.value
   searchOpen.value = false
+  mobileNavOpen.value = false
   if (notifOpen.value) {
     menuOpen.value = false
     loadNotifications()
@@ -121,6 +151,7 @@ function toggleSearch() {
   searchOpen.value = !searchOpen.value
   notifOpen.value = false
   menuOpen.value = false
+  mobileNavOpen.value = false
   if (searchOpen.value) {
     nextTick(() => searchInput.value?.focus())
   } else {
@@ -180,6 +211,9 @@ function onDocumentClick(e) {
   if (menuRef.value && !menuRef.value.contains(e.target)) {
     menuOpen.value = false
   }
+  if (mobileNavRef.value && !mobileNavRef.value.contains(e.target)) {
+    mobileNavOpen.value = false
+  }
   if (notifRef.value && !notifRef.value.contains(e.target)) {
     if (notifOpen.value) markNotificationsSeen()
     notifOpen.value = false
@@ -191,11 +225,13 @@ function onDocumentClick(e) {
 
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
+  document.addEventListener('keydown', onKeydown)
   loadNotifications()
   notifTimer = setInterval(loadNotifications, 60000)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onKeydown)
   clearTimeout(searchTimer)
   clearInterval(notifTimer)
 })
@@ -340,7 +376,385 @@ onBeforeUnmount(() => {
         </div>
 
         <router-link v-else to="/login" class="btn btn-ghost btn-sm">登录</router-link>
+
+        <div ref="mobileNavRef" class="nav-mobile-wrap">
+          <button
+            class="nav-mobile-toggle"
+            type="button"
+            aria-controls="nav-mobile-menu"
+            :aria-expanded="mobileNavOpen ? 'true' : 'false'"
+            :title="mobileNavOpen ? '收起导航菜单' : '打开导航菜单'"
+            @click.stop="toggleMobileNav"
+          >
+            <span class="nav-mobile-bars" :class="{ open: mobileNavOpen }" aria-hidden="true">
+              <i></i><i></i><i></i>
+            </span>
+          </button>
+
+          <transition name="nav-mobile-drop">
+            <nav v-if="mobileNavOpen" id="nav-mobile-menu" class="nav-mobile-menu" aria-label="移动端导航菜单" @click.stop>
+              <div class="nav-mobile-head">
+                <span>站点导航</span>
+                <small>MENU</small>
+              </div>
+
+              <div class="nav-mobile-links">
+                <template v-for="(item, index) in navItems" :key="`mobile-${item.path}-${index}`">
+                  <a
+                    v-if="isExternalPath(item.path)"
+                    :href="item.path"
+                    :target="item.newTab ? '_blank' : undefined"
+                    :rel="item.newTab ? 'noopener noreferrer' : undefined"
+                    @click="closeMobileNav"
+                  >
+                    <span class="nav-mobile-link-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                        <path d="M10 13a5 5 0 0 0 7.1 0l2.4-2.4a5 5 0 0 0-7.1-7.1L11 5" />
+                        <path d="M14 11a5 5 0 0 0-7.1 0L4.5 13.4a5 5 0 0 0 7.1 7.1L13 19" />
+                      </svg>
+                    </span>
+                    <span>{{ item.label }}</span>
+                    <svg class="nav-mobile-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="m9 5 7 7-7 7" />
+                    </svg>
+                  </a>
+                  <router-link
+                    v-else
+                    :to="item.path"
+                    :target="item.newTab ? '_blank' : undefined"
+                    :rel="item.newTab ? 'noopener noreferrer' : undefined"
+                    :class="{ active: navActive(item) }"
+                    @click="closeMobileNav"
+                  >
+                    <span class="nav-mobile-link-icon">
+                      <svg v-if="navIcon(item) === 'home'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                        <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2v-9Z" />
+                      </svg>
+                      <svg v-else-if="navIcon(item) === 'about'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 11v6M12 7.5v.5" />
+                      </svg>
+                      <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                        <path d="M10 13a5 5 0 0 0 7.1 0l2.4-2.4a5 5 0 0 0-7.1-7.1L11 5" />
+                        <path d="M14 11a5 5 0 0 0-7.1 0L4.5 13.4a5 5 0 0 0 7.1 7.1L13 19" />
+                      </svg>
+                    </span>
+                    <span>{{ item.label }}</span>
+                    <svg class="nav-mobile-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="m9 5 7 7-7 7" />
+                    </svg>
+                  </router-link>
+                </template>
+              </div>
+
+              <div v-if="state.user" class="nav-mobile-account">
+                <router-link to="/profile" class="nav-mobile-user" @click="closeMobileNav">
+                  <span class="avatar nav-mobile-avatar">
+                    <img v-if="state.user.avatar" :src="state.user.avatar" alt="" />
+                    <template v-else>{{ initialOf(state.user.nickname || state.user.username) }}</template>
+                  </span>
+                  <span class="nav-mobile-user-copy">
+                    <strong>{{ state.user.nickname || state.user.username }}</strong>
+                    <small>个人主页</small>
+                  </span>
+                  <svg class="nav-mobile-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="m9 5 7 7-7 7" />
+                  </svg>
+                </router-link>
+                <div class="nav-mobile-actions">
+                  <router-link v-if="isAdmin()" to="/admin" @click="closeMobileNav">后台管理</router-link>
+                  <button type="button" @click="logout">退出登录</button>
+                </div>
+              </div>
+
+              <router-link v-else to="/login" class="nav-mobile-login" @click="closeMobileNav">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" />
+                </svg>
+                登录 / 注册
+              </router-link>
+            </nav>
+          </transition>
+        </div>
       </div>
     </div>
   </header>
 </template>
+
+<style scoped>
+.nav-mobile-wrap {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .nav-mobile-wrap {
+    display: block;
+  }
+
+  .nav-mobile-toggle {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .18s ease;
+  }
+
+  .nav-mobile-toggle:hover {
+    background: color-mix(in srgb, var(--ink) 7%, transparent);
+  }
+
+  .nav-mobile-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .nav-mobile-bars {
+    position: relative;
+    display: block;
+    width: 18px;
+    height: 14px;
+    transform-origin: center;
+    transition: transform .34s cubic-bezier(.22, 1, .36, 1);
+  }
+
+  .nav-mobile-bars i {
+    position: absolute;
+    left: 0;
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+
+  .nav-mobile-bars i:nth-child(1) {
+    top: 0;
+  }
+
+  .nav-mobile-bars i:nth-child(2) {
+    top: 6px;
+  }
+
+  .nav-mobile-bars i:nth-child(3) {
+    top: 12px;
+  }
+
+  .nav-mobile-bars.open {
+    transform: rotate(90deg);
+  }
+
+  .nav-mobile-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 10px;
+    right: 10px;
+    z-index: 80;
+    max-height: calc(100dvh - 86px);
+    overflow-y: auto;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--ff-card-solid, var(--paper));
+    box-shadow: 0 20px 52px rgba(26, 43, 34, .17);
+    backdrop-filter: blur(18px);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav-mobile-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px 9px;
+  }
+
+  .nav-mobile-head span {
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .08em;
+  }
+
+  .nav-mobile-head small {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .16em;
+  }
+
+  .nav-mobile-links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .nav-mobile-links a {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-height: 45px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    color: var(--ink-soft);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .nav-mobile-links a.active {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent-ink, var(--accent));
+  }
+
+  .nav-mobile-links a:active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  .nav-mobile-link-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    color: var(--muted);
+  }
+
+  .nav-mobile-links a.active .nav-mobile-link-icon {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-ink, var(--accent));
+  }
+
+  .nav-mobile-link-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .nav-mobile-arrow {
+    width: 16px;
+    height: 16px;
+    margin-left: auto;
+    color: var(--muted);
+    opacity: .62;
+  }
+
+  .nav-mobile-account {
+    margin-top: 7px;
+    padding-top: 9px;
+    border-top: 1px solid var(--line);
+  }
+
+  .nav-mobile-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 11px;
+    color: var(--ink);
+  }
+
+  .nav-mobile-user:active {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+
+  .nav-mobile-avatar {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    font-size: 14px;
+  }
+
+  .nav-mobile-user-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
+  }
+
+  .nav-mobile-user-copy strong {
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 13.5px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nav-mobile-user-copy small {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .nav-mobile-actions {
+    display: flex;
+    gap: 7px;
+    margin-top: 5px;
+  }
+
+  .nav-mobile-actions a,
+  .nav-mobile-actions button {
+    flex: 1;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: transparent;
+    color: var(--ink-soft);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .nav-mobile-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .nav-mobile-actions button {
+    font-family: inherit;
+  }
+
+  .nav-mobile-actions a:active,
+  .nav-mobile-actions button:active {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+
+  .nav-mobile-login {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 42px;
+    margin-top: 8px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .nav-mobile-login svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+
+.nav-mobile-drop-enter-active,
+.nav-mobile-drop-leave-active {
+  transition: opacity .2s ease, transform .26s cubic-bezier(.22, 1, .36, 1);
+}
+
+.nav-mobile-drop-enter-from,
+.nav-mobile-drop-leave-to {
+  opacity: 0;
+  transform: translateY(-10px) scale(.985);
+}
+</style>
