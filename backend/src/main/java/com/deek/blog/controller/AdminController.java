@@ -129,13 +129,13 @@ public class AdminController {
     }
 
     @GetMapping("/stats")
-    public ApiResponse<Map<String, Object>> stats() {
+    public ApiResponse<Map<String, Object>> stats(@RequestParam(name = "mine", defaultValue = "false") boolean mineOnly) {
         Long userId = SecurityUtils.requireUserId();
-        boolean fullPosts = SecurityUtils.hasPermission("system:posts");
-        boolean myPosts = !fullPosts && SecurityUtils.hasPermission("system:my-posts");
-        boolean fullComments = SecurityUtils.hasPermission("system:comments");
-        boolean myComments = !fullComments && SecurityUtils.hasPermission("system:my-comments");
-        boolean userAdmin = SecurityUtils.hasPermission("system:users");
+        boolean fullPosts = !mineOnly && SecurityUtils.hasPermission("system:posts");
+        boolean myPosts = mineOnly || (!fullPosts && SecurityUtils.hasPermission("system:my-posts"));
+        boolean fullComments = !mineOnly && SecurityUtils.hasPermission("system:comments");
+        boolean myComments = mineOnly || (!fullComments && SecurityUtils.hasPermission("system:my-comments"));
+        boolean userAdmin = !mineOnly && SecurityUtils.hasPermission("system:users");
         Map<String, Object> data = new LinkedHashMap<>();
         StatsResp base = postService.stats();
         if (fullPosts) {
@@ -189,7 +189,12 @@ public class AdminController {
     public ApiResponse<PageResp<PostView>> posts(@RequestParam(defaultValue = "1") int page,
                                                  @RequestParam(defaultValue = "20") int size,
                                                  @RequestParam(required = false) String keyword,
-                                                 @RequestParam(required = false) String status) {
+                                                 @RequestParam(required = false) String status,
+                                                 @RequestParam(defaultValue = "false") boolean mine) {
+        if (mine) {
+            return ApiResponse.ok(postService.adminListByAuthor(SecurityUtils.requireUserId(),
+                    page, size, keyword, status));
+        }
         if (SecurityUtils.hasPermission("system:posts")) {
             return ApiResponse.ok(postService.adminList(page, size, keyword, status));
         }
@@ -242,7 +247,12 @@ public class AdminController {
     public ApiResponse<PageResp<CommentView>> comments(@RequestParam(defaultValue = "1") int page,
                                                        @RequestParam(defaultValue = "20") int size,
                                                        @RequestParam(required = false) String keyword,
-                                                       @RequestParam(required = false) String status) {
+                                                       @RequestParam(required = false) String status,
+                                                       @RequestParam(defaultValue = "false") boolean mine) {
+        if (mine) {
+            return ApiResponse.ok(commentService.adminListByUser(SecurityUtils.requireUserId(),
+                    page, size, status, keyword));
+        }
         if (SecurityUtils.hasPermission("system:comments")) {
             return ApiResponse.ok(commentService.adminList(page, size, status, keyword));
         }

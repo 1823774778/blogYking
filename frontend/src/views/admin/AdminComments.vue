@@ -57,6 +57,7 @@ function params(page = comments.page) {
   const p = { page, size: comments.size }
   if (keyword.value.trim()) p.keyword = keyword.value.trim()
   if (statusMap[activeTab.value]) p.status = statusMap[activeTab.value]
+  if (isMineView.value) p.mine = true
   return p
 }
 
@@ -77,7 +78,7 @@ async function load(page = 1) {
 
 async function loadStats() {
   try {
-    stats.value = (await http.get('/admin/stats')).data
+    stats.value = (await http.get('/admin/stats', { params: isMineView.value ? { mine: true } : {} })).data
   } catch (e) {
     /* 统计失败不阻塞 */
   }
