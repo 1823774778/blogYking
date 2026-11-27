@@ -370,6 +370,7 @@ onBeforeUnmount(() => {
             </span>
           </button>
           <div v-if="menuOpen" class="user-menu user-menu-compact">
+            <router-link to="/profile" @click="menuOpen = false">个人主页</router-link>
             <router-link v-if="isAdmin()" to="/admin" @click="menuOpen = false">后台管理</router-link>
             <button type="button" @click="logout">退出登录</button>
           </div>
@@ -487,6 +488,10 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 760px) {
+  .user-menu-wrap {
+    display: none;
+  }
+
   .nav-mobile-wrap {
     display: block;
   }
