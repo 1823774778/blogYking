@@ -7,5 +7,6 @@ import './admin.css'
 import './blueprint.css'
 import './tailwind.css'
 import './halo.css'
+import './editorial.css'
 
 createApp(App).use(router).mount('#app')

@@ -38,6 +38,33 @@ export function readingMinutes(content) {
   return Math.max(1, Math.round(length / 400))
 }
 
+export function plainExcerpt(content, maxLength = 300) {
+  const text = String(content || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/~~~[\s\S]*?~~~/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[*_~`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (text.length <= maxLength) return text
+  const cut = text.slice(0, maxLength)
+  const sentenceEnd = Math.max(
+    cut.lastIndexOf('。'),
+    cut.lastIndexOf('！'),
+    cut.lastIndexOf('？'),
+    cut.lastIndexOf('；')
+  )
+  const end = sentenceEnd > maxLength * 0.62 ? sentenceEnd + 1 : maxLength
+  return `${text.slice(0, end).replace(/[，、；：]$/, '')}…`
+}
+
 export function markdownHeadings(content) {
   const lines = String(content || '').split('\n')
   const headings = []

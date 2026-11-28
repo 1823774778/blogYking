@@ -78,7 +78,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app" :class="{ 'is-admin': isAdminArea }">
+  <div class="app" :class="{ 'is-admin': isAdminArea, 'public-ui': showPublicChrome }">
     <div v-if="maintenanceMode" class="site-mode-page">
       <span class="hero-eyebrow">Maintenance</span>
       <h1>站点维护中</h1>
@@ -96,16 +96,31 @@ onMounted(async () => {
       <router-view />
     </main>
 
-    <footer v-if="showFooter" class="footer">
-      <div class="shell footer-inner">
-        <span>© {{ year }} {{ state.site.siteName }} · {{ state.site.footer }}</span>
-        <div class="footer-links">
-          <router-link to="/about">关于</router-link>
+    <footer v-if="showFooter" class="footer ed-footer">
+      <div class="shell ed-footer-inner">
+        <div class="ed-footer-brand">
+          <div class="ed-footer-kicker">AN INDEPENDENT JOURNAL · EST. 2026</div>
+          <div class="ed-footer-word">{{ state.site.siteName }}</div>
+          <p>{{ state.site.footer || '用文字抵抗遗忘' }}</p>
+        </div>
+        <div class="ed-footer-column">
+          <span class="ed-footer-label">浏览 / READ</span>
+          <router-link to="/">首页</router-link>
+          <router-link to="/about">关于本站</router-link>
+          <router-link to="/notifications">通知中心</router-link>
+        </div>
+        <div class="ed-footer-column">
+          <span class="ed-footer-label">连接 / FOLLOW</span>
           <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">GitHub</a>
           <a v-if="state.site.email" :href="'mailto:' + state.site.email">邮箱</a>
           <a v-if="state.site.icp" href="https://beian.miit.gov.cn" target="_blank" rel="noopener">{{ state.site.icp }}</a>
           <a v-if="state.site.policeRecord" href="https://beian.mps.gov.cn/" target="_blank" rel="noopener">{{ state.site.policeRecord }}</a>
         </div>
+      </div>
+      <div class="shell ed-footer-bottom">
+        <span>© {{ year }} {{ state.site.siteName }}</span>
+        <span>ISSUE {{ String(new Date().getMonth() + 1).padStart(2, '0') }} / {{ year }}</span>
+        <span>用文字抵抗遗忘</span>
       </div>
       <div v-if="state.site.customFooter" class="shell footer-custom" v-html="state.site.customFooter"></div>
     </footer>

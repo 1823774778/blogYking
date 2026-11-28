@@ -3,10 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
 import { state, toast } from '../state'
-import { formatDate, formatCount, initialOf, splitTags } from '../utils'
+import { formatDate, formatCount, plainExcerpt, splitTags } from '../utils'
 import PostCard from '../components/PostCard.vue'
 import Pagination from '../components/Pagination.vue'
 import MarkdownBody from '../components/MarkdownBody.vue'
+import { coverForPost, heroCoverForPost } from '../covers'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,13 +25,53 @@ const tags = ref([])
 const hot = ref([])
 const stats = ref(null)
 
-const featured = computed(() =>
-  page.value === 1 && !activeTag.value && !keyword.value.trim() ? posts.value[0] || null : null
-)
-const gridPosts = computed(() => (featured.value ? posts.value.slice(1) : posts.value))
+const year = new Date().getFullYear()
+const issue = String(new Date().getMonth() + 1).padStart(2, '0')
+const isFiltered = computed(() => Boolean(activeTag.value || keyword.value.trim()))
+const heroPost = computed(() => {
+  if (page.value !== 1 || isFiltered.value) return null
+  return posts.value.find((post) => {
+    if (String(post.slug || '') === 'about') return false
+    return !String(post.tags || '').includes('关于本站')
+  }) || posts.value[0] || null
+})
+const aboutPost = computed(() => posts.value.find((post) => (
+  String(post.slug || '') === 'about' || String(post.tags || '').includes('关于本站')
+)) || null)
+const feedPosts = computed(() => posts.value.filter((post) => {
+  if (post.id === heroPost.value?.id) return false
+  if (post.id === aboutPost.value?.id) return false
+  return true
+}))
+const leadPost = computed(() => feedPosts.value[0] || null)
+const sidePosts = computed(() => feedPosts.value.slice(1, 3))
+const archivePosts = computed(() => {
+  const rest = feedPosts.value.slice(3)
+  if (aboutPost.value && !rest.some((post) => post.id === aboutPost.value.id)) {
+    rest.push(aboutPost.value)
+  }
+  return rest
+})
+const pageTitle = computed(() => {
+  if (keyword.value.trim()) return '检索'
+  if (activeTag.value) return '标签'
+  if (page.value > 1) return '存档'
+  return '文章存档'
+})
+const pageKicker = computed(() => {
+  if (keyword.value.trim()) return `SEARCH / ${keyword.value.trim()}`
+  if (activeTag.value) return `TAG / ${activeTag.value}`
+  return `ARCHIVE / PAGE ${String(page.value).padStart(2, '0')}`
+})
 const announcementVisible = computed(() =>
   String(state.site.announcementEnabled).toLowerCase() === 'true' && String(state.site.announcement || '').trim()
 )
+const heroTag = computed(() => (heroPost.value ? splitTags(heroPost.value.tags)[0] || '随笔' : '随笔'))
+const aboutIntro = computed(() => {
+  const raw = String(state.site.about || state.site.siteDesc || aboutPost.value?.summary || '')
+  const opening = raw.split(/\n\s*#{3,6}\s+/)[0] || raw
+  return plainExcerpt(opening, 320)
+})
 
 async function load() {
   loading.value = true
@@ -64,7 +105,7 @@ async function loadSide() {
     hot.value = hotRes.data
     stats.value = statsRes.data
   } catch (e) {
-    /* 侧栏加载失败不影响主列表 */
+    /* 索引区加载失败不影响主列表 */
   }
 }
 
@@ -109,6 +150,10 @@ function changePage(p) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+function scrollToStories() {
+  document.getElementById('ed-stories')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 watch(
   () => route.query.keyword,
   (value) => {
@@ -140,204 +185,232 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="ff-hero">
-    <div class="ff-planet" aria-hidden="true"></div>
-    <div class="ff-hero-inner">
-      <div class="ff-hero-copy">
-        <span class="ff-hero-eyebrow">WELCOME TO</span>
-        <h1>{{ state.site.heroTitle || state.site.siteName }}</h1>
-        <p class="ff-hero-sub">{{ state.site.heroSubtitle || state.site.siteDesc }}</p>
-        <div class="ff-hero-social">
-          <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">GitHub</a>
-          <a v-if="state.site.email" :href="'mailto:' + state.site.email">邮箱</a>
-          <router-link to="/about">关于本站</router-link>
+  <section v-if="heroPost" class="ed-hero">
+    <img class="ed-hero-media" :src="heroCoverForPost(heroPost)" :alt="heroPost.title" />
+    <div class="ed-hero-scrim" aria-hidden="true"></div>
+    <div class="ed-hero-frame">
+      <div class="ed-hero-topline">
+        <span>VOL. 01 — {{ year }}</span>
+        <span>{{ state.site.siteName }} · 独立写作与生活观察</span>
+        <span>ISSUE {{ issue }} / 封面文章</span>
+      </div>
+
+      <div class="ed-hero-copy">
+        <div class="ed-hero-kicker">
+          <span class="ed-signal-line"></span>
+          封面文章 / COVER STORY
         </div>
-        <div class="ff-hero-search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-4-4" />
-          </svg>
-          <input v-model="keyword" type="search" placeholder="搜索文章…" @keyup.enter="search" />
-          <button type="button" aria-label="搜索" @click="search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 12h14M13 6l6 6-6 6" />
+        <h1><router-link :to="`/post/${heroPost.id}`">{{ heroPost.title }}</router-link></h1>
+        <p class="ed-hero-summary">{{ heroPost.summary }}</p>
+        <div class="ed-hero-actions">
+          <router-link class="ed-cta" :to="`/post/${heroPost.id}`">
+            阅读这篇文章
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 12h15M13 6l6 6-6 6" />
             </svg>
-          </button>
+          </router-link>
+          <span class="ed-hero-meta">{{ formatDate(heroPost.createdAt) }} · {{ heroTag }}</span>
         </div>
       </div>
 
-      <router-link v-if="featured" class="ff-feature-card" :to="`/post/${featured.id}`">
-        <div class="ff-feature-cover">
-          <img v-if="featured.cover" :src="featured.cover" :alt="featured.title" />
-          <span v-else class="ff-feature-placeholder" aria-hidden="true"></span>
-          <span v-if="featured.top" class="ff-top-flag">置顶</span>
+      <div class="ed-hero-side">
+        <div class="ed-hero-vertical">{{ state.site.heroSubtitle || '用文字抵抗遗忘' }}</div>
+        <span class="ed-seal">{{ (state.site.siteName || '墨').slice(0, 1) }}</span>
+      </div>
+
+      <div class="ed-hero-card">
+        <span class="ed-hero-card-label">THIS ISSUE</span>
+        <div class="ed-hero-card-main">NO. {{ issue }}</div>
+        <div class="ed-hero-card-row"><span>文章</span><strong>{{ total }}</strong></div>
+        <div class="ed-hero-card-row"><span>状态</span><strong>持续更新</strong></div>
+      </div>
+
+      <button class="ed-hero-scroll" type="button" @click="scrollToStories">
+        <span>继续阅读 / CONTENTS</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M12 4v15M6 13l6 6 6-6" />
+        </svg>
+      </button>
+    </div>
+  </section>
+
+  <section v-else class="ed-pagehead">
+    <div class="ed-pagehead-frame">
+      <div class="ed-pagehead-top">
+        <span>{{ pageKicker }}</span>
+        <span>{{ state.site.siteName }} / {{ year }}</span>
+      </div>
+      <div class="ed-pagehead-body">
+        <div>
+          <span class="ed-eyebrow">THE ARCHIVE</span>
+          <h1>{{ pageTitle }}</h1>
         </div>
-        <div class="ff-feature-body">
-          <span class="ff-feature-kicker">精选 · {{ splitTags(featured.tags)[0] || '随笔' }}</span>
-          <h2>{{ featured.title }}</h2>
-          <p>{{ featured.summary }}</p>
-          <div class="ff-post-byline">
-            <span class="ff-post-avatar">{{ initialOf(featured.authorName || '站长') }}</span>
-            <span class="ff-post-author">{{ featured.authorName || '站长' }}</span>
-            <span class="ff-post-date">发布于 {{ formatDate(featured.createdAt) }}</span>
+        <div class="ed-pagehead-side">
+          <p v-if="keyword.trim()">正在检索「{{ keyword.trim() }}」的相关文章。</p>
+          <p v-else-if="activeTag">正在浏览标签「{{ activeTag }}」下的全部文章。</p>
+          <p v-else>所有已发布文字都在这里，按时间或热度重新翻阅。</p>
+          <div class="ed-page-search">
+            <input v-model="keyword" type="search" placeholder="搜索文章、摘要或标签…" @keyup.enter="search" />
+            <button type="button" @click="search">检索</button>
           </div>
         </div>
-      </router-link>
-
-      <div v-else class="ff-feature-card is-empty">
-        <div class="ff-feature-body">
-          <span class="ff-feature-kicker">第一篇文章正在路上</span>
-          <h2>这里还没有内容</h2>
-          <p>{{ state.site.about || '从一个标题开始，慢慢把想法写下来。' }}</p>
-        </div>
+      </div>
+      <div v-if="isFiltered" class="ed-pagehead-note">
+        <span>SEARCH RESULT</span>
+        <button type="button" @click="clearFilters">清除筛选 / CLEAR</button>
       </div>
     </div>
   </section>
 
-  <section v-if="announcementVisible" class="ff-announcement">
-    <div class="shell ff-announcement-inner">
-      <span class="ff-announcement-mark" aria-hidden="true">!</span>
-      <div class="ff-announcement-copy">
-        <strong>{{ state.site.announcementTitle || '站点公告' }}</strong>
-        <MarkdownBody :content="state.site.announcement" />
-      </div>
-      <a v-if="state.site.announcementLink" class="ff-announcement-link" :href="state.site.announcementLink">查看详情 →</a>
+  <section v-if="announcementVisible" class="ed-notice">
+    <div class="ed-notice-mark">公告<br /><small>NOTICE</small></div>
+    <div class="ed-notice-copy">
+      <strong>{{ state.site.announcementTitle || '站点公告' }}</strong>
+      <MarkdownBody :content="state.site.announcement" />
     </div>
+    <a v-if="state.site.announcementLink" class="ed-notice-link" :href="state.site.announcementLink">查看详情 →</a>
   </section>
 
-  <div class="ff-home">
-    <main class="ff-feed">
-      <div class="ff-feed-head">
-        <div class="ff-feed-tabs">
-          <button type="button" :class="{ on: sort === 'latest' }" @click="setSort('latest')">最新</button>
-          <button type="button" :class="{ on: sort === 'hot' }" @click="setSort('hot')">热门</button>
-        </div>
-        <div class="ff-feed-tags">
-          <button
-            v-for="tag in tags.slice(0, 4)"
-            :key="tag.name"
-            class="tag"
-            :class="{ active: activeTag === tag.name }"
-            type="button"
-            @click="pickTag(tag.name)"
-          >
-            #{{ tag.name }}
-          </button>
-        </div>
-        <span class="ff-feed-meta">{{ total }} 篇文章</span>
+  <div class="ed-toolbar">
+    <div class="ed-toolbar-left">
+      <span class="ed-toolbar-label">浏览 / BROWSE</span>
+      <div class="ed-sort">
+        <button type="button" :class="{ on: sort === 'latest' }" @click="setSort('latest')">最新</button>
+        <button type="button" :class="{ on: sort === 'hot' }" @click="setSort('hot')">热门</button>
       </div>
-
-      <div v-if="activeTag || keyword.trim()" class="ff-filter-note">
-        <span>
-          正在浏览
-          <template v-if="activeTag">标签「{{ activeTag }}」</template>
-          <template v-if="activeTag && keyword.trim()"> · </template>
-          <template v-if="keyword.trim()">关键词「{{ keyword.trim() }}」</template>
-        </span>
-        <button class="btn-text btn-sm" type="button" @click="clearFilters">清除筛选</button>
-      </div>
-
-      <div v-if="loading" class="ff-loading">正在翻页…</div>
-      <div v-else-if="!posts.length" class="ff-empty">
-        这里还没有文章。<br />换个关键词，或者从标签里找找。
-      </div>
-
-      <div v-else class="ff-post-grid">
-        <PostCard v-for="post in gridPosts" :key="post.id" :post="post" />
-      </div>
-
-      <Pagination :total="total" :page="page" :size="size" @change="changePage" />
-    </main>
-
-    <aside class="ff-widgets">
-      <section class="ff-widget">
-        <h4 class="ff-widget-title">
-          <span class="ff-wicon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 11v5M12 7.5v.5" />
-            </svg>
-          </span>
-          关于这里
-        </h4>
-        <p class="ff-announce">{{ state.site.about || state.site.siteDesc }}</p>
-        <router-link class="ff-widget-link" to="/about">了解更多 →</router-link>
-      </section>
-
-      <section class="ff-widget">
-        <h4 class="ff-widget-title">
-          <span class="ff-wicon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-              <path d="M20 13 13 20a2 2 0 0 1-2.8 0L4 13.8V4h9.8L20 10.2a2 2 0 0 1 0 2.8Z" />
-              <circle cx="8.5" cy="8.5" r="1.4" />
-            </svg>
-          </span>
-          标签
-          <span class="ff-widget-count">{{ tags.length }}</span>
-        </h4>
-        <div class="ff-tag-cloud">
-          <button
-            v-for="tag in tags"
-            :key="tag.name"
-            class="tag"
-            :class="{ active: activeTag === tag.name }"
-            type="button"
-            @click="pickTag(tag.name)"
-          >
-            #{{ tag.name }} <sup>{{ tag.count }}</sup>
-          </button>
-          <span v-if="!tags.length" class="count">暂无标签</span>
-        </div>
-      </section>
-
-      <section class="ff-widget">
-        <h4 class="ff-widget-title">
-          <span class="ff-wicon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-              <path d="m4 16 5-5 4 3 7-7" />
-              <path d="M15 7h5v5" />
-            </svg>
-          </span>
-          热门文章
-        </h4>
-        <ul v-if="hot.length" class="ff-hot-list">
-          <li v-for="item in hot" :key="item.id" class="ff-hot-item">
-            <router-link :to="`/post/${item.id}`">{{ item.title }}</router-link>
-            <span class="ff-hot-date"> {{ formatDate(item.createdAt) }}</span>
-          </li>
-        </ul>
-        <div v-else class="count">暂无</div>
-      </section>
-
-      <section class="ff-widget">
-        <h4 class="ff-widget-title">
-          <span class="ff-wicon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-              <path d="M5 20V10M10 20V4M15 20v-7M20 20V8" />
-            </svg>
-          </span>
-          站点统计
-        </h4>
-        <div class="ff-stat-rows">
-          <div class="ff-stat-row"><span>文章</span><strong>{{ stats ? formatCount(stats.posts) : '—' }}</strong></div>
-          <div class="ff-stat-row"><span>阅读</span><strong>{{ stats ? formatCount(stats.totalViews) : '—' }}</strong></div>
-          <div class="ff-stat-row"><span>评论</span><strong>{{ stats ? formatCount(stats.comments) : '—' }}</strong></div>
-          <div class="ff-stat-row"><span>读者</span><strong>{{ stats ? formatCount(stats.users) : '—' }}</strong></div>
-        </div>
-      </section>
-    </aside>
+    </div>
+    <div class="ed-toolbar-tags">
+      <button
+        v-for="tag in tags.slice(0, 5)"
+        :key="tag.name"
+        type="button"
+        :class="{ on: activeTag === tag.name }"
+        @click="pickTag(tag.name)"
+      >
+        #{{ tag.name }}
+      </button>
+    </div>
+    <div class="ed-toolbar-count">{{ total }} 篇文章</div>
   </div>
-</template>
 
-<style scoped>
-.ff-announcement { padding: 12px 0 0; }
-.ff-announcement-inner { display: flex; align-items: flex-start; gap: 12px; padding: 13px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--accent-soft); }
-.ff-announcement-mark { flex: 0 0 auto; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 13px; }
-.ff-announcement-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.ff-announcement-copy strong { color: var(--accent-ink); font-size: 12px; letter-spacing: .04em; }
-.ff-announcement-copy :deep(.markdown) { color: var(--ink-soft); font-size: 13px; line-height: 1.65; }
-.ff-announcement-copy :deep(.markdown p) { margin: 0; display: inline; }
-.ff-announcement-copy :deep(.markdown img) { max-height: 44px; vertical-align: middle; border-radius: 5px; }
-.ff-announcement-link { flex: 0 0 auto; color: var(--accent-ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
-@media (max-width: 620px) { .ff-announcement-inner { flex-wrap: wrap; } .ff-announcement-link { margin-left: 36px; } }
-</style>
+  <div v-if="loading" class="ed-loading">
+    <span>INDEXING</span>
+    正在翻页…
+  </div>
+
+  <div v-else-if="!posts.length" class="ed-empty">
+    <span class="ed-empty-no">00</span>
+    <div>
+      <h2>这里还没有文章</h2>
+      <p>换一个关键词，或者从标签里重新找起。空白的页面也值得被保留。</p>
+      <button type="button" class="ed-text-link" @click="clearFilters">回到首页 / BACK HOME →</button>
+    </div>
+  </div>
+
+  <template v-else>
+    <section v-if="leadPost" id="ed-stories" class="ed-section">
+      <div class="ed-section-head">
+        <div class="ed-section-no">01</div>
+        <div class="ed-section-title">
+          <span>SELECTED WRITINGS</span>
+          <h2>编辑精选</h2>
+        </div>
+        <div class="ed-section-line"></div>
+        <div class="ed-section-note">
+          {{ posts.length }} 篇正在展出
+          <span>UPDATED {{ formatDate(leadPost.createdAt) }}</span>
+        </div>
+      </div>
+
+      <div class="ed-lead-grid" :class="{ 'is-single': !sidePosts.length }">
+        <PostCard :post="leadPost" variant="lead" index="01" />
+        <div v-if="sidePosts.length" class="ed-lead-side">
+          <PostCard
+            v-for="(post, index) in sidePosts"
+            :key="post.id"
+            :post="post"
+            variant="stack"
+            :index="String(index + 2).padStart(2, '0')"
+          />
+        </div>
+      </div>
+    </section>
+
+    <section v-if="archivePosts.length" class="ed-archive">
+      <div class="ed-archive-head">
+        <div class="ed-section-title">
+          <span>CONTINUE READING</span>
+          <h2>继续翻阅</h2>
+        </div>
+        <span class="ed-archive-count">02 / {{ String(archivePosts.length).padStart(2, '0') }}</span>
+      </div>
+      <div class="ed-archive-list">
+        <PostCard
+          v-for="(post, index) in archivePosts"
+          :key="post.id"
+          :post="post"
+          variant="row"
+          :index="String(index + 4).padStart(2, '0')"
+        />
+      </div>
+    </section>
+
+    <div v-if="total > size" class="ed-pagination">
+      <Pagination :total="total" :page="page" :size="size" @change="changePage" />
+    </div>
+
+    <section class="ed-ledger">
+      <div class="ed-ledger-head">
+        <div>
+          <span class="ed-eyebrow">INDEX &amp; COLOPHONE</span>
+          <h2>索引与留白</h2>
+        </div>
+        <p>把文章之外的东西也摆出来：关于这个站点、散落的标签、被读得最多的几篇，以及一些不必每天更新但值得被记住的数字。</p>
+      </div>
+
+      <div class="ed-ledger-grid">
+        <div class="ed-ledger-about">
+          <span class="ed-ledger-label">关于 / ABOUT</span>
+          <h3>{{ state.site.siteName }}</h3>
+          <p>{{ aboutIntro }}</p>
+          <router-link to="/about">阅读关于本站 →</router-link>
+        </div>
+
+        <div class="ed-ledger-tags">
+          <span class="ed-ledger-label">标签 / TAGS</span>
+          <div class="ed-ledger-tag-list">
+            <button
+              v-for="tag in tags.slice(0, 8)"
+              :key="tag.name"
+              type="button"
+              @click="pickTag(tag.name)"
+            >
+              <span>#{{ tag.name }}</span>
+              <em>{{ String(tag.count).padStart(2, '0') }}</em>
+            </button>
+            <span v-if="!tags.length" class="ed-ledger-empty">暂无标签</span>
+          </div>
+        </div>
+
+        <div class="ed-ledger-hot">
+          <span class="ed-ledger-label">热门 / MOST READ</span>
+          <ol v-if="hot.length">
+            <li v-for="(item, index) in hot" :key="item.id">
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <router-link :to="`/post/${item.id}`">{{ item.title }}</router-link>
+              <time>{{ formatDate(item.createdAt) }}</time>
+            </li>
+          </ol>
+          <span v-else class="ed-ledger-empty">暂无阅读数据</span>
+        </div>
+      </div>
+
+      <div class="ed-stats">
+        <div><strong>{{ stats ? formatCount(stats.posts) : '—' }}</strong><span>篇文章 / POSTS</span></div>
+        <div><strong>{{ stats ? formatCount(stats.totalViews) : '—' }}</strong><span>阅读 / VIEWS</span></div>
+        <div><strong>{{ stats ? formatCount(stats.comments) : '—' }}</strong><span>评论 / COMMENTS</span></div>
+        <div><strong>{{ stats ? formatCount(stats.users) : '—' }}</strong><span>读者 / READERS</span></div>
+      </div>
+    </section>
+  </template>
+</template>

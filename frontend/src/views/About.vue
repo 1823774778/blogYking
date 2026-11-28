@@ -21,60 +21,68 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ff-about-page">
-    <header class="ff-page-head">
-      <span class="ff-hero-eyebrow">About · 关于本站</span>
-      <h1>{{ articleTitle }}</h1>
-      <p>{{ articleSummary }}</p>
-      <div v-if="article?.post" class="ff-about-meta">
-        <span>{{ article.post.authorName || '站长' }}</span>
-        <span class="dot"></span>
-        <span>{{ formatDate(article.post.createdAt) }}</span>
-        <span class="dot"></span>
+  <article class="ed-about-page">
+    <header class="ed-about-head">
+      <div class="ed-about-topline">
+        <span>ABOUT / 关于本站</span>
+        <span>{{ state.site.siteName }} · EST. 2026</span>
+      </div>
+      <div class="ed-about-head-grid">
+        <div>
+          <span class="ed-eyebrow">A NOTE FROM THE EDITOR</span>
+          <h1>{{ articleTitle }}</h1>
+        </div>
+        <p class="ed-about-deck">{{ articleSummary }}</p>
+      </div>
+      <div class="ed-about-meta">
+        <span>{{ article?.post?.authorName || '站长' }}</span>
+        <span v-if="article?.post">{{ formatDate(article.post.createdAt) }}</span>
         <span>{{ readingMinutes(articleContent) }} 分钟读完</span>
+        <span>{{ stats ? stats.posts : '—' }} 篇文章</span>
       </div>
     </header>
 
-    <div class="ff-about-grid">
-      <div class="ff-about-card">
-        <MarkdownBody :content="articleContent" />
-        <div v-if="article?.post" class="ff-about-article-link">
-          <router-link class="btn btn-ghost btn-sm" :to="`/post/${article.post.id}`">查看文章与评论</router-link>
+    <div class="ed-about-body">
+      <aside class="ed-about-rail">
+        <span class="ed-rail-label">COLOPHONE</span>
+        <p class="ed-about-rail-note">这个站点由一个人维护，写作、排版、开发与校对都在同一张桌子上完成。</p>
+
+        <div class="ed-about-contact">
+          <span class="ed-ledger-label">联系 / CONTACT</span>
+          <a v-if="state.site.email" :href="'mailto:' + state.site.email">
+            <span>邮箱</span>
+            <em>{{ state.site.email }}</em>
+          </a>
+          <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">
+            <span>GitHub</span>
+            <em>查看源码 ↗</em>
+          </a>
+          <span v-if="!state.site.email && !state.site.github" class="ed-rail-empty">暂无公开联系方式</span>
+        </div>
+
+        <div v-if="stats" class="ed-about-numbers">
+          <span class="ed-ledger-label">数字 / BY THE NUMBERS</span>
+          <div><strong>{{ stats.posts }}</strong><span>篇文章</span></div>
+          <div><strong>{{ stats.totalViews }}</strong><span>次阅读</span></div>
+          <div><strong>{{ stats.comments }}</strong><span>条评论</span></div>
+          <div><strong>{{ stats.users }}</strong><span>位读者</span></div>
+        </div>
+      </aside>
+
+      <div class="ed-about-content">
+        <div class="ed-about-reading">
+          <MarkdownBody :content="articleContent" />
+        </div>
+        <div class="ed-endmark">
+          <span>COLOPHONE</span>
+          <small>写到这里，继续往前。</small>
+          <i aria-hidden="true"></i>
+        </div>
+        <div v-if="article?.post" class="ed-about-link">
+          <router-link class="ed-text-link" :to="`/post/${article.post.id}`">查看文章与评论 →</router-link>
           <span>这篇「关于本站」也是站内文章，可在后台文章管理中修改。</span>
         </div>
       </div>
-
-      <aside class="ff-about-side">
-        <div class="ff-widget">
-          <h4 class="ff-widget-title">联系</h4>
-          <div class="ff-contact-list">
-            <a v-if="state.site.email" :href="'mailto:' + state.site.email">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-                <rect x="3" y="5" width="18" height="14" rx="2" />
-                <path d="m3 7 9 6 9-6" />
-              </svg>
-              {{ state.site.email }}
-            </a>
-            <a v-if="state.site.github" :href="state.site.github" target="_blank" rel="noopener">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2a10 10 0 0 0-3.16 19.5c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.26-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.56 9.56 0 0 1 12 6.8c.85 0 1.7.11 2.5.34 1.9-1.29 2.74-1.02 2.74-1.02.55 1.37.2 2.38.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
-              </svg>
-              GitHub
-            </a>
-            <span v-if="!state.site.email && !state.site.github" class="ff-contact-empty">暂无公开联系方式</span>
-          </div>
-        </div>
-
-        <div v-if="stats" class="ff-widget">
-          <h4 class="ff-widget-title">数字</h4>
-          <div class="ff-stat-rows">
-            <div class="ff-stat-row"><span>文章</span><strong>{{ stats.posts }}</strong></div>
-            <div class="ff-stat-row"><span>阅读</span><strong>{{ stats.totalViews }}</strong></div>
-            <div class="ff-stat-row"><span>评论</span><strong>{{ stats.comments }}</strong></div>
-            <div class="ff-stat-row"><span>读者</span><strong>{{ stats.users }}</strong></div>
-          </div>
-        </div>
-      </aside>
     </div>
-  </div>
+  </article>
 </template>

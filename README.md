@@ -1,6 +1,6 @@
 # 墨记 · 前后端分离个人博客
 
-一个可以直接 `java -jar` 跑起来的个人博客：Java 17+ / Spring Boot 4 + Vue 3，前端构建产物打进后端 jar，单文件部署。视觉采用类似 Halo 的简约默认主题：留白、细边框、清晰文章流与单一墨绿强调色；支持浅色、深色与跟随系统三种外观。
+一个可以直接 `java -jar` 跑起来的个人博客：Java 17+ / Spring Boot 4 + Vue 3，前端构建产物打进后端 jar，单文件部署。视觉采用「纸面编辑部」风格：暖纸底色、炭墨文字、单一朱红信号色，中文衬线大标题与非对称编辑网格；支持浅色、深色与跟随系统三种外观。
 
 首次启动不再内置默认账号：打开站点会进入**初始化向导**，由你自己设置管理员账号，并按需填写 MySQL、Redis 连接信息。
 
@@ -54,19 +54,22 @@
 - 站点音乐：本地音频与 LX 音源两种互斥模式，音源地址 / 本地 `.js` 导入；平台名称与能力全部按当前音源动态生成，不再使用别名；歌单/排行榜共用同一个平台下拉，歌单详情按音源返回数量完整翻页读取，点击歌曲时按歌名与歌手自动切换可播放来源；播放器底部固定迷你播放胶囊与上一首/播放暂停/下一首控制，点击胶囊进入“正在播放”视图，内含跟随播放滚动、可点击跳转的动效歌词与只显示已播放曲目的播放列表；平台、视图、歌词/列表页签、歌单详情与音量刷新后保留；音量改为点击图标展开的竖音量条；搜索框内嵌搜索页，同源音频代理与全站悬浮播放器；多个同站点标签页共享第一个标签页的播放与队列历史；桌面端悬浮球悬停向左横向展开 248px 胶囊，封面圆球固定在右端，左侧显示播放/暂停按钮、歌名与作者，触屏端保持圆形点击打开，不再显示音质标签；站内搜索按当前音源声明的平台并行检索，结果标注来源平台并交错去重；QQ 公共接口只返回占位音频时会自动匹配其他平台同曲版本，找不到同曲时明确提示需要登录或会员授权；上传本地音源脚本后自动删除历史脚本，只保留最新一份，启动时也会清理旧文件
 
 **主题**
-- 默认主题：类似 Halo 的简约内容站，留白充足、细边框卡片、单列文章流 + 右侧信息栏
-- 顶部导航与后台统一为单一墨绿强调色，不使用横幅壁纸或玻璃拟态
+- 纸面编辑部前台：暖纸、炭墨与单一朱红信号色，中文衬线大标题；满幅封面 Hero、非对称编辑精选、档案式文章行与深墨索引带
+- 文章详情为杂志式开篇 + 窄阅读栏 + 侧边目录；关于页为 colophon 版面；通知中心为档案台版面
 - 外观菜单提供「浅色 / 深色 / 系统」三种选项，系统选项会跟随操作系统自动切换
-- 文章详情为简洁标题区 + 白色正文卡；移动端保留底部 dock
 
 ## 主题说明
 
-- 主题覆盖层：`frontend/src/theme.css`，在 `main.js` 中于 `style.css` 之后引入，统一控制颜色、导航、首页、文章卡片、详情页与移动端布局。
-- 主要页面组件：`views/Home.vue`、`views/PostDetail.vue`、`views/About.vue`、`components/PostCard.vue`、`components/NavBar.vue`、`components/ThemeMenu.vue`、`App.vue`。
-- 首页排序固定为：站点简介与搜索 → 最新 / 热门筛选 → 文章流 → 右侧「关于、标签、热门文章、站点统计」。
-- 改主色：调整 `theme.css` 顶部的 `--accent`、`--accent-ink` 与 `--accent-soft`；深色模式在 `[data-theme="dark"]` 块中单独覆盖。
-- 文章封面兜底：未设置封面时按标签匹配 `cover-key`（Java / Spring / 安全）、`cover-night`（生活 / 思考 / 夜）、`cover-desk`（写作 / 随笔 / 建站）。
-- 响应式断点在 1180px / 920px / 760px，可在 `theme.css` 末尾的媒体查询中调整。
+- 前台皮肤：`frontend/src/editorial.css`，在 `main.js` 中于 `halo.css` 之后引入；所有规则限定在 `.public-ui` 下，不影响 `/admin` 后台。
+- 旧主题兼容：文件顶部通过 `html:has(.public-ui)` 重映射原有 `--paper`、`--ink`、`--accent` 等变量，通知中心、登录、个人页会继承新纸色与朱红，无需逐页改样式。
+- 主要页面：`views/Home.vue`、`views/PostDetail.vue`、`views/About.vue`、`components/PostCard.vue`、`components/NavBar.vue`、`App.vue` 页脚；`views/Notifications.vue` 由 `editorial.css` 中的 `.nt-*` 覆盖层统一为档案台版面。
+- 首页结构：满幅封面 Hero → 最新 / 热门与标签工具栏 → 编辑精选（主稿 + 双栏侧稿）→ 档案式文章行 → 深墨「索引与留白」信息带 → 统计数字。
+- 文章详情：杂志式 opener、16:9 全幅封面与 FIG 图注、204px 侧边目录 + 780px 窄阅读栏、衬线正文、H2 顶线分节、朱红引用线与深墨代码块。
+- 关于页：左侧 colophon 栏（联系 / 数字），右侧衬线正文、首字下沉与 END 标记。
+- 设计变量：`--ed-paper`、`--ed-paper-2`、`--ed-paper-3`、`--ed-ink`、`--ed-ink-2`、`--ed-muted`、`--ed-line`、`--ed-line-strong`、`--ed-signal`、`--ed-signal-deep`、`--ed-on-signal`、`--ed-night`；深色主题在 `html[data-theme="dark"]:has(.public-ui)` 块中覆盖。
+- 字体：`--ed-serif`（Iowan / Palatino / Source Han Serif / Songti 系统栈）、`--ed-sans`（HarmonyOS Sans / PingFang）、`--ed-mono`（JetBrains Mono 系统栈）。
+- 封面映射：`frontend/src/covers.js` 按标签匹配 `editorial-*.webp`，Hero 固定使用 `editorial-journals` 保持暗场对比；未命中时回退旧 `cover-*` 资源。
+- 响应式断点：1180 / 1024 / 900 / 760 / 420px，集中在 `editorial.css` 末尾的媒体查询；`prefers-reduced-motion` 下关闭封面缩放与过渡。
 
 ## 技术栈
 

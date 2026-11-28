@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '../api'
 import { state, toast } from '../state'
@@ -7,9 +7,7 @@ import { formatDate, formatCount, initialOf, markdownHeadings, readingMinutes, s
 import MarkdownBody from '../components/MarkdownBody.vue'
 import AiThinking from '../components/AiThinking.vue'
 import CommentSection from '../components/CommentSection.vue'
-import coverDesk from '../assets/cover-desk.webp'
-import coverKey from '../assets/cover-key.webp'
-import coverNight from '../assets/cover-night.webp'
+import { coverForPost } from '../covers'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,21 +20,31 @@ const aiConfirmOpen = ref(false)
 const aiLoading = ref(false)
 const aiOverview = ref('')
 const aiError = ref('')
+const progress = ref(0)
 
 const tags = ref([])
 const toc = computed(() => markdownHeadings(detail.value?.content))
 const author = computed(() => detail.value?.post?.authorName || '站长')
-const covers = [coverDesk, coverKey, coverNight]
 const commentsEnabled = computed(() => String(state.site.commentEnabled ?? 'true') !== 'false')
-const coverSrc = computed(() => {
-  if (detail.value?.post?.cover) return detail.value.post.cover
-  const tagText = tags.value.join(' ')
-  if (/Java|Spring|安全|技术/.test(tagText)) return coverKey
-  if (/生活|思考|夜|坚持/.test(tagText)) return coverNight
-  if (/写作|随笔|效率|建站|博客/.test(tagText)) return coverDesk
-  const id = Number(detail.value?.post?.id || 0)
-  return covers[id % covers.length]
+const coverSrc = computed(() => coverForPost(detail.value?.post, tags.value))
+
+function updateProgress() {
+  const root = document.documentElement
+  const max = root.scrollHeight - root.clientHeight
+  progress.value = max > 0 ? Math.min(1, root.scrollTop / max) : 0
+}
+
+onMounted(() => {
+  updateProgress()
+  window.addEventListener('scroll', updateProgress, { passive: true })
+  window.addEventListener('resize', updateProgress)
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', updateProgress)
+  window.removeEventListener('resize', updateProgress)
+})
+
 
 async function load() {
   loading.value = true
@@ -126,142 +134,143 @@ watch(
 </script>
 
 <template>
-  <div v-if="loading" class="empty" style="padding: 120px 0">正在打开这篇文章…</div>
-  <div v-else-if="error" class="empty" style="padding: 120px 0">
-    这篇文章打不开：{{ error }}
-    <div style="margin-top: 18px"><router-link class="btn btn-ghost btn-sm" to="/">返回首页</router-link></div>
+  <div v-if="loading" class="ed-article-loading">
+    <span>READING</span>
+    正在打开这篇文章…
+  </div>
+  <div v-else-if="error" class="ed-article-error">
+    <span>404 / UNAVAILABLE</span>
+    <h1>这篇文章打不开</h1>
+    <p>{{ error }}</p>
+    <router-link class="ed-text-link" to="/">返回首页 →</router-link>
   </div>
 
-  <article v-else-if="detail" class="ff-article">
-    <header class="ff-article-hero">
-      <img class="ff-article-hero-art" :src="coverSrc" alt="" aria-hidden="true" />
-      <div class="ff-article-hero-inner">
-        <router-link to="/" class="ff-article-back">← 返回列表</router-link>
+  <article v-else-if="detail" class="ed-article">
+    <div class="ed-progress" :style="{ transform: `scaleX(${progress})` }" aria-hidden="true"></div>
+
+    <header class="ed-article-head">
+      <div class="ed-article-head-inner">
+        <div class="ed-article-topline">
+          <router-link to="/" class="ed-back">← 返回目录 / INDEX</router-link>
+          <span>{{ formatDate(detail.post.createdAt) }} · ISSUE {{ String(new Date().getMonth() + 1).padStart(2, '0') }}</span>
+        </div>
+
+        <div class="ed-article-kicker">
+          <span>{{ tags[0] || '随笔' }}</span>
+          <span>{{ readingMinutes(detail.content) }} MIN READ</span>
+          <span v-if="detail.post.top">置顶 / FEATURED</span>
+        </div>
+
         <h1>{{ detail.post.title }}</h1>
-        <div class="ff-article-hero-meta">
-          <span>{{ formatDate(detail.post.createdAt) }}</span>
-          <span class="dot"></span>
-          <span>{{ detail.post.authorName }}</span>
-          <span class="dot"></span>
-          <span>{{ readingMinutes(detail.content) }} 分钟读完</span>
-          <span class="dot"></span>
-          <span>{{ formatCount(detail.post.views) }} 次阅读</span>
-          <router-link
-            v-for="tag in tags"
-            :key="tag"
-            class="tag"
-            :to="`/?tag=${encodeURIComponent(tag)}`"
-          >
-            {{ tag }}
-          </router-link>
+        <p v-if="detail.post.summary" class="ed-article-deck">{{ detail.post.summary }}</p>
+
+        <div class="ed-article-byline">
+          <span class="avatar ed-article-avatar">
+            <img v-if="detail.post.authorAvatar" :src="detail.post.authorAvatar" alt="" />
+            <template v-else>{{ initialOf(author) }}</template>
+          </span>
+          <div class="ed-article-byline-copy">
+            <strong>{{ author }}</strong>
+            <span>{{ formatDate(detail.post.createdAt) }} · {{ formatCount(detail.post.views) }} 次阅读</span>
+          </div>
+          <div class="ff-article-actions">
+            <button class="ff-action-btn" :class="{ on: detail.liked }" type="button" :disabled="toggling" @click="toggle('like')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M12 20.5s-8-4.9-8-10.2A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 3.3c0 5.3-8 10.2-8 10.2Z" />
+              </svg>
+              {{ detail.post.likes }}
+            </button>
+            <button class="ff-action-btn" :class="{ on: detail.favorited }" type="button" :disabled="toggling" @click="toggle('favorite')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M6 3h12v18l-6-4.2L6 21V3Z" />
+              </svg>
+              {{ detail.post.favorites }}
+            </button>
+          </div>
         </div>
       </div>
     </header>
 
-    <div class="ff-article-body">
-      <div class="ff-article-main">
-        <div class="ff-article-card">
-          <div class="ff-article-byline">
-            <span class="avatar sm">
-              <img v-if="detail.post.authorAvatar" :src="detail.post.authorAvatar" alt="" />
-              <template v-else>{{ initialOf(author) }}</template>
-            </span>
-            <div class="ff-article-byline-copy">
-              <strong>{{ author }}</strong>
-              <span>{{ formatDate(detail.post.createdAt) }} · {{ readingMinutes(detail.content) }} 分钟读完</span>
-            </div>
-            <div class="ff-article-actions">
-              <button class="ff-action-btn" :class="{ on: detail.liked }" type="button" :disabled="toggling" @click="toggle('like')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="M12 20.5s-8-4.9-8-10.2A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 3.3c0 5.3-8 10.2-8 10.2Z" />
-                </svg>
-                {{ detail.post.likes }}
-              </button>
-              <button class="ff-action-btn" :class="{ on: detail.favorited }" type="button" :disabled="toggling" @click="toggle('favorite')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="M6 3h12v18l-6-4.2L6 21V3Z" />
-                </svg>
-                {{ detail.post.favorites }}
-              </button>
-            </div>
-          </div>
+    <figure class="ed-article-figure">
+      <div class="ed-article-figure-inner">
+        <img :src="coverSrc" :alt="detail.post.title" />
+        <figcaption>
+          <span>FIG. 01 / {{ tags[0] || '随笔' }}</span>
+          <span>{{ formatDate(detail.post.createdAt) }} · {{ readingMinutes(detail.content) }} MIN</span>
+        </figcaption>
+      </div>
+    </figure>
 
+    <div class="ed-article-body">
+      <aside class="ed-article-rail">
+        <span class="ed-rail-label">CONTENTS / 目录</span>
+        <nav v-if="toc.length" class="ed-toc-list">
+          <a
+            v-for="item in toc"
+            :key="item.id"
+            :href="`#${item.id}`"
+            :class="{ sub: item.level === 3 }"
+          >
+            <span>{{ item.text }}</span>
+          </a>
+        </nav>
+        <span v-else class="ed-rail-empty">本文没有分节标题</span>
+
+        <div class="ed-rail-sep"></div>
+
+        <div class="ed-rail-author">
+          <span class="avatar ed-rail-avatar">
+            <img v-if="detail.post.authorAvatar" :src="detail.post.authorAvatar" alt="" />
+            <template v-else>{{ initialOf(author) }}</template>
+          </span>
+          <div>
+            <strong>{{ author }}</strong>
+            <span>写于 {{ formatDate(detail.post.createdAt) }}</span>
+          </div>
+        </div>
+
+        <div class="ed-rail-numbers">
+          <span><strong>{{ formatCount(detail.post.views) }}</strong> 阅读</span>
+          <span><strong>{{ formatCount(detail.post.likes) }}</strong> 喜欢</span>
+          <span><strong>{{ formatCount(detail.post.comments) }}</strong> 评论</span>
+        </div>
+
+        <div v-if="tags.length" class="ed-rail-tags">
+          <router-link
+            v-for="tag in tags"
+            :key="tag"
+            :to="`/?tag=${encodeURIComponent(tag)}`"
+          >
+            #{{ tag }}
+          </router-link>
+        </div>
+
+        <router-link class="ed-rail-back" to="/">← 回到目录 / INDEX</router-link>
+      </aside>
+
+      <div class="ff-article-main">
+        <div class="ed-article-content">
           <MarkdownBody :content="detail.content" />
         </div>
 
-        <div v-if="commentsEnabled && detail.post.commentSummary" class="ff-comment-summary">
-          <div class="ff-comment-summary-head">
-            <span class="ff-comment-summary-kicker">AI 评论总结</span>
-            <span class="meta">{{ detail.post.commentSummaryAt ? formatDate(detail.post.commentSummaryAt) : '' }}</span>
+        <div class="ed-endmark">
+          <span>END</span>
+          <small>文章结束 · 谢谢阅读</small>
+          <i aria-hidden="true"></i>
+        </div>
+
+        <div v-if="commentsEnabled && detail.post.commentSummary" class="ed-comment-summary">
+          <div class="ed-comment-summary-head">
+            <span>AI 评论总结 / DISCUSSION</span>
+            <span>{{ detail.post.commentSummaryAt ? formatDate(detail.post.commentSummaryAt) : '' }}</span>
           </div>
           <p>{{ detail.post.commentSummary }}</p>
         </div>
 
-        <div v-if="commentsEnabled" class="ff-comments-card">
+        <div v-if="commentsEnabled" class="ed-comments">
           <CommentSection :post-id="detail.post.id" />
         </div>
       </div>
-
-      <aside class="ff-article-aside">
-        <section v-if="toc.length" class="ff-widget ff-toc-card">
-          <h4 class="ff-widget-title">
-            <span class="ff-wicon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-                <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
-              </svg>
-            </span>
-            目录
-          </h4>
-          <nav class="ff-toc-list">
-            <a
-              v-for="item in toc"
-              :key="item.id"
-              :href="`#${item.id}`"
-              :class="{ sub: item.level === 3 }"
-            >
-              {{ item.text }}
-            </a>
-          </nav>
-        </section>
-
-        <section class="ff-widget ff-article-info">
-          <h4 class="ff-widget-title">
-            <span class="ff-wicon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-                <circle cx="12" cy="8" r="3.5" />
-                <path d="M5 21a7 7 0 0 1 14 0" />
-              </svg>
-            </span>
-            关于作者
-          </h4>
-          <div class="ff-article-author">
-            <span class="avatar">
-              <img v-if="detail.post.authorAvatar" :src="detail.post.authorAvatar" alt="" />
-              <template v-else>{{ initialOf(author) }}</template>
-            </span>
-            <div>
-              <strong>{{ author }}</strong>
-              <span>写于 {{ formatDate(detail.post.createdAt) }}</span>
-            </div>
-          </div>
-          <div class="ff-article-numbers">
-            <span>{{ formatCount(detail.post.views) }} 阅读</span>
-            <span>{{ formatCount(detail.post.likes) }} 喜欢</span>
-            <span>{{ formatCount(detail.post.comments) }} 评论</span>
-          </div>
-          <div v-if="tags.length" class="ff-article-tags">
-            <router-link
-              v-for="tag in tags"
-              :key="tag"
-              class="tag"
-              :to="`/?tag=${encodeURIComponent(tag)}`"
-            >
-              #{{ tag }}
-            </router-link>
-          </div>
-          <router-link class="ff-widget-link" to="/">← 回到文章列表</router-link>
-        </section>
-      </aside>
     </div>
 
     <button class="ff-ai-fab" type="button" aria-label="获取本文 AI 总览" @click="openAiOverview">
@@ -424,6 +433,36 @@ watch(
   padding: 14px 24px 18px;
   border-top: 1px solid var(--line, #e5e7eb);
 }
+
+/* Editorial skin for the AI overlay */
+.ff-ai-fab {
+  border-color: color-mix(in srgb, var(--ed-signal, #d33b1d) 44%, transparent);
+  border-radius: 999px;
+  background: var(--ed-ink, #17150f);
+  color: var(--ed-paper-3, #fbf7ee);
+  box-shadow: 0 16px 34px -18px rgba(20, 16, 10, .7);
+}
+.ff-ai-fab svg { color: var(--ed-signal, #d33b1d); }
+.ff-ai-fab:hover {
+  border-color: var(--ed-signal, #d33b1d);
+  box-shadow: 0 18px 38px -16px rgba(20, 16, 10, .8);
+}
+.ff-ai-mask { background: rgba(12, 11, 8, .66); }
+.ff-ai-modal {
+  border: 1px solid var(--ed-line, #d4c8b4);
+  border-top: 3px solid var(--ed-signal, #d33b1d);
+  border-radius: 0;
+  background: var(--ed-paper-3, #fbf7ee);
+  color: var(--ed-ink, #17150f);
+  box-shadow: 0 30px 70px -24px rgba(10, 8, 5, .6);
+}
+.ff-ai-head { border-bottom-color: var(--ed-line, #d4c8b4); }
+.ff-ai-kicker { color: var(--ed-signal-deep, #a82a10); font-family: var(--ed-mono, monospace); letter-spacing: .14em; }
+.ff-ai-head h3 { font-family: var(--ed-serif, serif); font-size: 25px; }
+.ff-ai-close { border-radius: 2px; }
+.ff-ai-confirm ul { color: var(--ed-muted, #746b5c); }
+.ff-ai-disclaimer { color: var(--ed-muted, #746b5c); }
+.ff-ai-actions { border-top-color: var(--ed-line, #d4c8b4); }
 @media (max-width: 720px) {
   .ff-ai-fab { right: 16px; bottom: 18px; height: 42px; padding: 0 14px; }
   .ff-ai-mask { padding: 12px; align-items: end; }

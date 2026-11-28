@@ -252,16 +252,12 @@ onBeforeUnmount(() => {
       <router-link to="/" class="logo">
         <span class="ff-logo-mark" :class="{ 'has-image': showSiteLogo }" aria-hidden="true">
           <img v-if="showSiteLogo" :src="state.site.logo" alt="" @error="onLogoError" />
-          <svg v-else viewBox="0 0 32 32" fill="none">
-            <ellipse cx="10.5" cy="11" rx="6.2" ry="9" transform="rotate(-38 10.5 11)" fill="currentColor" opacity=".28" />
-            <ellipse cx="21.5" cy="11" rx="6.2" ry="9" transform="rotate(38 21.5 11)" fill="currentColor" opacity=".28" />
-            <ellipse cx="10.5" cy="20" rx="4.8" ry="7" transform="rotate(-52 10.5 20)" fill="currentColor" opacity=".16" />
-            <ellipse cx="21.5" cy="20" rx="4.8" ry="7" transform="rotate(52 21.5 20)" fill="currentColor" opacity=".16" />
-            <circle cx="16" cy="16" r="2.6" fill="currentColor" />
-            <path d="M15 13.8 13.8 11M17 13.8 18.2 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" />
-          </svg>
+          <span v-else class="logo-seal">{{ (state.site.siteName || '墨').slice(0, 1) }}</span>
         </span>
-        <span class="logo-name">{{ state.site.siteName }}</span>
+        <span class="logo-copy">
+          <span class="logo-name">{{ state.site.siteName }}</span>
+          <span class="logo-meta">INK JOURNAL</span>
+        </span>
       </router-link>
 
       <nav class="nav-links" aria-label="顶部导航">
